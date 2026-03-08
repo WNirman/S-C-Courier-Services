@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import logoImg from './assets/favicon.png';
 
 function App() {
     const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
@@ -63,7 +64,7 @@ function App() {
 
             <nav className="navbar">
                 <div className="logo" onClick={() => setActiveForm('tracking')}>
-                    <i className='bx bxs-truck'></i>
+                    <img src={logoImg} alt="SC Courier" style={{ height: '70px' }} />
                     <span>SC Courier</span>
                 </div>
                 <button className="nav-login-btn" onClick={() => setActiveForm('login')}>
