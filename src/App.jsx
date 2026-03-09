@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import logoImg from './assets/favicon.png';
 
-function App() {
+function App({ onNavigate }) {
     const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
     const [showPassword, setShowPassword] = useState(false);
 
