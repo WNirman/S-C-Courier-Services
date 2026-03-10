@@ -153,3 +153,9 @@ CREATE TABLE COURIER_REQ(
     FOREIGN KEY(rec_NIC) REFERENCES RECEIVER(rec_NIC),
     FOREIGN KEY(atr_ID) REFERENCES ATR(atr_id)
 );
+
+CREATE TABLE ATR_INVOICE(
+    atr_id INT NOT NULL,
+    invoice_id INT NOT NULL,
+    PRIMARY KEY(atr_id, invoice_id) 
+);
