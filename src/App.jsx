@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import logoImg from './assets/favicon.png';
 import CustomerDashboard from './CustomerDashboard';
+import AtrForm from './AtrForm';
 
 function App({ onNavigate }) {
     const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
@@ -16,6 +17,16 @@ function App({ onNavigate }) {
     const [password, setPassword] = useState('');
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loginSuccess, setLoginSuccess] = useState(false);
+
+    // Registration State
+    const [custName, setCustName] = useState('');
+    const [custEmail, setCustEmail] = useState('');
+    const [custAddress, setCustAddress] = useState('');
+    const [custPhone, setCustPhone] = useState('');
+    const [custPassword, setCustPassword] = useState('');
+    const [custConfirm, setCustConfirm] = useState('');
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [registerSuccess, setRegisterSuccess] = useState(false);
 
     const handleTrackPackage = (e) => {
         e.preventDefault();
@@ -55,6 +66,34 @@ function App({ onNavigate }) {
         }, 1500);
     };
 
+    const handleRegister = (e) => {
+        e.preventDefault();
+        if (!custName || !custEmail || !custPhone || !custPassword || !custConfirm) return;
+        if (custPassword !== custConfirm) {
+            alert('Passwords do not match');
+            return;
+        }
+
+        setIsRegistering(true);
+        setRegisterSuccess(false);
+
+        setTimeout(() => {
+            setIsRegistering(false);
+            setRegisterSuccess(true);
+
+            setTimeout(() => {
+                setActiveForm('login');
+                setRegisterSuccess(false);
+                setCustName('');
+                setCustEmail('');
+                setCustAddress('');
+                setCustPhone('');
+                setCustPassword('');
+                setCustConfirm('');
+            }, 1500);
+        }, 1500);
+    };
+
     return (
         <>
             <div className="background-elements">
@@ -83,7 +122,139 @@ function App({ onNavigate }) {
 
             <main className="container">
                 {activeForm === 'dashboard' ? (
-                    <CustomerDashboard onLogout={() => setActiveForm('tracking')} />
+                    <CustomerDashboard onDeliver={() => setActiveForm('atr')} />
+                ) : activeForm === 'atr' ? (
+                    <AtrForm onBack={() => setActiveForm('dashboard')} />
+                ) : activeForm === 'register' ? (
+                    <div className="atr-page">
+                        <div className="atr-split-layout">
+                            <div className="atr-left-panel">
+                                <div className="atr-left-content">
+                                    <div className="atr-left-logo" onClick={() => setActiveForm('tracking')} style={{ cursor: 'pointer' }}>
+                                        <img src={logoImg} alt="SC Courier" />
+                                        <span>SC Courier</span>
+                                    </div>
+                                    <h2>Register <br /><span className="atr-highlight">Now</span></h2>
+                                    <p>All fields are required to create an account.</p>
+                                    <div className="atr-lottie-container">
+                                        <lottie-player
+                                            src="https://assets3.lottiefiles.com/packages/lf20_kdx6cani.json"
+                                            background="transparent"
+                                            speed="1"
+                                            loop
+                                            autoplay
+                                        ></lottie-player>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="atr-right-panel">
+                                <div className="atr-form-header">
+                                    <h1><i className='bx bx-user-plus'></i> Customer Registration</h1>
+                                    <p>Provide the details below</p>
+                                </div>
+                                <form onSubmit={handleRegister}>
+                                    <div className="atr-form-row">
+                                        <div className="atr-form-group">
+                                            <label>Full Name <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-user'></i>
+                                                <input
+                                                    type="text"
+                                                    value={custName}
+                                                    onChange={(e) => setCustName(e.target.value)}
+                                                    placeholder="Enter full name"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="atr-form-group">
+                                            <label>Email <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-envelope'></i>
+                                                <input
+                                                    type="email"
+                                                    value={custEmail}
+                                                    onChange={(e) => setCustEmail(e.target.value)}
+                                                    placeholder="Enter email"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="atr-form-row">
+                                        <div className="atr-form-group">
+                                            <label>Address <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-map'></i>
+                                                <input
+                                                    type="text"
+                                                    value={custAddress}
+                                                    onChange={(e) => setCustAddress(e.target.value)}
+                                                    placeholder="Enter address"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="atr-form-group">
+                                            <label>Phone Number <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-phone'></i>
+                                                <input
+                                                    type="tel"
+                                                    value={custPhone}
+                                                    onChange={(e) => setCustPhone(e.target.value)}
+                                                    placeholder="Enter phone number"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="atr-form-row">
+                                        <div className="atr-form-group">
+                                            <label>Password <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-lock-alt'></i>
+                                                <input
+                                                    type="password"
+                                                    value={custPassword}
+                                                    onChange={(e) => setCustPassword(e.target.value)}
+                                                    placeholder="Create a password"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="atr-form-group">
+                                            <label>Confirm Password <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-lock-alt'></i>
+                                                <input
+                                                    type="password"
+                                                    value={custConfirm}
+                                                    onChange={(e) => setCustConfirm(e.target.value)}
+                                                    placeholder="Re-enter password"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="atr-form-actions-bar">
+                                        <button type="submit" className="atr-btn atr-btn-primary" disabled={isRegistering || registerSuccess}>
+                                            {isRegistering ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Registering...</>
+                                            ) : registerSuccess ? (
+                                                <><i className='bx bx-check'></i> Success</>
+                                            ) : (
+                                                <><span>Create Account</span></>
+                                            )}
+                                        </button>
+                                    </div>
+                                </form>
+                                <button type="button" className="back-btn" onClick={() => setActiveForm('login')}>
+                                    <i className='bx bx-left-arrow-alt'></i> Back to Login
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 ) : (
                     <div className="main-content">
                         <div className="text-section">
@@ -225,6 +396,17 @@ function App({ onNavigate }) {
                                             )}
                                         </button>
                                     </form>
+
+                                    <div className="divider">
+                                        <span>OR</span>
+                                    </div>
+                                    <div className="login-prompt">
+                                        <p>Don't have an account?</p>
+                                        <button type="button" className="secondary-btn" onClick={() => setActiveForm('register')}>
+                                            Register Now
+                                        </button>
+                                    </div>
+
                                     <button type="button" className="back-btn" onClick={() => setActiveForm('tracking')}>
                                         <i className='bx bx-left-arrow-alt'></i> Back to Tracking
                                     </button>
