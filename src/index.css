@@ -563,3 +563,481 @@ body {
         font-size: 2.5rem;
     }
 }
+
+/* =============================================
+   ATR Form Page Styles
+   ============================================= */
+
+.atr-page {
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Split Layout */
+.atr-split-layout {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+}
+
+/* Left Panel */
+.atr-left-panel {
+    width: 38%;
+    min-width: 360px;
+    background: linear-gradient(135deg, #0a0a0a 0%, #111 50%, #0a0a0a 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 2.5rem;
+    position: relative;
+    overflow: hidden;
+    border-right: 1px solid var(--card-border);
+}
+
+.atr-left-panel::before {
+    content: '';
+    position: absolute;
+    top: -30%;
+    left: -30%;
+    width: 80%;
+    height: 80%;
+    background: radial-gradient(circle, rgba(249, 115, 22, 0.08), transparent 70%);
+    filter: blur(60px);
+    pointer-events: none;
+}
+
+.atr-left-panel::after {
+    content: '';
+    position: absolute;
+    bottom: -20%;
+    right: -20%;
+    width: 60%;
+    height: 60%;
+    background: radial-gradient(circle, rgba(234, 88, 12, 0.06), transparent 70%);
+    filter: blur(80px);
+    pointer-events: none;
+}
+
+.atr-left-content {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    max-width: 340px;
+}
+
+.atr-left-logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    margin-bottom: 2rem;
+}
+
+.atr-left-logo img {
+    height: 60px;
+}
+
+.atr-left-logo span {
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+
+.atr-left-content h2 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 0.8rem;
+}
+
+.atr-highlight {
+    background: linear-gradient(to right, #fdba74, #f97316, #c2410c);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline;
+}
+
+.atr-left-content p {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    margin-bottom: 2rem;
+}
+
+.atr-lottie-container {
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto;
+}
+
+.atr-lottie-container lottie-player {
+    width: 100%;
+}
+
+/* Right Panel */
+.atr-right-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2.5rem 3rem;
+    position: relative;
+}
+
+.atr-right-panel::-webkit-scrollbar {
+    width: 6px;
+}
+
+.atr-right-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.atr-right-panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.atr-right-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* ATR Form Header */
+.atr-form-header {
+    margin-bottom: 2rem;
+}
+
+.atr-form-header h1 {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 1.8rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 0.4rem;
+}
+
+.atr-form-header h1 i {
+    color: var(--accent-color);
+}
+
+.atr-form-header p {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+
+/* ATR Section Dividers */
+.atr-section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--accent-color);
+    margin: 2rem 0 1.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.atr-section-title:first-of-type {
+    margin-top: 0.5rem;
+}
+
+.atr-section-title i {
+    font-size: 1.1rem;
+}
+
+.atr-section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, var(--card-border), transparent);
+}
+
+/* ATR Form Grid */
+.atr-form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.2rem;
+}
+
+.atr-form-row.three-col {
+    grid-template-columns: 1fr 1fr 1fr;
+}
+
+.atr-form-row.single {
+    grid-template-columns: 1fr;
+}
+
+.atr-form-group {
+    margin-bottom: 0.2rem;
+}
+
+.atr-form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.atr-form-group label .required {
+    color: var(--danger);
+    margin-left: 2px;
+}
+
+.atr-form-group input,
+.atr-form-group select,
+.atr-form-group textarea {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--card-border);
+    color: var(--text-primary);
+    padding: 0.85rem 1rem;
+    border-radius: 12px;
+    font-size: 0.92rem;
+    font-family: 'Outfit', sans-serif;
+    outline: none;
+    transition: all 0.3s ease;
+}
+
+.atr-form-group input:focus,
+.atr-form-group select:focus,
+.atr-form-group textarea:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.atr-form-group input::placeholder,
+.atr-form-group textarea::placeholder {
+    color: rgba(255, 255, 255, 0.2);
+}
+
+.atr-form-group select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%239ca3af' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: calc(100% - 1rem) center;
+    padding-right: 2.5rem;
+}
+
+.atr-form-group select option {
+    background: #1a1a1a;
+    color: var(--text-primary);
+}
+
+.atr-form-group textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+/* ATR Input with icon */
+.atr-input-with-icon {
+    position: relative;
+}
+
+.atr-input-with-icon i {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+.atr-input-with-icon input,
+.atr-input-with-icon select {
+    padding-left: 2.8rem;
+}
+
+.atr-input-hint {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.25);
+    margin-top: 0.3rem;
+}
+
+/* ATR Status Badge */
+.atr-status-preview {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.4rem;
+    padding: 0.3rem 0.8rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.atr-status-preview.pending {
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+.atr-status-preview.approved {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.atr-status-preview.rejected {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.atr-status-preview .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+/* ATR Buttons */
+.atr-form-actions-bar {
+    display: flex;
+    gap: 1rem;
+    margin-top: 2.5rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--card-border);
+}
+
+.atr-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1rem 1.8rem;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    font-family: 'Outfit', sans-serif;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: none;
+}
+
+.atr-btn-primary {
+    flex: 1;
+    background: var(--accent-color);
+    color: white;
+    box-shadow: 0 4px 14px 0 var(--accent-glow);
+}
+
+.atr-btn-primary:hover {
+    background: var(--accent-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.5);
+}
+
+.atr-btn-primary:active {
+    transform: translateY(0);
+}
+
+.atr-btn-secondary {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.atr-btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* ATR Read-only fields */
+.atr-form-group input[readOnly] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ATR Responsive */
+@media (max-width: 1024px) {
+    .atr-left-panel {
+        width: 35%;
+        min-width: 280px;
+        padding: 2rem 1.5rem;
+    }
+
+    .atr-left-content h2 {
+        font-size: 1.5rem;
+    }
+
+    .atr-lottie-container {
+        max-width: 260px;
+    }
+
+    .atr-right-panel {
+        padding: 2rem;
+    }
+
+    .atr-form-row.three-col {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .atr-page {
+        height: auto;
+        overflow: auto;
+    }
+
+    .atr-split-layout {
+        flex-direction: column;
+        height: auto;
+    }
+
+    .atr-left-panel {
+        width: 100%;
+        min-width: unset;
+        padding: 2.5rem 2rem 2rem;
+        border-right: none;
+        border-bottom: 1px solid var(--card-border);
+    }
+
+    .atr-lottie-container {
+        max-width: 220px;
+    }
+
+    .atr-left-content h2 {
+        font-size: 1.5rem;
+    }
+
+    .atr-left-content p {
+        margin-bottom: 1.5rem;
+    }
+
+    .atr-right-panel {
+        overflow-y: visible;
+        padding: 2rem 1.5rem 3rem;
+    }
+
+    .atr-form-row,
+    .atr-form-row.three-col {
+        grid-template-columns: 1fr;
+    }
+
+    .atr-form-actions-bar {
+        flex-direction: column;
+    }
+}
+
+@media (max-width: 480px) {
+    .atr-left-panel {
+        padding: 2rem 1.2rem 1.5rem;
+    }
+
+    .atr-left-content h2 {
+        font-size: 1.3rem;
+    }
+
+    .atr-right-panel {
+        padding: 1.5rem 1rem 2rem;
+    }
+
+    .atr-form-header h1 {
+        font-size: 1.4rem;
+    }
+}
