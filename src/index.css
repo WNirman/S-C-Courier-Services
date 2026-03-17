@@ -29,6 +29,21 @@ body {
     position: relative;
 }
 
+body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-image: linear-gradient(rgba(5, 5, 5, 0.85), rgba(5, 5, 5, 0.85)), url('./assets/h1.png');
+    background-size: cover;
+    background-position: calc(50% - 30px) 30px;
+    background-repeat: no-repeat;
+    z-index: -2;
+    animation: fadeIn 1.5s ease-in-out forwards;
+}
+
 /* Background Effects */
 .background-elements {
     position: absolute;
@@ -121,6 +136,29 @@ body {
     font-size: 2rem;
 }
 
+.nav-links {
+    display: flex;
+    gap: 2rem;
+    align-items: center;
+}
+
+.nav-links a {
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.nav-links a:hover,
+.nav-links a.active {
+    color: var(--accent-color);
+}
+
+.nav-links a.active {
+    font-weight: 600;
+}
+
 .nav-login-btn {
     display: flex;
     align-items: center;
@@ -177,6 +215,7 @@ body {
 .highlight {
     background: linear-gradient(to right, #fdba74, #f97316, #c2410c);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
     display: inline-block;
 }
@@ -204,7 +243,7 @@ body {
 }
 
 /* Glow line top */
-.action-card::before {
+.action-card:not(.video-card)::before {
     content: '';
     position: absolute;
     top: 0;
@@ -213,6 +252,15 @@ body {
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
     opacity: 0.5;
+}
+
+.action-card.video-card {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding: 0;
 }
 
 .form-container {
@@ -523,6 +571,18 @@ body {
     }
 }
 
+@keyframes slideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-50px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
 @keyframes fadeIn {
     from {
         opacity: 0;
@@ -530,6 +590,17 @@ body {
 
     to {
         opacity: 1;
+    }
+}
+
+@keyframes bgLoad {
+    from {
+        opacity: 0;
+        background-position: calc(50% - 80px) 30px;
+    }
+    to {
+        opacity: 1;
+        background-position: calc(50% - 30px) 30px;
     }
 }
 
@@ -656,6 +727,7 @@ body {
 .atr-highlight {
     background: linear-gradient(to right, #fdba74, #f97316, #c2410c);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
     display: inline;
 }
