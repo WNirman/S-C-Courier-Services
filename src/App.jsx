@@ -17,6 +17,7 @@ function App({ onNavigate }) {
     const [password, setPassword] = useState('');
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loginSuccess, setLoginSuccess] = useState(false);
+    const [loggedInUser, setLoggedInUser] = useState(null);
 
     // Registration State
     const [custName, setCustName] = useState('');
@@ -27,6 +28,38 @@ function App({ onNavigate }) {
     const [custConfirm, setCustConfirm] = useState('');
     const [isRegistering, setIsRegistering] = useState(false);
     const [registerSuccess, setRegisterSuccess] = useState(false);
+
+    // Forgot Password State
+    const [forgotEmail, setForgotEmail] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmNewPassword, setConfirmNewPassword] = useState('');
+    const [isResetting, setIsResetting] = useState(false);
+    const [resetSuccess, setResetSuccess] = useState(false);
+
+    const handleResetPassword = (e) => {
+        e.preventDefault();
+        if (!forgotEmail || !newPassword || !confirmNewPassword) return;
+        
+        if (newPassword !== confirmNewPassword) {
+            alert('Passwords do not match');
+            return;
+        }
+
+        setIsResetting(true);
+        setResetSuccess(false);
+
+        setTimeout(() => {
+            setIsResetting(false);
+            setResetSuccess(true);
+            setTimeout(() => {
+                setActiveForm('login');
+                setResetSuccess(false);
+                setForgotEmail('');
+                setNewPassword('');
+                setConfirmNewPassword('');
+            }, 1500);
+        }, 1500);
+    };
 
     const handleTrackPackage = (e) => {
         e.preventDefault();
@@ -58,6 +91,7 @@ function App({ onNavigate }) {
             setLoginSuccess(true);
 
             setTimeout(() => {
+                setLoggedInUser(username);
                 setActiveForm('dashboard');
                 setLoginSuccess(false);
                 setUsername('');
@@ -107,15 +141,21 @@ function App({ onNavigate }) {
                     <img src={logoImg} alt="SC Courier" style={{ height: '70px' }} />
                     <span>SC Courier</span>
                 </div>
-                {activeForm !== 'dashboard' ? (
+                {activeForm !== 'dashboard' && activeForm !== 'atr' ? (
                     <button className="nav-login-btn" onClick={() => setActiveForm('login')}>
                         <i className='bx bx-user-circle'></i>
                         <span>Login</span>
                     </button>
                 ) : (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>Welcome, User!</span>
-                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem' }}>U</div>
+                        <span style={{ color: 'var(--text-secondary)', display: 'none', '@media(minWidth: 768px)': { display: 'block' } }}>Welcome, {loggedInUser || 'User'}!</span>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem', textTransform: 'uppercase' }}>
+                            {loggedInUser ? loggedInUser.charAt(0) : 'U'}
+                        </div>
+                        <button className="nav-login-btn" onClick={() => { setLoggedInUser(null); setActiveForm('login'); }} style={{ marginLeft: '0.5rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                            <i className='bx bx-log-out'></i>
+                            <span>Logout</span>
+                        </button>
                     </div>
                 )}
             </nav>
@@ -376,7 +416,7 @@ function App({ onNavigate }) {
                                                 <span className="checkmark"></span>
                                                 Remember me
                                             </label>
-                                            <a href="#" className="forgot-link">Forgot Password?</a>
+                                            <a href="#" className="forgot-link" onClick={(e) => { e.preventDefault(); setActiveForm('forgot-password'); }}>Forgot Password?</a>
                                         </div>
                                         <button
                                             type="submit"
@@ -409,6 +449,81 @@ function App({ onNavigate }) {
 
                                     <button type="button" className="back-btn" onClick={() => setActiveForm('tracking')}>
                                         <i className='bx bx-left-arrow-alt'></i> Back to Tracking
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Forgot Password Form */}
+                            {activeForm === 'forgot-password' && (
+                                <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
+                                    <div className="card-header">
+                                        <h2><i className='bx bx-key'></i> Reset Password</h2>
+                                        <p>Enter your email and new password</p>
+                                    </div>
+                                    <form onSubmit={handleResetPassword}>
+                                        <div className="form-control">
+                                            <label htmlFor="forgotEmail">Email Address</label>
+                                            <div className="input-wrapper">
+                                                <i className='bx bx-envelope input-icon'></i>
+                                                <input
+                                                    type="email"
+                                                    id="forgotEmail"
+                                                    placeholder="Enter your email"
+                                                    required
+                                                    value={forgotEmail}
+                                                    onChange={(e) => setForgotEmail(e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="form-control" style={{ marginTop: '1rem' }}>
+                                            <label htmlFor="newPassword">New Password</label>
+                                            <div className="input-wrapper">
+                                                <i className='bx bx-lock-alt input-icon'></i>
+                                                <input
+                                                    type="password"
+                                                    id="newPassword"
+                                                    placeholder="Enter new password"
+                                                    required
+                                                    value={newPassword}
+                                                    onChange={(e) => setNewPassword(e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="form-control" style={{ marginTop: '1rem' }}>
+                                            <label htmlFor="confirmNewPassword">Confirm New Password</label>
+                                            <div className="input-wrapper">
+                                                <i className='bx bx-lock-alt input-icon'></i>
+                                                <input
+                                                    type="password"
+                                                    id="confirmNewPassword"
+                                                    placeholder="Confirm new password"
+                                                    required
+                                                    value={confirmNewPassword}
+                                                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="submit"
+                                            className="primary-btn full-width"
+                                            disabled={isResetting || resetSuccess}
+                                            style={resetSuccess ? { background: 'var(--success)', boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)', marginTop: '1.5rem' } : { marginTop: '1.5rem' }}
+                                        >
+                                            {isResetting ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Resetting...</>
+                                            ) : resetSuccess ? (
+                                                <><i className='bx bx-check'></i> Password Reset Successful</>
+                                            ) : (
+                                                <>
+                                                    <span>Update Password</span>
+                                                    <i className='bx bx-check-shield'></i>
+                                                </>
+                                            )}
+                                        </button>
+                                    </form>
+
+                                    <button type="button" className="back-btn" onClick={() => setActiveForm('login')}>
+                                        <i className='bx bx-left-arrow-alt'></i> Back to Login
                                     </button>
                                 </div>
                             )}
