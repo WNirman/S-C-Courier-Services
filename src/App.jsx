@@ -110,6 +110,7 @@ function App({ onNavigate }) {
                     <img src={logoImg} alt="SC Courier" style={{ height: '70px' }} />
                     <span>SC Courier</span>
                 </div>
+<<<<<<< Updated upstream
                 {activeForm !== 'dashboard' && activeForm !== 'atr' && activeForm !== 'register' && (
                     <div className="nav-links">
                         <a href="#home" className={activeForm === 'tracking' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('tracking'); }}>Home</a>
@@ -119,6 +120,14 @@ function App({ onNavigate }) {
                     </div>
                 )}
                 {activeForm === 'dashboard' && (
+=======
+                {activeForm !== 'dashboard' ? (
+                    <button className="nav-login-btn" onClick={() => setActiveForm('login')}>
+                        <i className='bx bx-user-circle'></i>
+                        <span>Login</span>
+                    </button>
+                ) : (
+>>>>>>> Stashed changes
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Welcome, User!</span>
                         <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem' }}>U</div>
@@ -461,9 +470,103 @@ function App({ onNavigate }) {
                                             <i className='bx bx-left-arrow-alt'></i> Back to Tracking
                                         </button>
                                     </div>
+<<<<<<< Updated upstream
                                 )}
                             </div>
                         )}
+=======
+                                </div>
+                            )}
+
+                            {/* Login Form */}
+                            {activeForm === 'login' && (
+                                <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
+                                    <div className="card-header">
+                                        <h2><i className='bx bx-user'></i> Welcome Back</h2>
+                                        <p>Login to manage your shipments</p>
+                                    </div>
+                                    <form onSubmit={handleLogin}>
+                                        <div className="form-control">
+                                            <label htmlFor="username">Email or Username</label>
+                                            <div className="input-wrapper">
+                                                <i className='bx bx-envelope input-icon'></i>
+                                                <input
+                                                    type="text"
+                                                    id="username"
+                                                    placeholder="Enter your email"
+                                                    required
+                                                    autoComplete="username"
+                                                    value={username}
+                                                    onChange={(e) => setUsername(e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="form-control">
+                                            <label htmlFor="password">Password</label>
+                                            <div className="input-wrapper">
+                                                <i className='bx bx-lock-alt input-icon'></i>
+                                                <input
+                                                    type={showPassword ? "text" : "password"}
+                                                    id="password"
+                                                    placeholder="Enter your password"
+                                                    required
+                                                    autoComplete="current-password"
+                                                    value={password}
+                                                    onChange={(e) => setPassword(e.target.value)}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="eye-btn"
+                                                    onClick={() => setShowPassword(!showPassword)}
+                                                >
+                                                    <i className={`bx ${showPassword ? 'bx-show' : 'bx-hide'}`}></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="form-actions">
+                                            <label className="checkbox-container">
+                                                <input type="checkbox" id="rememberMe" />
+                                                <span className="checkmark"></span>
+                                                Remember me
+                                            </label>
+                                            <a href="#" className="forgot-link">Forgot Password?</a>
+                                        </div>
+                                        <button
+                                            type="submit"
+                                            className="primary-btn full-width"
+                                            disabled={isLoggingIn || loginSuccess}
+                                            style={loginSuccess ? { background: 'var(--success)', boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)' } : {}}
+                                        >
+                                            {isLoggingIn ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Logging in...</>
+                                            ) : loginSuccess ? (
+                                                <><i className='bx bx-check'></i> Success</>
+                                            ) : (
+                                                <>
+                                                    <span>Login to Dashboard</span>
+                                                    <i className='bx bx-log-in-circle'></i>
+                                                </>
+                                            )}
+                                        </button>
+                                    </form>
+
+                                    <div className="divider">
+                                        <span>OR</span>
+                                    </div>
+                                    <div className="login-prompt">
+                                        <p>Don't have an account?</p>
+                                        <button type="button" className="secondary-btn" onClick={() => setActiveForm('register')}>
+                                            Register Now
+                                        </button>
+                                    </div>
+
+                                    <button type="button" className="back-btn" onClick={() => setActiveForm('tracking')}>
+                                        <i className='bx bx-left-arrow-alt'></i> Back to Tracking
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+>>>>>>> Stashed changes
                     </div>
                 )}
             </main>
