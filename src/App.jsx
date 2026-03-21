@@ -351,7 +351,7 @@ function App({ onNavigate }) {
                             )}
                         </div>
 
-                        {(activeForm === 'tracking' || activeForm === 'login') && (
+                        {(activeForm === 'tracking' || activeForm === 'login' || activeForm === 'forgot') && (
                             <div className="action-card">
                                 {/* Tracking Form */}
                                 {activeForm === 'tracking' && (
@@ -466,7 +466,7 @@ function App({ onNavigate }) {
                                                     <span className="checkmark"></span>
                                                     Remember me
                                                 </label>
-                                                <a href="#" className="forgot-link">Forgot Password?</a>
+                                                <a href="#" className="forgot-link" onClick={(e) => { e.preventDefault(); setActiveForm('forgot'); }}>Forgot Password?</a>
                                             </div>
                                             <button
                                                 type="submit"
@@ -499,6 +499,78 @@ function App({ onNavigate }) {
 
                                         <button type="button" className="back-btn" onClick={() => setActiveForm('tracking')}>
                                             <i className='bx bx-left-arrow-alt'></i> Back to Tracking
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Forgot Password Form */}
+                                {activeForm === 'forgot' && (
+                                    <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
+                                        <div className="card-header">
+                                            <h2><i className='bx bx-lock-open-alt'></i> Reset Password</h2>
+                                            <p>Enter your details to reset your password</p>
+                                        </div>
+                                        <form onSubmit={handleResetPassword}>
+                                            <div className="form-control">
+                                                <label>Email</label>
+                                                <div className="input-wrapper">
+                                                    <i className='bx bx-envelope input-icon'></i>
+                                                    <input
+                                                        type="email"
+                                                        placeholder="Enter your email"
+                                                        required
+                                                        value={forgotEmail}
+                                                        onChange={(e) => setForgotEmail(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="form-control">
+                                                <label>New Password</label>
+                                                <div className="input-wrapper">
+                                                    <i className='bx bx-lock-alt input-icon'></i>
+                                                    <input
+                                                        type="password"
+                                                        placeholder="Enter new password"
+                                                        required
+                                                        value={newPassword}
+                                                        onChange={(e) => setNewPassword(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="form-control">
+                                                <label>Confirm Password</label>
+                                                <div className="input-wrapper">
+                                                    <i className='bx bx-lock-alt input-icon'></i>
+                                                    <input
+                                                        type="password"
+                                                        placeholder="Confirm new password"
+                                                        required
+                                                        value={confirmNewPassword}
+                                                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="submit"
+                                                className="primary-btn full-width"
+                                                style={{ marginTop: '1rem', ...(resetSuccess ? { background: 'var(--success)', boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)' } : {}) }}
+                                                disabled={isResetting || resetSuccess}
+                                            >
+                                                {isResetting ? (
+                                                    <><i className='bx bx-loader-alt bx-spin'></i> Resetting...</>
+                                                ) : resetSuccess ? (
+                                                    <><i className='bx bx-check'></i> Password Reset</>
+                                                ) : (
+                                                    <>
+                                                        <span>Reset Password</span>
+                                                        <i className='bx bx-check-circle'></i>
+                                                    </>
+                                                )}
+                                            </button>
+                                        </form>
+
+                                        <button type="button" className="back-btn" onClick={() => setActiveForm('login')} style={{ marginTop: '1.5rem' }}>
+                                            <i className='bx bx-left-arrow-alt'></i> Back to Login
                                         </button>
                                     </div>
                                 )}
