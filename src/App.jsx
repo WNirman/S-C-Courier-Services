@@ -23,8 +23,11 @@ function App({ onNavigate }) {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loginSuccess, setLoginSuccess] = useState(false);
 <<<<<<< HEAD
+<<<<<<< HEAD
     const [loggedInUser, setLoggedInUser] = useState(null);
     const [assignedStaff, setAssignedStaff] = useState([]); // Array to store assigned staff emails
+=======
+>>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
 =======
 >>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
 
@@ -69,6 +72,7 @@ function App({ onNavigate }) {
 
             setTimeout(() => {
 <<<<<<< HEAD
+<<<<<<< HEAD
                 setLoggedInUser(username);
                 if (username === 'admin@sccourier.com' && password === 'admin123') {
                     setActiveForm('admin');
@@ -78,6 +82,8 @@ function App({ onNavigate }) {
                     setActiveForm('dashboard');
                 }
 =======
+=======
+>>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
                 setActiveForm('dashboard');
 >>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
                 setLoginSuccess(false);
@@ -129,8 +135,11 @@ function App({ onNavigate }) {
                     <span>SC Courier</span>
                 </div>
 <<<<<<< HEAD
+<<<<<<< HEAD
                 {activeForm !== 'dashboard' && activeForm !== 'atr' && activeForm !== 'register' && activeForm !== 'admin' && activeForm !== 'staff' && (
 =======
+=======
+>>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
 <<<<<<< Updated upstream
                 {activeForm !== 'dashboard' && activeForm !== 'atr' && activeForm !== 'register' && (
 >>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
@@ -142,6 +151,7 @@ function App({ onNavigate }) {
                     </div>
                 )}
 <<<<<<< HEAD
+<<<<<<< HEAD
                 {(activeForm === 'dashboard' || activeForm === 'admin' || activeForm === 'staff') && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <span style={{ color: 'var(--text-secondary)', display: 'none', '@media(minWidth: 768px)': { display: 'block' } }}>Welcome, {loggedInUser === 'admin@sccourier.com' ? 'Admin' : (assignedStaff.includes(loggedInUser) ? 'Staff' : (loggedInUser || 'User'))}!</span>
@@ -152,6 +162,20 @@ function App({ onNavigate }) {
                             <i className='bx bx-log-out'></i>
                             <span>Logout</span>
                         </button>
+=======
+                {activeForm === 'dashboard' && (
+=======
+                {activeForm !== 'dashboard' ? (
+                    <button className="nav-login-btn" onClick={() => setActiveForm('login')}>
+                        <i className='bx bx-user-circle'></i>
+                        <span>Login</span>
+                    </button>
+                ) : (
+>>>>>>> Stashed changes
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Welcome, User!</span>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem' }}>U</div>
+>>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
 =======
                 {activeForm === 'dashboard' && (
 =======
