@@ -22,8 +22,11 @@ function App({ onNavigate }) {
     const [password, setPassword] = useState('');
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loginSuccess, setLoginSuccess] = useState(false);
+<<<<<<< HEAD
     const [loggedInUser, setLoggedInUser] = useState(null);
     const [assignedStaff, setAssignedStaff] = useState([]); // Array to store assigned staff emails
+=======
+>>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
 
     // Registration State
     const [custName, setCustName] = useState('');
@@ -34,38 +37,6 @@ function App({ onNavigate }) {
     const [custConfirm, setCustConfirm] = useState('');
     const [isRegistering, setIsRegistering] = useState(false);
     const [registerSuccess, setRegisterSuccess] = useState(false);
-
-    // Forgot Password State
-    const [forgotEmail, setForgotEmail] = useState('');
-    const [newPassword, setNewPassword] = useState('');
-    const [confirmNewPassword, setConfirmNewPassword] = useState('');
-    const [isResetting, setIsResetting] = useState(false);
-    const [resetSuccess, setResetSuccess] = useState(false);
-
-    const handleResetPassword = (e) => {
-        e.preventDefault();
-        if (!forgotEmail || !newPassword || !confirmNewPassword) return;
-        
-        if (newPassword !== confirmNewPassword) {
-            alert('Passwords do not match');
-            return;
-        }
-
-        setIsResetting(true);
-        setResetSuccess(false);
-
-        setTimeout(() => {
-            setIsResetting(false);
-            setResetSuccess(true);
-            setTimeout(() => {
-                setActiveForm('login');
-                setResetSuccess(false);
-                setForgotEmail('');
-                setNewPassword('');
-                setConfirmNewPassword('');
-            }, 1500);
-        }, 1500);
-    };
 
     const handleTrackPackage = (e) => {
         e.preventDefault();
@@ -97,6 +68,7 @@ function App({ onNavigate }) {
             setLoginSuccess(true);
 
             setTimeout(() => {
+<<<<<<< HEAD
                 setLoggedInUser(username);
                 if (username === 'admin@sccourier.com' && password === 'admin123') {
                     setActiveForm('admin');
@@ -105,6 +77,9 @@ function App({ onNavigate }) {
                 } else {
                     setActiveForm('dashboard');
                 }
+=======
+                setActiveForm('dashboard');
+>>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
                 setLoginSuccess(false);
                 setUsername('');
                 setPassword('');
@@ -153,7 +128,12 @@ function App({ onNavigate }) {
                     <img src={logoImg} alt="SC Courier" style={{ height: '70px' }} />
                     <span>SC Courier</span>
                 </div>
+<<<<<<< HEAD
                 {activeForm !== 'dashboard' && activeForm !== 'atr' && activeForm !== 'register' && activeForm !== 'admin' && activeForm !== 'staff' && (
+=======
+<<<<<<< Updated upstream
+                {activeForm !== 'dashboard' && activeForm !== 'atr' && activeForm !== 'register' && (
+>>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
                     <div className="nav-links">
                         <a href="#home" className={activeForm === 'tracking' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('tracking'); }}>Home</a>
                         <a href="#services" className={activeForm === 'services' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('services'); }}>Services</a>
@@ -161,6 +141,7 @@ function App({ onNavigate }) {
                         <a href="#contact" className={activeForm === 'contact' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('contact'); }}>Contact Us</a>
                     </div>
                 )}
+<<<<<<< HEAD
                 {(activeForm === 'dashboard' || activeForm === 'admin' || activeForm === 'staff') && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <span style={{ color: 'var(--text-secondary)', display: 'none', '@media(minWidth: 768px)': { display: 'block' } }}>Welcome, {loggedInUser === 'admin@sccourier.com' ? 'Admin' : (assignedStaff.includes(loggedInUser) ? 'Staff' : (loggedInUser || 'User'))}!</span>
@@ -171,6 +152,20 @@ function App({ onNavigate }) {
                             <i className='bx bx-log-out'></i>
                             <span>Logout</span>
                         </button>
+=======
+                {activeForm === 'dashboard' && (
+=======
+                {activeForm !== 'dashboard' ? (
+                    <button className="nav-login-btn" onClick={() => setActiveForm('login')}>
+                        <i className='bx bx-user-circle'></i>
+                        <span>Login</span>
+                    </button>
+                ) : (
+>>>>>>> Stashed changes
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Welcome, User!</span>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem' }}>U</div>
+>>>>>>> parent of d519b9c (Merge pull request #11 from WNirman/Development)
                     </div>
                 )}
             </nav>
@@ -368,7 +363,7 @@ function App({ onNavigate }) {
                             )}
                         </div>
 
-                        {(activeForm === 'tracking' || activeForm === 'login' || activeForm === 'forgot') && (
+                        {(activeForm === 'tracking' || activeForm === 'login') && (
                             <div className="action-card">
                                 {/* Tracking Form */}
                                 {activeForm === 'tracking' && (
@@ -483,7 +478,7 @@ function App({ onNavigate }) {
                                                     <span className="checkmark"></span>
                                                     Remember me
                                                 </label>
-                                                <a href="#" className="forgot-link" onClick={(e) => { e.preventDefault(); setActiveForm('forgot'); }}>Forgot Password?</a>
+                                                <a href="#" className="forgot-link">Forgot Password?</a>
                                             </div>
                                             <button
                                                 type="submit"
@@ -518,81 +513,103 @@ function App({ onNavigate }) {
                                             <i className='bx bx-left-arrow-alt'></i> Back to Tracking
                                         </button>
                                     </div>
-                                )}
-
-                                {/* Forgot Password Form */}
-                                {activeForm === 'forgot' && (
-                                    <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
-                                        <div className="card-header">
-                                            <h2><i className='bx bx-lock-open-alt'></i> Reset Password</h2>
-                                            <p>Enter your details to reset your password</p>
-                                        </div>
-                                        <form onSubmit={handleResetPassword}>
-                                            <div className="form-control">
-                                                <label>Email</label>
-                                                <div className="input-wrapper">
-                                                    <i className='bx bx-envelope input-icon'></i>
-                                                    <input
-                                                        type="email"
-                                                        placeholder="Enter your email"
-                                                        required
-                                                        value={forgotEmail}
-                                                        onChange={(e) => setForgotEmail(e.target.value)}
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div className="form-control">
-                                                <label>New Password</label>
-                                                <div className="input-wrapper">
-                                                    <i className='bx bx-lock-alt input-icon'></i>
-                                                    <input
-                                                        type="password"
-                                                        placeholder="Enter new password"
-                                                        required
-                                                        value={newPassword}
-                                                        onChange={(e) => setNewPassword(e.target.value)}
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div className="form-control">
-                                                <label>Confirm Password</label>
-                                                <div className="input-wrapper">
-                                                    <i className='bx bx-lock-alt input-icon'></i>
-                                                    <input
-                                                        type="password"
-                                                        placeholder="Confirm new password"
-                                                        required
-                                                        value={confirmNewPassword}
-                                                        onChange={(e) => setConfirmNewPassword(e.target.value)}
-                                                    />
-                                                </div>
-                                            </div>
-                                            <button
-                                                type="submit"
-                                                className="primary-btn full-width"
-                                                style={{ marginTop: '1rem', ...(resetSuccess ? { background: 'var(--success)', boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)' } : {}) }}
-                                                disabled={isResetting || resetSuccess}
-                                            >
-                                                {isResetting ? (
-                                                    <><i className='bx bx-loader-alt bx-spin'></i> Resetting...</>
-                                                ) : resetSuccess ? (
-                                                    <><i className='bx bx-check'></i> Password Reset</>
-                                                ) : (
-                                                    <>
-                                                        <span>Reset Password</span>
-                                                        <i className='bx bx-check-circle'></i>
-                                                    </>
-                                                )}
-                                            </button>
-                                        </form>
-
-                                        <button type="button" className="back-btn" onClick={() => setActiveForm('login')} style={{ marginTop: '1.5rem' }}>
-                                            <i className='bx bx-left-arrow-alt'></i> Back to Login
-                                        </button>
-                                    </div>
+<<<<<<< Updated upstream
                                 )}
                             </div>
                         )}
+=======
+                                </div>
+                            )}
+
+                            {/* Login Form */}
+                            {activeForm === 'login' && (
+                                <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
+                                    <div className="card-header">
+                                        <h2><i className='bx bx-user'></i> Welcome Back</h2>
+                                        <p>Login to manage your shipments</p>
+                                    </div>
+                                    <form onSubmit={handleLogin}>
+                                        <div className="form-control">
+                                            <label htmlFor="username">Email or Username</label>
+                                            <div className="input-wrapper">
+                                                <i className='bx bx-envelope input-icon'></i>
+                                                <input
+                                                    type="text"
+                                                    id="username"
+                                                    placeholder="Enter your email"
+                                                    required
+                                                    autoComplete="username"
+                                                    value={username}
+                                                    onChange={(e) => setUsername(e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="form-control">
+                                            <label htmlFor="password">Password</label>
+                                            <div className="input-wrapper">
+                                                <i className='bx bx-lock-alt input-icon'></i>
+                                                <input
+                                                    type={showPassword ? "text" : "password"}
+                                                    id="password"
+                                                    placeholder="Enter your password"
+                                                    required
+                                                    autoComplete="current-password"
+                                                    value={password}
+                                                    onChange={(e) => setPassword(e.target.value)}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="eye-btn"
+                                                    onClick={() => setShowPassword(!showPassword)}
+                                                >
+                                                    <i className={`bx ${showPassword ? 'bx-show' : 'bx-hide'}`}></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="form-actions">
+                                            <label className="checkbox-container">
+                                                <input type="checkbox" id="rememberMe" />
+                                                <span className="checkmark"></span>
+                                                Remember me
+                                            </label>
+                                            <a href="#" className="forgot-link">Forgot Password?</a>
+                                        </div>
+                                        <button
+                                            type="submit"
+                                            className="primary-btn full-width"
+                                            disabled={isLoggingIn || loginSuccess}
+                                            style={loginSuccess ? { background: 'var(--success)', boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)' } : {}}
+                                        >
+                                            {isLoggingIn ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Logging in...</>
+                                            ) : loginSuccess ? (
+                                                <><i className='bx bx-check'></i> Success</>
+                                            ) : (
+                                                <>
+                                                    <span>Login to Dashboard</span>
+                                                    <i className='bx bx-log-in-circle'></i>
+                                                </>
+                                            )}
+                                        </button>
+                                    </form>
+
+                                    <div className="divider">
+                                        <span>OR</span>
+                                    </div>
+                                    <div className="login-prompt">
+                                        <p>Don't have an account?</p>
+                                        <button type="button" className="secondary-btn" onClick={() => setActiveForm('register')}>
+                                            Register Now
+                                        </button>
+                                    </div>
+
+                                    <button type="button" className="back-btn" onClick={() => setActiveForm('tracking')}>
+                                        <i className='bx bx-left-arrow-alt'></i> Back to Tracking
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+>>>>>>> Stashed changes
                     </div>
                 )}
             </main>
