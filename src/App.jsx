@@ -5,8 +5,6 @@ import aboutGif from './assets/about.gif';
 import contactGif from './assets/contact.gif';
 import CustomerDashboard from './CustomerDashboard';
 import AtrForm from './AtrForm';
-import AdminDashboard from './AdminDashboard';
-import StaffDashboard from './StaffDashboard';
 
 function App({ onNavigate }) {
     const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
@@ -23,7 +21,6 @@ function App({ onNavigate }) {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loginSuccess, setLoginSuccess] = useState(false);
     const [loggedInUser, setLoggedInUser] = useState(null);
-    const [assignedStaff, setAssignedStaff] = useState([]); // Array to store assigned staff emails
 
     // Registration State
     const [custName, setCustName] = useState('');
@@ -98,13 +95,7 @@ function App({ onNavigate }) {
 
             setTimeout(() => {
                 setLoggedInUser(username);
-                if (username === 'admin@sccourier.com' && password === 'admin123') {
-                    setActiveForm('admin');
-                } else if (assignedStaff.includes(username)) {
-                    setActiveForm('staff');
-                } else {
-                    setActiveForm('dashboard');
-                }
+                setActiveForm('dashboard');
                 setLoginSuccess(false);
                 setUsername('');
                 setPassword('');
@@ -153,7 +144,7 @@ function App({ onNavigate }) {
                     <img src={logoImg} alt="SC Courier" style={{ height: '70px' }} />
                     <span>SC Courier</span>
                 </div>
-                {activeForm !== 'dashboard' && activeForm !== 'atr' && activeForm !== 'register' && activeForm !== 'admin' && activeForm !== 'staff' && (
+                {activeForm !== 'dashboard' && activeForm !== 'atr' && activeForm !== 'register' && (
                     <div className="nav-links">
                         <a href="#home" className={activeForm === 'tracking' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('tracking'); }}>Home</a>
                         <a href="#services" className={activeForm === 'services' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('services'); }}>Services</a>
@@ -161,11 +152,11 @@ function App({ onNavigate }) {
                         <a href="#contact" className={activeForm === 'contact' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('contact'); }}>Contact Us</a>
                     </div>
                 )}
-                {(activeForm === 'dashboard' || activeForm === 'admin' || activeForm === 'staff') && (
+                {activeForm === 'dashboard' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                        <span style={{ color: 'var(--text-secondary)', display: 'none', '@media(minWidth: 768px)': { display: 'block' } }}>Welcome, {loggedInUser === 'admin@sccourier.com' ? 'Admin' : (assignedStaff.includes(loggedInUser) ? 'Staff' : (loggedInUser || 'User'))}!</span>
+                        <span style={{ color: 'var(--text-secondary)', display: 'none', '@media(minWidth: 768px)': { display: 'block' } }}>Welcome, {loggedInUser || 'User'}!</span>
                         <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem', textTransform: 'uppercase' }}>
-                            {loggedInUser ? (loggedInUser === 'admin@sccourier.com' ? 'A' : (assignedStaff.includes(loggedInUser) ? 'S' : loggedInUser.charAt(0))) : 'U'}
+                            {loggedInUser ? loggedInUser.charAt(0) : 'U'}
                         </div>
                         <button className="nav-login-btn" onClick={() => { setLoggedInUser(null); setActiveForm('login'); }} style={{ marginLeft: '0.5rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                             <i className='bx bx-log-out'></i>
@@ -176,15 +167,7 @@ function App({ onNavigate }) {
             </nav>
 
             <main className="container">
-                {activeForm === 'admin' ? (
-                    <AdminDashboard 
-                        assignedStaff={assignedStaff}
-                        onAssignStaff={(email) => { if (!assignedStaff.includes(email)) setAssignedStaff([...assignedStaff, email]); }} 
-                        onRemoveStaff={(email) => setAssignedStaff(assignedStaff.filter(s => s !== email))}
-                    />
-                ) : activeForm === 'staff' ? (
-                    <StaffDashboard />
-                ) : activeForm === 'dashboard' ? (
+                {activeForm === 'dashboard' ? (
                     <CustomerDashboard onDeliver={() => setActiveForm('atr')} />
                 ) : activeForm === 'atr' ? (
                     <AtrForm onBack={() => setActiveForm('dashboard')} />
