@@ -4,7 +4,6 @@ CREATE TABLE Customer (
     cust_email VARCHAR(100),
     cust_address TEXT,
     cust_phoneNo VARCHAR(100) NOT NULL,
-    cust_password VARCHAR(255) NOT NULL,
     cust_type VARCHAR(100) NOT NULL,
     PRIMARY KEY (customer_id)
 );
