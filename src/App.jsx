@@ -85,34 +85,60 @@ function App({ onNavigate }) {
         }, 1200);
     };
 
-    const handleLogin = (e) => {
+    const handleLogin = async (e) => {
         e.preventDefault();
         if (!username || !password) return;
 
         setIsLoggingIn(true);
         setLoginSuccess(false);
 
-        setTimeout(() => {
-            setIsLoggingIn(false);
+        // Exceptional Admin Login
+        if (username === 'admin@sccourier.com' && password === 'admin123') {
             setLoginSuccess(true);
-
             setTimeout(() => {
-                setLoggedInUser(username);
-                if (username === 'admin@sccourier.com' && password === 'admin123') {
-                    setActiveForm('admin');
-                } else if (assignedStaff.includes(username)) {
-                    setActiveForm('staff');
-                } else {
-                    setActiveForm('dashboard');
-                }
+                setLoggedInUser('Admin');
+                setActiveForm('admin');
                 setLoginSuccess(false);
+                setIsLoggingIn(false);
                 setUsername('');
                 setPassword('');
             }, 1000);
-        }, 1500);
+            return;
+        }
+
+        try {
+            const response = await fetch('http://localhost:5000/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: username, password })
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                setLoginSuccess(true);
+                setTimeout(() => {
+                    setLoggedInUser(data.user.cust_name);
+                    if (assignedStaff.includes(username)) {
+                        setActiveForm('staff');
+                    } else {
+                        setActiveForm('dashboard');
+                    }
+                    setLoginSuccess(false);
+                    setUsername('');
+                    setPassword('');
+                }, 1000);
+            } else {
+                alert(data.message || 'Login failed');
+            }
+        } catch (error) {
+            console.error('Login error:', error);
+            alert('An error occurred during login');
+        } finally {
+            setIsLoggingIn(false);
+        }
     };
 
-    const handleRegister = (e) => {
+    const handleRegister = async (e) => {
         e.preventDefault();
         if (!custName || !custEmail || !custPhone || !custPassword || !custConfirm) return;
         if (custPassword !== custConfirm) {
@@ -123,21 +149,41 @@ function App({ onNavigate }) {
         setIsRegistering(true);
         setRegisterSuccess(false);
 
-        setTimeout(() => {
-            setIsRegistering(false);
-            setRegisterSuccess(true);
+        try {
+            const response = await fetch('http://localhost:5000/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: custName,
+                    email: custEmail,
+                    address: custAddress,
+                    phone: custPhone,
+                    password: custPassword
+                })
+            });
+            const data = await response.json();
 
-            setTimeout(() => {
-                setActiveForm('login');
-                setRegisterSuccess(false);
-                setCustName('');
-                setCustEmail('');
-                setCustAddress('');
-                setCustPhone('');
-                setCustPassword('');
-                setCustConfirm('');
-            }, 1500);
-        }, 1500);
+            if (data.success) {
+                setRegisterSuccess(true);
+                setTimeout(() => {
+                    setActiveForm('login');
+                    setRegisterSuccess(false);
+                    setCustName('');
+                    setCustEmail('');
+                    setCustAddress('');
+                    setCustPhone('');
+                    setCustPassword('');
+                    setCustConfirm('');
+                }, 1500);
+            } else {
+                alert(data.message || 'Registration failed');
+            }
+        } catch (error) {
+            console.error('Registration error:', error);
+            alert('An error occurred during registration');
+        } finally {
+            setIsRegistering(false);
+        }
     };
 
     return (

@@ -36,10 +36,28 @@ function AtrForm({ onBack }) {
         return map[formData.status] || 'pending';
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         console.log('ATR Form Submitted:', formData);
-        alert('Authorization To Request submitted successfully!');
+        
+        try {
+            const response = await fetch('http://localhost:5000/api/atr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                alert('Authorization To Request submitted successfully!');
+                handleReset();
+            } else {
+                alert(data.message || 'ATR submission failed');
+            }
+        } catch (error) {
+            console.error('ATR submission error:', error);
+            alert('An error occurred during submission');
+        }
     };
 
     const handleReset = () => {
