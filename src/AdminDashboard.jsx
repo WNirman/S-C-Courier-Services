@@ -1,17 +1,91 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from './supabaseClient';
 
 const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) => {
     const [showAssignForm, setShowAssignForm] = useState(false);
     const [staffEmail, setStaffEmail] = useState('');
     const [assignStatus, setAssignStatus] = useState('');
 
-    const handleAssignStaff = (e) => {
+    // Load staff from Supabase on mount
+    useEffect(() => {
+        const loadStaff = async () => {
+            const { data, error } = await supabase
+                .from('staff')
+                .select('staff_email')
+                .eq('staff_role', 'staff');
+            if (data && !error) {
+                data.forEach(s => {
+                    if (s.staff_email && onAssignStaff) onAssignStaff(s.staff_email);
+                });
+            }
+        };
+        loadStaff();
+    }, []);
+
+    const handleAssignStaff = async (e) => {
         e.preventDefault();
         if (!staffEmail) return;
 
         setAssignStatus('assigning');
-        
-        setTimeout(() => {
+
+        try {
+            // Check if already a staff member
+            const { data: existingStaff } = await supabase
+                .from('staff')
+                .select('staff_id')
+                .eq('staff_email', staffEmail)
+                .single();
+
+            if (existingStaff) {
+                alert('Staff member already assigned');
+                setAssignStatus('');
+                return;
+            }
+
+            // Check if user is a registered customer
+            const { data: customer } = await supabase
+                .from('customer')
+                .select('*')
+                .eq('cust_email', staffEmail)
+                .single();
+
+            if (!customer) {
+                alert('User is not registered. Cannot assign as staff.');
+                setAssignStatus('');
+                return;
+            }
+
+            // Ensure a branch exists
+            let { data: branches } = await supabase
+                .from('branch')
+                .select('branch_id')
+                .limit(1);
+
+            let branchId = 1;
+            if (!branches || branches.length === 0) {
+                const { data: newBranch } = await supabase
+                    .from('branch')
+                    .insert({ branch_location: 'Main Office' })
+                    .select('branch_id')
+                    .single();
+                branchId = newBranch.branch_id;
+            } else {
+                branchId = branches[0].branch_id;
+            }
+
+            // Insert staff
+            const { error } = await supabase.from('staff').insert({
+                staff_name: customer.cust_name || 'New Staff',
+                staff_email: staffEmail,
+                staff_phone: customer.cust_phoneno || '555-0000',
+                branch_id: branchId,
+                staff_role: 'staff',
+                staff_active_status: true,
+                staff_password: customer.cust_password,
+            });
+
+            if (error) throw error;
+
             setAssignStatus('success');
             if (onAssignStaff) onAssignStaff(staffEmail);
             setTimeout(() => {
@@ -19,7 +93,11 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
                 setStaffEmail('');
                 setAssignStatus('');
             }, 1500);
-        }, 1000);
+        } catch (err) {
+            console.error('Assign staff error:', err);
+            alert('Failed to assign staff. Please try again.');
+            setAssignStatus('');
+        }
     };
     // Sample dummy data for admin view
     const stats = [

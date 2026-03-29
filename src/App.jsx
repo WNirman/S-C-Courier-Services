@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { supabase } from './supabaseClient';
 import logoImg from './assets/favicon.png';
 import servicesGif from './assets/services.gif';
 import aboutGif from './assets/about.gif';
@@ -85,34 +86,91 @@ function App({ onNavigate }) {
         }, 1200);
     };
 
-    const handleLogin = (e) => {
+    const handleLogin = async (e) => {
         e.preventDefault();
         if (!username || !password) return;
 
         setIsLoggingIn(true);
         setLoginSuccess(false);
 
-        setTimeout(() => {
-            setIsLoggingIn(false);
-            setLoginSuccess(true);
-
-            setTimeout(() => {
-                setLoggedInUser(username);
-                if (username === 'admin@sccourier.com' && password === 'admin123') {
+        try {
+            // 1. Check Admin Hardcode
+            if (username === 'admin@sccourier.com' && password === 'admin123') {
+                setIsLoggingIn(false);
+                setLoginSuccess(true);
+                setTimeout(() => {
+                    setLoggedInUser(username);
                     setActiveForm('admin');
-                } else if (assignedStaff.includes(username)) {
-                    setActiveForm('staff');
+                    setLoginSuccess(false);
+                    setUsername('');
+                    setPassword('');
+                }, 1000);
+                return;
+            }
+
+            // 2. Check Staff Table
+            const { data: staffData } = await supabase
+                .from('staff')
+                .select('*')
+                .eq('staff_email', username)
+                .single();
+
+            if (staffData) {
+                if (staffData.staff_password === password) {
+                    setIsLoggingIn(false);
+                    setLoginSuccess(true);
+                    setTimeout(() => {
+                        setLoggedInUser(username);
+                        setActiveForm('staff');
+                        setLoginSuccess(false);
+                        setUsername('');
+                        setPassword('');
+                    }, 1000);
+                    return;
                 } else {
-                    setActiveForm('dashboard');
+                    alert('Incorrect staff password');
+                    setIsLoggingIn(false);
+                    return;
                 }
-                setLoginSuccess(false);
-                setUsername('');
-                setPassword('');
-            }, 1000);
-        }, 1500);
+            }
+
+            // 3. Check Customer Table
+            const { data: custData } = await supabase
+                .from('customer')
+                .select('*')
+                .eq('cust_email', username)
+                .single();
+
+            if (custData) {
+                if (custData.cust_password === password) {
+                    setIsLoggingIn(false);
+                    setLoginSuccess(true);
+                    setTimeout(() => {
+                        setLoggedInUser(username);
+                        setActiveForm('dashboard');
+                        setLoginSuccess(false);
+                        setUsername('');
+                        setPassword('');
+                    }, 1000);
+                    return;
+                } else {
+                    alert('Incorrect customer password');
+                    setIsLoggingIn(false);
+                    return;
+                }
+            }
+
+            // Not found
+            alert('User not found in system');
+            setIsLoggingIn(false);
+        } catch (err) {
+            console.error('Login error:', err);
+            alert('Login error. Please try again.');
+            setIsLoggingIn(false);
+        }
     };
 
-    const handleRegister = (e) => {
+    const handleRegister = async (e) => {
         e.preventDefault();
         if (!custName || !custEmail || !custPhone || !custPassword || !custConfirm) return;
         if (custPassword !== custConfirm) {
@@ -120,10 +178,45 @@ function App({ onNavigate }) {
             return;
         }
 
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(custEmail)) {
+            alert('Invalid email format');
+            return;
+        }
+        if (custPassword.length < 6) {
+            alert('Password must be at least 6 characters');
+            return;
+        }
+
         setIsRegistering(true);
         setRegisterSuccess(false);
 
-        setTimeout(() => {
+        try {
+            // Check if email already exists
+            const { data: existing } = await supabase
+                .from('customer')
+                .select('customer_id')
+                .eq('cust_email', custEmail)
+                .single();
+
+            if (existing) {
+                alert('Email already registered!');
+                setIsRegistering(false);
+                return;
+            }
+
+            // Insert new customer
+            const { error } = await supabase.from('customer').insert({
+                cust_name: custName,
+                cust_email: custEmail,
+                cust_address: custAddress || 'N/A',
+                cust_phoneno: custPhone,
+                cust_type: 'Regular',
+                cust_password: custPassword,
+            });
+
+            if (error) throw error;
+
             setIsRegistering(false);
             setRegisterSuccess(true);
 
@@ -137,7 +230,11 @@ function App({ onNavigate }) {
                 setCustPassword('');
                 setCustConfirm('');
             }, 1500);
-        }, 1500);
+        } catch (err) {
+            console.error('Registration error:', err);
+            alert('Registration failed. Please try again.');
+            setIsRegistering(false);
+        }
     };
 
     return (
@@ -180,7 +277,10 @@ function App({ onNavigate }) {
                     <AdminDashboard 
                         assignedStaff={assignedStaff}
                         onAssignStaff={(email) => { if (!assignedStaff.includes(email)) setAssignedStaff([...assignedStaff, email]); }} 
-                        onRemoveStaff={(email) => setAssignedStaff(assignedStaff.filter(s => s !== email))}
+                        onRemoveStaff={async (email) => {
+                            await supabase.from('staff').delete().eq('staff_email', email);
+                            setAssignedStaff(assignedStaff.filter(s => s !== email));
+                        }}
                     />
                 ) : activeForm === 'staff' ? (
                     <StaffDashboard />
