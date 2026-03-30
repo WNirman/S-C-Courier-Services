@@ -1,0 +1,761 @@
+import React, { useState, useCallback } from 'react';
+import Cropper from 'react-easy-crop';
+import getCroppedImg from './utils/cropImage';
+import logoImg from './assets/favicon.png';
+import servicesGif from './assets/services.gif';
+import aboutGif from './assets/about.gif';
+import contactGif from './assets/contact.gif';
+import CustomerDashboard from './CustomerDashboard';
+import AtrForm from './AtrForm';
+
+function App({ onNavigate }) {
+    const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
+    const [showPassword, setShowPassword] = useState(false);
+
+    // Tracking State
+    const [trackingNumber, setTrackingNumber] = useState('');
+    const [isTracking, setIsTracking] = useState(false);
+    const [trackingResult, setTrackingResult] = useState(null);
+
+    // Login State
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [isLoggingIn, setIsLoggingIn] = useState(false);
+    const [loginSuccess, setLoginSuccess] = useState(false);
+    const [loggedInUser, setLoggedInUser] = useState(null);
+    const [showProfileMenu, setShowProfileMenu] = useState(false);
+    const [profilePic, setProfilePic] = useState(null);
+    const [imageToCrop, setImageToCrop] = useState(null);
+    const [crop, setCrop] = useState({ x: 0, y: 0 });
+    const [zoom, setZoom] = useState(1);
+    const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
+
+    // Hardcoded user details for the profile menu
+    const userDetails = {
+        name: loggedInUser || 'Customer User',
+        email: 'customer@sccourier.com',
+        phone: '+1 555-123-4567',
+        memberSince: 'Oct 2023'
+    };
+
+    const handleProfilePicChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setImageToCrop(reader.result);
+                setShowProfileMenu(false);
+            };
+            reader.readAsDataURL(file);
+            e.target.value = null; // reset input
+        }
+    };
+
+    const handleCropComplete = useCallback((croppedArea, croppedAreaPixels) => {
+        setCroppedAreaPixels(croppedAreaPixels);
+    }, []);
+
+    const handleCropSave = async () => {
+        try {
+            const croppedImageBase64 = await getCroppedImg(imageToCrop, croppedAreaPixels, 0);
+            setProfilePic(croppedImageBase64);
+            setImageToCrop(null);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const handleCropCancel = () => {
+        setImageToCrop(null);
+    };
+
+    // Registration State
+    const [custName, setCustName] = useState('');
+    const [custEmail, setCustEmail] = useState('');
+    const [custAddress, setCustAddress] = useState('');
+    const [custPhone, setCustPhone] = useState('');
+    const [custPassword, setCustPassword] = useState('');
+    const [custConfirm, setCustConfirm] = useState('');
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [registerSuccess, setRegisterSuccess] = useState(false);
+
+    // Forgot Password State
+    const [forgotEmail, setForgotEmail] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmNewPassword, setConfirmNewPassword] = useState('');
+    const [isResetting, setIsResetting] = useState(false);
+    const [resetSuccess, setResetSuccess] = useState(false);
+
+    const handleResetPassword = (e) => {
+        e.preventDefault();
+        if (!forgotEmail || !newPassword || !confirmNewPassword) return;
+
+        if (newPassword !== confirmNewPassword) {
+            alert('Passwords do not match');
+            return;
+        }
+
+        setIsResetting(true);
+        setResetSuccess(false);
+
+        setTimeout(() => {
+            setIsResetting(false);
+            setResetSuccess(true);
+            setTimeout(() => {
+                setActiveForm('login');
+                setResetSuccess(false);
+                setForgotEmail('');
+                setNewPassword('');
+                setConfirmNewPassword('');
+            }, 1500);
+        }, 1500);
+    };
+
+    const handleTrackPackage = (e) => {
+        e.preventDefault();
+        if (!trackingNumber) return;
+
+        setIsTracking(true);
+        setTrackingResult(null);
+
+        setTimeout(() => {
+            setIsTracking(false);
+            setTrackingResult({
+                id: trackingNumber,
+                status: 'In Transit',
+                location: 'Distribution Center, NY',
+                progress: 60
+            });
+        }, 1200);
+    };
+
+    const handleLogin = (e) => {
+        e.preventDefault();
+        if (!username || !password) return;
+
+        setIsLoggingIn(true);
+        setLoginSuccess(false);
+
+        setTimeout(() => {
+            setIsLoggingIn(false);
+            setLoginSuccess(true);
+
+            setTimeout(() => {
+                setLoggedInUser(username);
+                setActiveForm('dashboard');
+                setLoginSuccess(false);
+                setUsername('');
+                setPassword('');
+            }, 1000);
+        }, 1500);
+    };
+
+    const handleRegister = (e) => {
+        e.preventDefault();
+        if (!custName || !custEmail || !custPhone || !custPassword || !custConfirm) return;
+        if (custPassword !== custConfirm) {
+            alert('Passwords do not match');
+            return;
+        }
+
+        setIsRegistering(true);
+        setRegisterSuccess(false);
+
+        setTimeout(() => {
+            setIsRegistering(false);
+            setRegisterSuccess(true);
+
+            setTimeout(() => {
+                setActiveForm('login');
+                setRegisterSuccess(false);
+                setCustName('');
+                setCustEmail('');
+                setCustAddress('');
+                setCustPhone('');
+                setCustPassword('');
+                setCustConfirm('');
+            }, 1500);
+        }, 1500);
+    };
+
+    return (
+        <>
+            <div className="background-elements">
+                <div className="orb orb-1"></div>
+                <div className="orb orb-2"></div>
+                <div className="orb orb-3"></div>
+            </div>
+
+            <nav className="navbar">
+                <div className="logo" onClick={() => setActiveForm('tracking')}>
+                    <img src={logoImg} alt="SC Courier" style={{ height: '70px' }} />
+                    <span>SC Courier</span>
+                </div>
+                {activeForm !== 'dashboard' && activeForm !== 'atr' && activeForm !== 'register' && (
+                    <div className="nav-links">
+                        <a href="#home" className={activeForm === 'tracking' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('tracking'); }}>Home</a>
+                        <a href="#services" className={activeForm === 'services' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('services'); }}>Services</a>
+                        <a href="#about" className={activeForm === 'about' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('about'); }}>About</a>
+                        <a href="#contact" className={activeForm === 'contact' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveForm('contact'); }}>Contact Us</a>
+                    </div>
+                )}
+                {activeForm === 'dashboard' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', position: 'relative' }}>
+                        <span style={{ color: '#fff', fontWeight: '500', marginRight: '0.2rem' }}>
+                            {userDetails.name}
+                        </span>
+                        <div
+                            onClick={() => setShowProfileMenu(!showProfileMenu)}
+                            style={{ width: '40px', height: '40px', borderRadius: '50%', background: profilePic ? 'transparent' : 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem', textTransform: 'uppercase', cursor: 'pointer', border: '2px solid var(--card-border)', overflow: 'hidden', transition: 'all 0.3s ease' }}
+                        >
+                            {profilePic ? (
+                                <img src={profilePic} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                                loggedInUser ? loggedInUser.charAt(0) : 'U'
+                            )}
+                        </div>
+
+                        {showProfileMenu && (
+                            <div style={{ position: 'absolute', top: '55px', right: '0', width: '280px', background: 'rgba(15, 15, 15, 0.95)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', border: '1px solid var(--card-border)', borderRadius: '16px', padding: '1.5rem', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', zIndex: 1000, animation: 'fadeIn 0.3s ease', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', borderBottom: '1px solid var(--card-border)', paddingBottom: '1rem', position: 'relative' }}>
+                                    <div style={{ width: '70px', height: '70px', borderRadius: '50%', background: profilePic ? 'transparent' : 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '2rem', textTransform: 'uppercase', marginBottom: '0.8rem', overflow: 'hidden', border: '2px solid var(--card-border)' }}>
+                                        {profilePic ? <img src={profilePic} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (loggedInUser ? loggedInUser.charAt(0) : 'U')}
+                                    </div>
+                                    <h3 style={{ margin: 0, color: '#fff', fontSize: '1.1rem' }}>{userDetails.name}</h3>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{userDetails.email}</span>
+                                </div>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span><i className='bx bx-phone' style={{ marginRight: '0.3rem' }}></i>Phone:</span>
+                                        <span style={{ color: '#fff' }}>{userDetails.phone}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span><i className='bx bx-calendar' style={{ marginRight: '0.3rem' }}></i>Member Since:</span>
+                                        <span style={{ color: '#fff' }}>{userDetails.memberSince}</span>
+                                    </div>
+                                </div>
+
+                                <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexDirection: 'column' }}>
+                                    <input id="profile-upload" type="file" accept="image/*" onChange={handleProfilePicChange} style={{ display: 'none' }} />
+                                    <button onClick={() => document.getElementById('profile-upload').click()} style={{ width: '100%', padding: '0.8rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'all 0.3s ease', fontSize: '0.95rem' }} onMouseOver={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'} onMouseOut={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}>
+                                        <i className='bx bx-image-add' style={{ fontSize: '1.1rem' }}></i> Change Picture
+                                    </button>
+                                    <button onClick={() => { setShowProfileMenu(false); setLoggedInUser(null); setActiveForm('login'); }} style={{ width: '100%', padding: '0.8rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'all 0.3s ease', fontSize: '0.95rem' }} onMouseOver={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'} onMouseOut={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}>
+                                        <i className='bx bx-log-out' style={{ fontSize: '1.1rem' }}></i> Logout
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </nav>
+
+            <main className="container">
+                {activeForm === 'dashboard' ? (
+                    <CustomerDashboard onDeliver={() => setActiveForm('atr')} />
+                ) : activeForm === 'atr' ? (
+                    <AtrForm onBack={() => setActiveForm('dashboard')} />
+                ) : activeForm === 'register' ? (
+                    <div className="atr-page">
+                        <div className="atr-split-layout">
+                            <div className="atr-left-panel">
+                                <div className="atr-left-content">
+                                    <div className="atr-left-logo" onClick={() => setActiveForm('tracking')} style={{ cursor: 'pointer' }}>
+                                        <img src={logoImg} alt="SC Courier" />
+                                        <span>SC Courier</span>
+                                    </div>
+                                    <h2>Register <br /><span className="atr-highlight">Now</span></h2>
+                                    <p>All fields are required to create an account.</p>
+                                    <div className="atr-lottie-container">
+                                        <lottie-player
+                                            src="https://assets3.lottiefiles.com/packages/lf20_kdx6cani.json"
+                                            background="transparent"
+                                            speed="1"
+                                            loop
+                                            autoplay
+                                        ></lottie-player>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="atr-right-panel">
+                                <div className="atr-form-header">
+                                    <h1><i className='bx bx-user-plus'></i> Customer Registration</h1>
+                                    <p>Provide the details below</p>
+                                </div>
+                                <form onSubmit={handleRegister}>
+                                    <div className="atr-form-row">
+                                        <div className="atr-form-group">
+                                            <label>Full Name <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-user'></i>
+                                                <input
+                                                    type="text"
+                                                    value={custName}
+                                                    onChange={(e) => setCustName(e.target.value)}
+                                                    placeholder="Enter full name"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="atr-form-group">
+                                            <label>Email <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-envelope'></i>
+                                                <input
+                                                    type="email"
+                                                    value={custEmail}
+                                                    onChange={(e) => setCustEmail(e.target.value)}
+                                                    placeholder="Enter email"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="atr-form-row">
+                                        <div className="atr-form-group">
+                                            <label>Address <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-map'></i>
+                                                <input
+                                                    type="text"
+                                                    value={custAddress}
+                                                    onChange={(e) => setCustAddress(e.target.value)}
+                                                    placeholder="Enter address"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="atr-form-group">
+                                            <label>Phone Number <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-phone'></i>
+                                                <input
+                                                    type="tel"
+                                                    value={custPhone}
+                                                    onChange={(e) => setCustPhone(e.target.value)}
+                                                    placeholder="Enter phone number"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="atr-form-row">
+                                        <div className="atr-form-group">
+                                            <label>Password <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-lock-alt'></i>
+                                                <input
+                                                    type="password"
+                                                    value={custPassword}
+                                                    onChange={(e) => setCustPassword(e.target.value)}
+                                                    placeholder="Create a password"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="atr-form-group">
+                                            <label>Confirm Password <span className="required">*</span></label>
+                                            <div className="atr-input-with-icon">
+                                                <i className='bx bx-lock-alt'></i>
+                                                <input
+                                                    type="password"
+                                                    value={custConfirm}
+                                                    onChange={(e) => setCustConfirm(e.target.value)}
+                                                    placeholder="Re-enter password"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="atr-form-actions-bar">
+                                        <button type="submit" className="atr-btn atr-btn-primary" disabled={isRegistering || registerSuccess}>
+                                            {isRegistering ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Registering...</>
+                                            ) : registerSuccess ? (
+                                                <><i className='bx bx-check'></i> Success</>
+                                            ) : (
+                                                <><span>Create Account</span></>
+                                            )}
+                                        </button>
+                                    </div>
+                                </form>
+                                <button type="button" className="back-btn" onClick={() => setActiveForm('login')}>
+                                    <i className='bx bx-left-arrow-alt'></i> Back to Login
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="main-content">
+                        {(activeForm === 'services' || activeForm === 'about' || activeForm === 'contact') && (
+                            <div className="action-card video-card" style={{ marginRight: '4rem', animation: 'slideInLeft 0.8s ease-out forwards' }}>
+                                <div className="form-container active" style={{ padding: 0, overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', borderRadius: '12px' }}>
+                                    <img
+                                        src={activeForm === 'services' ? servicesGif : activeForm === 'about' ? aboutGif : contactGif}
+                                        alt={`${activeForm} Animation`}
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '12px' }}
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        <div key={activeForm} className="text-section" style={{ animation: (activeForm === 'services' || activeForm === 'about' || activeForm === 'contact') ? 'none' : 'fadeUp 1s ease backwards' }}>
+                            {activeForm === 'services' ? (
+                                <>
+                                    <h1 style={{ animation: 'slideInRight 0.8s ease-out backwards' }}>Our <br /><span className="highlight">Services</span></h1>
+                                    <p style={{ animation: 'slideInRight 0.8s ease-out backwards 0.15s' }}>We provide comprehensive courier services tailored to your needs. From individual customers wanting standard shipping to companies requiring bulk distribution, we have you covered.</p>
+                                    <ul style={{ marginTop: '1.5rem', listStyle: 'none', color: 'var(--text-secondary)' }}>
+                                        <li style={{ marginBottom: '0.8rem', display: 'flex', alignItems: 'center', animation: 'slideInRight 0.8s ease-out backwards 0.3s' }}><i className='bx bx-check-circle' style={{ color: 'var(--success)', marginRight: '0.8rem', fontSize: '1.2rem' }}></i> Corporate Partnerships</li>
+                                        <li style={{ marginBottom: '0.8rem', display: 'flex', alignItems: 'center', animation: 'slideInRight 0.8s ease-out backwards 0.45s' }}><i className='bx bx-check-circle' style={{ color: 'var(--success)', marginRight: '0.8rem', fontSize: '1.2rem' }}></i> Individual & Commercial Shipping</li>
+                                        <li style={{ marginBottom: '0.8rem', display: 'flex', alignItems: 'center', animation: 'slideInRight 0.8s ease-out backwards 0.6s' }}><i className='bx bx-check-circle' style={{ color: 'var(--success)', marginRight: '0.8rem', fontSize: '1.2rem' }}></i> Same-Day Local Delivery</li>
+                                        <li style={{ marginBottom: '0.8rem', display: 'flex', alignItems: 'center', animation: 'slideInRight 0.8s ease-out backwards 0.75s' }}><i className='bx bx-check-circle' style={{ color: 'var(--success)', marginRight: '0.8rem', fontSize: '1.2rem' }}></i> Secure Package Handling</li>
+                                    </ul>
+                                </>
+                            ) : activeForm === 'about' ? (
+                                <>
+                                    <h1 style={{ animation: 'slideInRight 0.8s ease-out backwards' }}>About <br /><span className="highlight">Us</span></h1>
+                                    <p style={{ animation: 'slideInRight 0.8s ease-out backwards 0.2s' }}>SC Courier is dedicated to fast, reliable, and secure package delivery. We built this web application to streamline our operations, providing our customers with real-time tracking, hassle-free registration, and effective management for all courier services.</p>
+                                    <p style={{ marginTop: '1rem', animation: 'slideInRight 0.8s ease-out backwards 0.4s' }}>Our mission is to bridge the gap between people and businesses with cutting-edge technology and a committed delivery fleet.</p>
+                                </>
+                            ) : activeForm === 'contact' ? (
+                                <>
+                                    <h1 style={{ animation: 'slideInRight 0.8s ease-out backwards' }}>Contact <br /><span className="highlight">Us</span></h1>
+                                    <p style={{ animation: 'slideInRight 0.8s ease-out backwards 0.15s' }}>Have questions, or need support with your shipments? Reach out to our dedicated team anytime.</p>
+                                    <div style={{ marginTop: '2rem', color: 'var(--text-secondary)' }}>
+                                        <p style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', animation: 'slideInRight 0.8s ease-out backwards 0.3s' }}><i className='bx bx-phone' style={{ color: 'var(--accent-color)', marginRight: '1rem', fontSize: '1.4rem' }}></i> +1 (555) 123-4567</p>
+                                        <p style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', animation: 'slideInRight 0.8s ease-out backwards 0.45s' }}><i className='bx bx-envelope' style={{ color: 'var(--accent-color)', marginRight: '1rem', fontSize: '1.4rem' }}></i> support@sccourier.com</p>
+                                        <p style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', animation: 'slideInRight 0.8s ease-out backwards 0.6s' }}><i className='bx bx-map' style={{ color: 'var(--accent-color)', marginRight: '1rem', fontSize: '1.4rem' }}></i> 123 Logistics Way, NY 10001</p>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <h1>Track Your <br /><span className="highlight">Delivery</span> Instantly</h1>
+                                    <p>Enter your tracking number below to get real-time updates on your package location and delivery status.</p>
+                                </>
+                            )}
+                        </div>
+
+                        {(activeForm === 'tracking' || activeForm === 'login' || activeForm === 'forgot') && (
+                            <div className="action-card">
+                                {/* Tracking Form */}
+                                {activeForm === 'tracking' && (
+                                    <div className="form-container active" style={{ animation: 'fadeIn 0.4s ease' }}>
+                                        <div className="card-header">
+                                            <h2><i className='bx bx-search-alt'></i> Track Package</h2>
+                                            <p>Non-registered customers can track here</p>
+                                        </div>
+                                        <form onSubmit={handleTrackPackage}>
+                                            <div className="input-group">
+                                                <i className='bx bx-box input-icon'></i>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Enter Tracking Number (e.g. SC12345678)"
+                                                    required
+                                                    autoComplete="off"
+                                                    value={trackingNumber}
+                                                    onChange={(e) => setTrackingNumber(e.target.value)}
+                                                />
+                                                <button type="submit" className="primary-btn pulse-effect" disabled={isTracking}>
+                                                    {isTracking ? (
+                                                        <i className='bx bx-loader-alt bx-spin'></i>
+                                                    ) : (
+                                                        <>
+                                                            <span>Track</span>
+                                                            <i className='bx bx-right-arrow-alt'></i>
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </div>
+
+                                            {trackingResult && (
+                                                <div className="tracking-result">
+                                                    <div className="tracking-status">
+                                                        <div className="status-indicator"></div>
+                                                        <span>{trackingResult.status}</span>
+                                                    </div>
+                                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>
+                                                        <strong>ID:</strong> {trackingResult.id}
+                                                    </p>
+                                                    <p style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>
+                                                        <i className='bx bx-map pin' style={{ color: 'var(--accent-color)' }}></i> Currently at {trackingResult.location}
+                                                    </p>
+                                                    <div style={{ marginTop: '1rem', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px' }}>
+                                                        <div style={{ width: `${trackingResult.progress}%`, height: '100%', background: 'var(--success)', borderRadius: '2px' }}></div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </form>
+
+                                        <div className="divider">
+                                            <span>OR</span>
+                                        </div>
+
+                                        <div className="login-prompt">
+                                            <p>Have an account with us?</p>
+                                            <button type="button" className="secondary-btn" onClick={() => setActiveForm('login')}>
+                                                Login to Account
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Login Form */}
+                                {activeForm === 'login' && (
+                                    <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
+                                        <div className="card-header">
+                                            <h2><i className='bx bx-user'></i> Welcome Back</h2>
+                                            <p>Login to manage your shipments</p>
+                                        </div>
+                                        <form onSubmit={handleLogin}>
+                                            <div className="form-control">
+                                                <label htmlFor="username">Email or Username</label>
+                                                <div className="input-wrapper">
+                                                    <i className='bx bx-envelope input-icon'></i>
+                                                    <input
+                                                        type="text"
+                                                        id="username"
+                                                        placeholder="Enter your email"
+                                                        required
+                                                        autoComplete="username"
+                                                        value={username}
+                                                        onChange={(e) => setUsername(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="form-control">
+                                                <label htmlFor="password">Password</label>
+                                                <div className="input-wrapper">
+                                                    <i className='bx bx-lock-alt input-icon'></i>
+                                                    <input
+                                                        type={showPassword ? "text" : "password"}
+                                                        id="password"
+                                                        placeholder="Enter your password"
+                                                        required
+                                                        autoComplete="current-password"
+                                                        value={password}
+                                                        onChange={(e) => setPassword(e.target.value)}
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        className="eye-btn"
+                                                        onClick={() => setShowPassword(!showPassword)}
+                                                    >
+                                                        <i className={`bx ${showPassword ? 'bx-show' : 'bx-hide'}`}></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="form-actions">
+                                                <label className="checkbox-container">
+                                                    <input type="checkbox" id="rememberMe" />
+                                                    <span className="checkmark"></span>
+                                                    Remember me
+                                                </label>
+                                                <a href="#" className="forgot-link" onClick={(e) => { e.preventDefault(); setActiveForm('forgot'); }}>Forgot Password?</a>
+                                            </div>
+                                            <button
+                                                type="submit"
+                                                className="primary-btn full-width"
+                                                disabled={isLoggingIn || loginSuccess}
+                                                style={loginSuccess ? { background: 'var(--success)', boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)' } : {}}
+                                            >
+                                                {isLoggingIn ? (
+                                                    <><i className='bx bx-loader-alt bx-spin'></i> Logging in...</>
+                                                ) : loginSuccess ? (
+                                                    <><i className='bx bx-check'></i> Success</>
+                                                ) : (
+                                                    <>
+                                                        <span>Login to Dashboard</span>
+                                                        <i className='bx bx-log-in-circle'></i>
+                                                    </>
+                                                )}
+                                            </button>
+                                        </form>
+
+                                        <div className="divider">
+                                            <span>OR</span>
+                                        </div>
+                                        <div className="login-prompt">
+                                            <p>Don't have an account?</p>
+                                            <button type="button" className="secondary-btn" onClick={() => setActiveForm('register')}>
+                                                Register Now
+                                            </button>
+                                        </div>
+
+                                        <button type="button" className="back-btn" onClick={() => setActiveForm('tracking')}>
+                                            <i className='bx bx-left-arrow-alt'></i> Back to Tracking
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Forgot Password Form */}
+                                {activeForm === 'forgot' && (
+                                    <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
+                                        <div className="card-header">
+                                            <h2><i className='bx bx-lock-open-alt'></i> Reset Password</h2>
+                                            <p>Enter your details to reset your password</p>
+                                        </div>
+                                        <form onSubmit={handleResetPassword}>
+                                            <div className="form-control">
+                                                <label>Email</label>
+                                                <div className="input-wrapper">
+                                                    <i className='bx bx-envelope input-icon'></i>
+                                                    <input
+                                                        type="email"
+                                                        placeholder="Enter your email"
+                                                        required
+                                                        value={forgotEmail}
+                                                        onChange={(e) => setForgotEmail(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="form-control">
+                                                <label>New Password</label>
+                                                <div className="input-wrapper">
+                                                    <i className='bx bx-lock-alt input-icon'></i>
+                                                    <input
+                                                        type="password"
+                                                        placeholder="Enter new password"
+                                                        required
+                                                        value={newPassword}
+                                                        onChange={(e) => setNewPassword(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="form-control">
+                                                <label>Confirm Password</label>
+                                                <div className="input-wrapper">
+                                                    <i className='bx bx-lock-alt input-icon'></i>
+                                                    <input
+                                                        type="password"
+                                                        placeholder="Confirm new password"
+                                                        required
+                                                        value={confirmNewPassword}
+                                                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="submit"
+                                                className="primary-btn full-width"
+                                                style={{ marginTop: '1rem', ...(resetSuccess ? { background: 'var(--success)', boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)' } : {}) }}
+                                                disabled={isResetting || resetSuccess}
+                                            >
+                                                {isResetting ? (
+                                                    <><i className='bx bx-loader-alt bx-spin'></i> Resetting...</>
+                                                ) : resetSuccess ? (
+                                                    <><i className='bx bx-check'></i> Password Reset</>
+                                                ) : (
+                                                    <>
+                                                        <span>Reset Password</span>
+                                                        <i className='bx bx-check-circle'></i>
+                                                    </>
+                                                )}
+                                            </button>
+                                        </form>
+
+                                        <button type="button" className="back-btn" onClick={() => setActiveForm('login')} style={{ marginTop: '1.5rem' }}>
+                                            <i className='bx bx-left-arrow-alt'></i> Back to Login
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </main>
+
+            {/* Profile Picture Crop Modal */}
+            {imageToCrop && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.85)',
+                    zIndex: 9999,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '2rem',
+                    backdropFilter: 'blur(5px)'
+                }}>
+                    <div style={{
+                        position: 'relative',
+                        width: '100%',
+                        maxWidth: '500px',
+                        height: '400px',
+                        backgroundColor: '#111',
+                        borderRadius: '16px',
+                        overflow: 'hidden',
+                        boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+                        border: '1px solid var(--card-border)'
+                    }}>
+                        <Cropper
+                            image={imageToCrop}
+                            crop={crop}
+                            zoom={zoom}
+                            aspect={1}
+                            cropShape="round"
+                            showGrid={false}
+                            onCropChange={setCrop}
+                            onCropComplete={handleCropComplete}
+                            onZoomChange={setZoom}
+                        />
+                    </div>
+                    <div style={{
+                        marginTop: '2rem',
+                        display: 'flex',
+                        gap: '1rem',
+                        width: '100%',
+                        maxWidth: '500px'
+                    }}>
+                        <button
+                            onClick={handleCropCancel}
+                            style={{
+                                flex: 1,
+                                padding: '1rem',
+                                background: 'rgba(255,255,255,0.05)',
+                                border: '1px solid var(--card-border)',
+                                color: '#fff',
+                                borderRadius: '12px',
+                                cursor: 'pointer',
+                                fontSize: '1rem',
+                                transition: 'all 0.3s ease'
+                            }}
+                            onMouseOver={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                            onMouseOut={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleCropSave}
+                            style={{
+                                flex: 2,
+                                padding: '1rem',
+                                background: 'var(--accent-color)',
+                                border: 'none',
+                                color: '#fff',
+                                borderRadius: '12px',
+                                cursor: 'pointer',
+                                fontSize: '1rem',
+                                fontWeight: 'bold',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '0.5rem',
+                                boxShadow: '0 4px 15px rgba(249, 115, 22, 0.4)',
+                                transition: 'all 0.3s ease'
+                            }}
+                            onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                        >
+                            <i className='bx bx-check-circle'></i> Apply & Save
+                        </button>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
+export default App;
