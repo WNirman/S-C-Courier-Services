@@ -1113,3 +1113,19 @@ body::before {
         font-size: 1.4rem;
     }
 }
+
+/* Custom styling for calendar and time picker indicators in ATR form (Webkit) */
+.atr-form-group input[type="date"]::-webkit-calendar-picker-indicator,
+.atr-form-group input[type="time"]::-webkit-calendar-picker-indicator,
+.atr-form-group input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+}
+
+.atr-form-group input[type="date"]::-webkit-calendar-picker-indicator:hover,
+.atr-form-group input[type="time"]::-webkit-calendar-picker-indicator:hover,
+.atr-form-group input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}

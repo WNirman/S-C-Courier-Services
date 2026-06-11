@@ -130,22 +130,57 @@ function AtrForm({ onBack }) {
                         <div className="atr-form-row three-col">
                             <div className="atr-form-group">
                                 <label>Required Date <span className="required">*</span></label>
-                                <input type="date" name="requiredDate" value={formData.requiredDate} onChange={handleChange} required />
+                                <div className="atr-input-with-icon">
+                                    <i className='bx bx-calendar'></i>
+                                    <input 
+                                        type="date" 
+                                        name="requiredDate" 
+                                        value={formData.requiredDate} 
+                                        onChange={handleChange} 
+                                        onClick={(e) => {
+                                            try {
+                                                e.target.showPicker();
+                                            } catch (err) {
+                                                console.error(err);
+                                            }
+                                        }}
+                                        required 
+                                    />
+                                </div>
                             </div>
                             <div className="atr-form-group">
                                 <label>Required Time <span className="required">*</span></label>
-                                <input type="time" name="requiredTime" value={formData.requiredTime} onChange={handleChange} required />
+                                <div className="atr-input-with-icon">
+                                    <i className='bx bx-time'></i>
+                                    <input 
+                                        type="time" 
+                                        name="requiredTime" 
+                                        value={formData.requiredTime} 
+                                        onChange={handleChange} 
+                                        onClick={(e) => {
+                                            try {
+                                                e.target.showPicker();
+                                            } catch (err) {
+                                                console.error(err);
+                                            }
+                                        }}
+                                        required 
+                                    />
+                                </div>
                             </div>
                             <div className="atr-form-group">
                                 <label>Vehicle Type <span className="required">*</span></label>
-                                <select name="vehicleType" value={formData.vehicleType} onChange={handleChange} required>
-                                    <option value="" disabled>Select Vehicle</option>
-                                    <option value="Van">Van</option>
-                                    <option value="Bike">Bike</option>
-                                    <option value="Truck">Truck</option>
-                                    <option value="Car">Car</option>
-                                    <option value="Three-Wheeler">Three-Wheeler</option>
-                                </select>
+                                <div className="atr-input-with-icon">
+                                    <i className='bx bx-car'></i>
+                                    <select name="vehicleType" value={formData.vehicleType} onChange={handleChange} required>
+                                        <option value="" disabled>Select Vehicle</option>
+                                        <option value="Van">Van</option>
+                                        <option value="Bike">Bike</option>
+                                        <option value="Truck">Truck</option>
+                                        <option value="Car">Car</option>
+                                        <option value="Three-Wheeler">Three-Wheeler</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
 
@@ -261,7 +296,22 @@ function AtrForm({ onBack }) {
                             </div>
                             <div className="atr-form-group">
                                 <label>Approval Date & Time</label>
-                                <input type="datetime-local" name="approvalDate" value={formData.approvalDate} onChange={handleChange} />
+                                <div className="atr-input-with-icon">
+                                    <i className='bx bx-calendar-edit'></i>
+                                    <input 
+                                        type="datetime-local" 
+                                        name="approvalDate" 
+                                        value={formData.approvalDate} 
+                                        onChange={handleChange} 
+                                        onClick={(e) => {
+                                            try {
+                                                e.target.showPicker();
+                                            } catch (err) {
+                                                console.error(err);
+                                            }
+                                        }}
+                                    />
+                                </div>
                             </div>
                         </div>
 
