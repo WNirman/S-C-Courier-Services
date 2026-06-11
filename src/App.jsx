@@ -285,7 +285,7 @@ function App({ onNavigate }) {
                 ) : activeForm === 'staff' ? (
                     <StaffDashboard />
                 ) : activeForm === 'dashboard' ? (
-                    <CustomerDashboard onDeliver={() => setActiveForm('atr')} />
+                    <CustomerDashboard onDeliver={() => setActiveForm('atr')} loggedInUser={loggedInUser} />
                 ) : activeForm === 'atr' ? (
                     <AtrForm onBack={() => setActiveForm('dashboard')} />
                 ) : activeForm === 'register' ? (
