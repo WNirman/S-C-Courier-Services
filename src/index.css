@@ -1569,4 +1569,132 @@ body::before {
         margin: 1rem;
         padding: 1.5rem;
     }
-}
+}
+
+/* =============================================
+   Cost Calculator Modal Styles
+   ============================================= */
+
+/* Modal Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.3s ease;
+}
+
+/* Cost Calculator Card */
+.cost-calculator-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 24px;
+    padding: 3rem;
+    max-width: 600px;
+    width: 90%;
+    position: relative;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    animation: fadeUp 0.4s ease-out;
+}
+
+/* Close Button */
+.modal-close {
+    position: absolute;
+    top: 1.5rem;
+    right: 1.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: none;
+    color: var(--text-secondary);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.modal-close:hover {
+    background: var(--danger);
+    color: white;
+    transform: rotate(90deg);
+}
+
+/* Form Layout */
+.calculator-form .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+@media (max-width: 600px) {
+    .calculator-form .form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Same Destination Message */
+.same-destination-msg {
+    color: var(--accent-color);
+    font-size: 0.85rem;
+    margin-bottom: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(249, 115, 22, 0.1);
+    padding: 0.8rem;
+    border-radius: 8px;
+    border-left: 3px solid var(--accent-color);
+}
+
+/* Cost Display Area */
+.cost-display-area {
+    margin-top: 1.5rem;
+    padding: 2rem;
+    background: rgba(249, 115, 22, 0.05);
+    border-radius: 16px;
+    border: 1px solid rgba(249, 115, 22, 0.1);
+    text-align: center;
+}
+
+.cost-label {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.cost-value {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0.5rem;
+    color: var(--accent-color);
+}
+
+.cost-value .currency {
+    font-size: 1.5rem;
+    font-weight: 500;
+}
+
+.cost-value .amount {
+    font-size: 3.5rem;
+    font-weight: 800;
+    letter-spacing: -1px;
+}
+
+.cost-disclaimer {
+    font-size: 0.8rem;
+    color: rgba(156, 163, 175, 0.6);
+    margin-top: 1rem;
+}

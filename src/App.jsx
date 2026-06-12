@@ -9,6 +9,14 @@ import AtrForm from './AtrForm';
 import AdminDashboard from './AdminDashboard';
 import StaffDashboard from './StaffDashboard';
 
+const SRI_LANKAN_DISTRICTS = [
+    "Ampara", "Anuradhapura", "Badulla", "Batticaloa", "Colombo", 
+    "Galle", "Gampaha", "Hambantota", "Jaffna", "Kalutara", 
+    "Kandy", "Kegalle", "Kilinochchi", "Kurunegala", "Mannar", 
+    "Matale", "Matara", "Moneragala", "Mullaitivu", "Nuwara Eliya", 
+    "Polonnaruwa", "Puttalam", "Ratnapura", "Trincomalee", "Vavuniya"
+];
+
 function App({ onNavigate }) {
     const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
     const [showPassword, setShowPassword] = useState(false);
@@ -42,6 +50,28 @@ function App({ onNavigate }) {
     const [confirmNewPassword, setConfirmNewPassword] = useState('');
     const [isResetting, setIsResetting] = useState(false);
     const [resetSuccess, setResetSuccess] = useState(false);
+
+    // Cost Calculator State
+    const [isCostModalOpen, setIsCostModalOpen] = useState(false);
+    const [calcFrom, setCalcFrom] = useState('');
+    const [calcTo, setCalcTo] = useState('');
+    const [calcWeight, setCalcWeight] = useState(1);
+    const [estimatedCost, setEstimatedCost] = useState(0);
+
+    const handleCalculateCost = () => {
+        if (!calcFrom || !calcTo || calcWeight <= 0) return;
+        
+        let base = (calcFrom === calcTo) ? 350 : 550;
+        let extraWeight = Math.max(0, calcWeight - 1);
+        let weightRate = (calcFrom === calcTo) ? 100 : 150;
+        
+        setEstimatedCost(base + (extraWeight * weightRate));
+    };
+
+    // Auto-calculate when inputs change
+    React.useEffect(() => {
+        handleCalculateCost();
+    }, [calcFrom, calcTo, calcWeight]);
 
     const handleResetPassword = (e) => {
         e.preventDefault();
@@ -464,6 +494,12 @@ function App({ onNavigate }) {
                                 <>
                                     <h1>Track Your <br /><span className="highlight">Delivery</span> Instantly</h1>
                                     <p>Enter your tracking number below to get real-time updates on your package location and delivery status.</p>
+                                    <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', animation: 'fadeUp 1s ease backwards 0.3s' }}>
+                                        <button className="primary-btn pulse-effect" onClick={() => setIsCostModalOpen(true)} style={{ padding: '0.8rem 1.5rem', fontSize: '0.9rem' }}>
+                                            <i className='bx bx-calculator'></i>
+                                            <span>Check Delivery Cost</span>
+                                        </button>
+                                    </div>
                                 </>
                             )}
                         </div>
@@ -696,6 +732,87 @@ function App({ onNavigate }) {
                     </div>
                 )}
             </main>
+
+            {/* Delivery Cost Calculator Modal */}
+            {isCostModalOpen && (
+                <div className="modal-overlay" onClick={() => setIsCostModalOpen(false)}>
+                    <div className="modal-content cost-calculator-card" onClick={(e) => e.stopPropagation()}>
+                        <button className="modal-close" onClick={() => setIsCostModalOpen(false)}>
+                            <i className='bx bx-x'></i>
+                        </button>
+                        <div className="card-header">
+                            <h2><i className='bx bx-calculator'></i> Package Cost Calculator</h2>
+                            <p>Estimate your shipping costs across Sri Lanka</p>
+                        </div>
+                        
+                        <div className="calculator-form">
+                            <div className="form-row">
+                                <div className="form-control">
+                                    <label>Sending From (District)</label>
+                                    <div className="input-wrapper">
+                                        <i className='bx bx-map-pin input-icon'></i>
+                                        <input 
+                                            list="districts-from" 
+                                            placeholder="Select District" 
+                                            value={calcFrom}
+                                            onChange={(e) => setCalcFrom(e.target.value)}
+                                        />
+                                        <datalist id="districts-from">
+                                            {SRI_LANKAN_DISTRICTS.map(d => <option key={d} value={d} />)}
+                                        </datalist>
+                                    </div>
+                                </div>
+                                <div className="form-control">
+                                    <label>Receiving At (District)</label>
+                                    <div className="input-wrapper">
+                                        <i className='bx bx-map input-icon'></i>
+                                        <input 
+                                            list="districts-to" 
+                                            placeholder="Select District" 
+                                            value={calcTo}
+                                            onChange={(e) => setCalcTo(e.target.value)}
+                                        />
+                                        <datalist id="districts-to">
+                                            {SRI_LANKAN_DISTRICTS.map(d => <option key={d} value={d} />)}
+                                        </datalist>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {calcFrom && calcTo && calcFrom === calcTo && (
+                                <p className="same-destination-msg">
+                                    <i className='bx bx-info-circle'></i>
+                                    you select same destination neeed to select differetn
+                                </p>
+                            )}
+
+                            <div className="form-control">
+                                <label>Package Weight (kg)</label>
+                                <div className="input-wrapper">
+                                    <i className='bx bx-weight input-icon'></i>
+                                    <input 
+                                        type="number" 
+                                        min="0.1" 
+                                        step="0.1" 
+                                        placeholder="Enter weight in kg" 
+                                        value={calcWeight}
+                                        onChange={(e) => setCalcWeight(parseFloat(e.target.value) || 0)}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="cost-display-area">
+                                <div className="cost-label">Estimated Delivery Cost:</div>
+                                <div className="cost-value">
+                                    <span className="currency">LKR</span>
+                                    <span className="amount">{estimatedCost.toLocaleString()}</span>
+                                </div>
+                                <p className="cost-disclaimer">*Actual rates may vary based on specific location and package dimensions.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 }
