@@ -8,8 +8,6 @@ import CustomerDashboard from './CustomerDashboard';
 import AtrForm from './AtrForm';
 import AdminDashboard from './AdminDashboard';
 import StaffDashboard from './StaffDashboard';
-import Chatbot from './Chatbot';
-
 
 function App({ onNavigate }) {
     const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
@@ -698,7 +696,6 @@ function App({ onNavigate }) {
                     </div>
                 )}
             </main>
-            <Chatbot />
         </>
     );
 }
