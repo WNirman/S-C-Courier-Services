@@ -145,3 +145,19 @@ CREATE TABLE Notification(
     FOREIGN KEY(delivery_ID) REFERENCES Delivery(del_ID),
     FOREIGN KEY(customer_ID) REFERENCES Customer(customer_id)
 );
+
+CREATE TABLE Rider (
+    NIC VARCHAR(20) PRIMARY KEY,
+    Name VARCHAR(100) NOT NULL,
+    Phone_Number VARCHAR(20) NOT NULL,
+    Branch VARCHAR(100),
+    Email VARCHAR(100) UNIQUE NOT NULL,
+    Password VARCHAR(255) NOT NULL,
+    NIC_Front_Image VARCHAR(255),
+    NIC_Back_Image VARCHAR(255),
+    Address TEXT,
+    Emergency_Contact VARCHAR(20),
+    Vehicle_Type VARCHAR(50),
+    Vehicle_No VARCHAR(50),
+    Driver_Licence_No VARCHAR(50)
+);
