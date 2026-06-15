@@ -176,6 +176,7 @@ ALTER TABLE branch ENABLE ROW LEVEL SECURITY;
 ALTER TABLE department ENABLE ROW LEVEL SECURITY;
 ALTER TABLE company ENABLE ROW LEVEL SECURITY;
 ALTER TABLE atr ENABLE ROW LEVEL SECURITY;
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS staff_avatar_url TEXT;
 
 -- Create policies to allow anon access (for the frontend client)
 CREATE POLICY "Allow anon select on customer" ON customer FOR SELECT USING (true);
@@ -194,3 +195,4 @@ CREATE POLICY "Allow anon select on department" ON department FOR SELECT USING (
 CREATE POLICY "Allow anon select on company" ON company FOR SELECT USING (true);
 
 CREATE POLICY "Allow anon all on atr" ON atr FOR ALL USING (true);
+CREATE POLICY "Allow anon update on staff" ON staff FOR UPDATE USING (true);

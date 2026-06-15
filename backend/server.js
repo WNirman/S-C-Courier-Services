@@ -185,3 +185,69 @@ app.delete('/api/admin/staff/:email', async (req, res) => {
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
+
+app.get('/api/admin/profile/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+
+    // Execute query to check if admin details exist in Staff table
+    const result = await pool.query(
+      'SELECT staff_name, staff_email, staff_phone, staff_avatar_url FROM Staff WHERE staff_email = $1',
+      [email]
+    );
+
+    // If hardcoded admin hasn't interacted with database yet, return standard values
+    if (result.rows.length === 0 && email === 'admin@sccourier.com') {
+      return res.json({
+        staff_name: 'Administrator',
+        staff_email: 'admin@sccourier.com',
+        staff_phone: '+94 11 234 5678',
+        staff_avatar_url: 'https://via.placeholder.com/150'
+      });
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error while fetching profile data' });
+  }
+});
+
+app.put('/api/admin/profile', async (req, res) => {
+  try {
+    const { email, name, phone, avatarUrl } = req.body;
+
+    // Check if the admin already has a row in the database
+    const checkAdmin = await pool.query('SELECT * FROM Staff WHERE staff_email = $1', [email]);
+
+    if (checkAdmin.rows.length === 0) {
+      // Get the default office branch ID to prevent breaking foreign keys
+      const branchCheck = await pool.query('SELECT branch_id FROM Branch LIMIT 1');
+      const dbBranchId = branchCheck.rows.length > 0 ? branchCheck.rows[0].branch_id : 1;
+
+      // Insert new profile row into Staff for the hardcoded admin
+      await pool.query(
+        `INSERT INTO Staff (staff_name, staff_email, staff_phone, branch_id, staff_role, staff_active_status, staff_password, staff_avatar_url) 
+         VALUES ($1, $2, $3, $4, 'admin', true, 'admin123', $5)`,
+        [name, email, phone, dbBranchId, avatarUrl]
+      );
+    } else {
+      // Update existing admin/staff profile row
+      await pool.query(
+        `UPDATE Staff 
+         SET staff_name = $1, staff_phone = $2, staff_avatar_url = $3 
+         WHERE staff_email = $4`,
+        [name, phone, avatarUrl, email]
+      );
+    }
+
+    res.json({ message: 'Profile updated successfully!', avatarUrl });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error while saving profile data' });
+  }
+});

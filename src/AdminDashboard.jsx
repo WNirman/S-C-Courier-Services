@@ -5,6 +5,9 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
     const [showAssignForm, setShowAssignForm] = useState(false);
     const [staffEmail, setStaffEmail] = useState('');
     const [assignStatus, setAssignStatus] = useState('');
+    const [selectedStaff, setSelectedStaff] = useState(null);
+    const [staffDetailsLoading, setStaffDetailsLoading] = useState(false);
+    const [selectedStat, setSelectedStat] = useState(null);
 
     // Load staff from Supabase on mount
     useEffect(() => {
@@ -99,12 +102,85 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
             setAssignStatus('');
         }
     };
+
+    const handleStaffClick = async (email) => {
+        setStaffDetailsLoading(true);
+        setSelectedStaff(null);
+
+        try {
+            const { data, error } = await supabase
+                .from('staff')
+                .select('staff_id, staff_name, staff_email, staff_phone, staff_role, staff_active_status, branch_id')
+                .eq('staff_email', email)
+                .single();
+
+            if (error) throw error;
+
+            setSelectedStaff(data);
+        } catch (err) {
+            console.error('Load staff details error:', err);
+            alert('Could not load staff details.');
+        } finally {
+            setStaffDetailsLoading(false);
+        }
+    };
     // Sample dummy data for admin view
     const stats = [
-        { title: 'Total Deliveries', value: '1,284', icon: 'bx-package', color: 'var(--success)' },
-        { title: 'Active Couriers', value: '42', icon: 'bx-run', color: 'var(--accent-color)' },
-        { title: 'Pending Routes', value: '15', icon: 'bx-map-alt', color: '#f59e0b' },
+        {
+            id: 'deliveries',
+            title: 'Total Deliveries',
+            value: '1,284',
+            icon: 'bx-package',
+            color: 'var(--success)',
+        },
+        {
+            id: 'couriers',
+            title: 'Active Couriers',
+            value: '42',
+            icon: 'bx-run',
+            color: 'var(--accent-color)',
+        },
+        {
+            id: 'routes',
+            title: 'Pending Routes',
+            value: '15',
+            icon: 'bx-map-alt',
+            color: '#f59e0b',
+        },
     ];
+
+    const statDetails = {
+        deliveries: {
+            title: 'Total Deliveries',
+            icon: 'bx-package',
+            description: 'All deliveries recorded in the system.',
+            rows: [
+                { label: 'Delivered', value: '986' },
+                { label: 'In Transit', value: '214' },
+                { label: 'Pending', value: '84' },
+            ],
+        },
+        couriers: {
+            title: 'Active Couriers',
+            icon: 'bx-run',
+            description: 'Courier staff currently active and available.',
+            rows: [
+                { label: 'Available Couriers', value: '28' },
+                { label: 'On Delivery', value: '12' },
+                { label: 'On Break', value: '2' },
+            ],
+        },
+        routes: {
+            title: 'Pending Routes',
+            icon: 'bx-map-alt',
+            description: 'Routes waiting to be assigned or completed.',
+            rows: [
+                { label: 'Awaiting Assignment', value: '7' },
+                { label: 'Delayed Routes', value: '3' },
+                { label: 'Scheduled Today', value: '5' },
+            ],
+        },
+    };
 
     const recentOrders = [
         { id: 'SC101000', customer: 'John Doe', destination: 'Seattle, WA', status: 'In Transit' },
@@ -200,16 +276,35 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
                         {assignedStaff.map((staff, index) => (
-                            <div key={index} className="delivery-item" style={{
-                                padding: '1rem 1.25rem',
-                                background: 'rgba(255, 255, 255, 0.03)',
-                                borderRadius: '12px',
-                                border: '1px solid var(--card-border)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                transition: 'all 0.3s ease',
-                            }}>
+                            <div
+                                key={index}
+                                className="delivery-item"
+                                onClick={() => handleStaffClick(staff)}
+                                style={{
+                                    padding: '1rem 1.25rem',
+                                    background: 'rgba(255, 255, 255, 0.03)',
+                                    borderRadius: '12px',
+                                    border: '1px solid var(--card-border)',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    transition: 'all 0.3s ease',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 0 0 rgba(249, 115, 22, 0)',
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'rgba(249, 115, 22, 0.08)';
+                                    e.currentTarget.style.borderColor = 'rgba(238, 234, 231, 0.45)';
+                                    e.currentTarget.style.boxShadow = '0 0 18px rgba(249, 115, 22, 0.22)';
+                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                                    e.currentTarget.style.borderColor = 'var(--card-border)';
+                                    e.currentTarget.style.boxShadow = '0 0 0 rgba(249, 115, 22, 0)';
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                }}
+        >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
                                     <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                         <i className='bx bx-user'></i>
@@ -220,7 +315,10 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
                                     </div>
                                 </div>
                                 <button 
-                                    onClick={() => onRemoveStaff && onRemoveStaff(staff)}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onRemoveStaff && onRemoveStaff(staff);
+                                    }}
                                     style={{ 
                                         background: 'rgba(239, 68, 68, 0.1)', 
                                         color: '#ef4444', 
@@ -244,10 +342,131 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
                 </div>
             )}
 
+            {staffDetailsLoading && (
+                <div
+                    className="action-card"
+                    style={{
+                        marginBottom: '2rem',
+                        padding: '1.5rem',
+                        border: '1px solid var(--card-border)',
+                        maxWidth: '100%',
+                        width: '100%',
+                    }}
+                >
+                    <p style={{ color: 'var(--text-secondary)' }}>
+                        <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i>
+                        Loading staff details...
+                    </p>
+                </div>
+            )}
+
+            {selectedStaff && (
+                <div
+                    className="action-card"
+                    style={{
+                        marginBottom: '2rem',
+                        padding: '2rem',
+                        border: '1px solid var(--card-border)',
+                        maxWidth: '100%',
+                        width: '100%',
+                        animation: 'fadeIn 0.3s ease',
+                    }}
+                >
+                    <div
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'flex-start',
+                            gap: '1rem',
+                            marginBottom: '1.5rem',
+                        }}
+                    >
+                        <div>
+                            <h3
+                                style={{
+                                    color: '#fff',
+                                    fontSize: '1.3rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    marginBottom: '0.4rem',
+                                }}
+                            >
+                                <i className="bx bx-id-card" style={{ color: 'var(--accent-color)' }}></i>
+                                Staff Details
+                            </h3>
+                            <p style={{ color: 'var(--text-secondary)' }}>
+                                Details for {selectedStaff.staff_email}
+                            </p>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() => setSelectedStaff(null)}
+                            style={{
+                                background: 'rgba(255,255,255,0.06)',
+                                border: '1px solid var(--card-border)',
+                                color: '#fff',
+                                width: '36px',
+                                height: '36px',
+                                borderRadius: '10px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                            title="Close details"
+                        >
+                            <i className="bx bx-x" style={{ fontSize: '1.3rem' }}></i>
+                        </button>
+                    </div>
+
+                    <div
+                        style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                            gap: '1rem',
+                        }}
+                    >
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Name</p>
+                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_name || 'N/A'}</h4>
+                        </div>
+
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Email</p>
+                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_email || 'N/A'}</h4>
+                        </div>
+
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Phone</p>
+                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_phone || 'N/A'}</h4>
+                        </div>
+
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Role</p>
+                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_role || 'N/A'}</h4>
+                        </div>
+
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Branch ID</p>
+                            <h4 style={{ color: '#fff' }}>{selectedStaff.branch_id || selectedStaff.branch_ID || 'N/A'}</h4>
+                        </div>
+
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Status</p>
+                            <h4 style={{ color: selectedStaff.staff_active_status ? 'var(--success)' : 'var(--danger)' }}>
+                                {selectedStaff.staff_active_status ? 'Active' : 'Inactive'}
+                            </h4>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Stats Grid */}
             <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
                 {stats.map((stat, index) => (
-                    <div key={index} className="stat-card" style={{
+                    <div key={stat.id} className="stat-card" onClick={() => setSelectedStat(stat.id)} style={{
                         padding: '1.5rem',
                         background: 'rgba(255, 255, 255, 0.03)',
                         borderRadius: '16px',
@@ -255,8 +474,18 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
                         display: 'flex',
                         alignItems: 'center',
                         gap: '1.5rem',
+                        transition: 'all 0.3s ease',
+                        cursor: 'pointer',
                         animation: `slideInRight 0.8s ease backwards ${(index + 1) * 0.2}s`
-                    }}>
+                    }}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                            e.currentTarget.style.borderColor = 'var(--card-border)';
+                        }}>
                         <div style={{
                             width: '60px',
                             height: '60px',
@@ -277,6 +506,105 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
                     </div>
                 ))}
             </div>
+
+            {selectedStat && (
+            <div
+                className="action-card"
+                style={{
+                    width: '100%',
+                    maxWidth: '100%',
+                    padding: '2rem',
+                    marginBottom: '2rem',
+                    animation: 'fadeIn 0.3s ease',
+                    border: '1px solid var(--card-border)',
+                }}
+            >
+                <div
+                    style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        gap: '1rem',
+                        marginBottom: '1.5rem',
+                    }}
+                >
+                    <div>
+                        <h3
+                            style={{
+                                color: '#fff',
+                                fontSize: '1.35rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                marginBottom: '0.4rem',
+                            }}
+                        >
+                            <i
+                                className={`bx ${statDetails[selectedStat].icon}`}
+                                style={{ color: 'var(--accent-color)' }}
+                            ></i>
+                            {statDetails[selectedStat].title}
+                        </h3>
+                        <p style={{ color: 'var(--text-secondary)' }}>
+                            {statDetails[selectedStat].description}
+                        </p>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={() => setSelectedStat(null)}
+                        style={{
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid var(--card-border)',
+                            color: '#fff',
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                        }}
+                        title="Close details"
+                    >
+                        <i className="bx bx-x" style={{ fontSize: '1.3rem' }}></i>
+                    </button>
+                </div>
+
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                        gap: '1rem',
+                    }}
+                >
+                    {statDetails[selectedStat].rows.map((item, index) => (
+                        <div
+                            key={index}
+                            style={{
+                                padding: '1rem',
+                                background: 'rgba(255,255,255,0.03)',
+                                borderRadius: '12px',
+                                border: '1px solid var(--card-border)',
+                            }}
+                        >
+                            <p
+                                style={{
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '0.85rem',
+                                    marginBottom: '0.4rem',
+                                }}
+                            >
+                                {item.label}
+                            </p>
+                            <h4 style={{ color: '#fff', fontSize: '1.4rem' }}>
+                                {item.value}
+                            </h4>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
 
             {/* Main content grid */}
             <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>

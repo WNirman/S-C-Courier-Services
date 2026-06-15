@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from './supabaseClient';
 import logoImg from './assets/favicon.png';
 import servicesGif from './assets/services.gif';
@@ -12,8 +12,19 @@ import Chatbot from './Chatbot';
 
 
 function App({ onNavigate }) {
+    
     const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
     const [showPassword, setShowPassword] = useState(false);
+
+    const [showProfileMenu, setShowProfileMenu] = useState(false);
+    const [profileDetails, setProfileDetails] = useState({
+        name: '',
+        email: '',
+        role: '',
+        phone: '',
+    });
+    const [profilePhoto, setProfilePhoto] = useState(null);
+    const profilePhotoInputRef = useRef(null);
 
     // Tracking State
     const [trackingNumber, setTrackingNumber] = useState('');
@@ -27,6 +38,67 @@ function App({ onNavigate }) {
     const [loginSuccess, setLoginSuccess] = useState(false);
     const [loggedInUser, setLoggedInUser] = useState(null);
     const [assignedStaff, setAssignedStaff] = useState([]); // Array to store assigned staff emails
+
+    useEffect(() => {
+        const loadProfileDetails = async () => {
+            if (!loggedInUser) {
+                setProfileDetails({
+                    name: '',
+                    email: '',
+                    role: '',
+                    phone: '',
+                });
+                setProfilePhoto(null);
+                return;
+            }
+
+            const savedPhoto = localStorage.getItem(`profile_photo_${loggedInUser}`);
+            setProfilePhoto(savedPhoto || null);
+
+            if (loggedInUser === 'admin@sccourier.com') {
+                setProfileDetails({
+                    name: 'Administrator',
+                    email: loggedInUser,
+                    role: 'Admin',
+                    phone: 'N/A',
+                });
+                return;
+            }
+
+            const { data: staffData } = await supabase
+                .from('staff')
+                .select('staff_name, staff_email, staff_phone, staff_role')
+                .eq('staff_email', loggedInUser)
+                .single();
+
+            if (staffData) {
+                setProfileDetails({
+                    name: staffData.staff_name || 'Staff Member',
+                    email: staffData.staff_email || loggedInUser,
+                    role: staffData.staff_role || 'Staff',
+                    phone: staffData.staff_phone || 'N/A',
+                });
+                return;
+            }
+
+            const { data: customerData } = await supabase
+                .from('customer')
+                .select('cust_name, cust_email, cust_phoneno')
+                .eq('cust_email', loggedInUser)
+                .single();
+
+            if (customerData) {
+                setProfileDetails({
+                    name: customerData.cust_name || 'Customer',
+                    email: customerData.cust_email || loggedInUser,
+                    role: 'Customer',
+                    phone: customerData.cust_phoneno || 'N/A',
+                });
+            }
+        };
+
+        loadProfileDetails();
+    }, [loggedInUser]);
 
     // Registration State
     const [custName, setCustName] = useState('');
@@ -239,6 +311,37 @@ function App({ onNavigate }) {
         }
     };
 
+    const handleProfilePhotoChange = (e) => {
+    const file = e.target.files[0];
+
+    if (!file || !file.type.startsWith('image/')) {
+        alert('Please select a valid image file.');
+        return;
+    }
+
+    if (!loggedInUser) return;
+
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+        const photoData = event.target.result;
+        setProfilePhoto(photoData);
+        localStorage.setItem(`profile_photo_${loggedInUser}`, photoData);
+    };
+
+    reader.readAsDataURL(file);
+    };
+
+    const handleRemoveProfilePhoto = () => {
+        if (!loggedInUser) return;
+
+        setProfilePhoto(null);
+        localStorage.removeItem(`profile_photo_${loggedInUser}`);
+
+        if (profilePhotoInputRef.current) {
+            profilePhotoInputRef.current.value = '';
+        }
+    };
     return (
         <>
             <div className="background-elements">
@@ -263,10 +366,165 @@ function App({ onNavigate }) {
                 {(activeForm === 'dashboard' || activeForm === 'admin' || activeForm === 'staff') && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <span style={{ color: 'var(--text-secondary)', display: 'none', '@media(minWidth: 768px)': { display: 'block' } }}>Welcome, {loggedInUser === 'admin@sccourier.com' ? 'Admin' : (assignedStaff.includes(loggedInUser) ? 'Staff' : (loggedInUser || 'User'))}!</span>
-                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--accent-color)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem', textTransform: 'uppercase' }}>
-                            {loggedInUser ? (loggedInUser === 'admin@sccourier.com' ? 'A' : (assignedStaff.includes(loggedInUser) ? 'S' : loggedInUser.charAt(0))) : 'U'}
+                        <div style={{ position: 'relative' }}>
+                <div
+                    onClick={() => setShowProfileMenu(!showProfileMenu)}
+                    style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '50%',
+                        background: 'var(--accent-color)',
+                        color: '#fff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 'bold',
+                        fontSize: '1.2rem',
+                        textTransform: 'uppercase',
+                        cursor: 'pointer',
+                        overflow: 'hidden',
+                    }}
+                >
+                    {profilePhoto ? (
+                        <img
+                            src={profilePhoto}
+                            alt="Profile"
+                            style={{
+                                width: '100%',
+                                height: '100%',
+                                borderRadius: '50%',
+                                objectFit: 'cover',
+                            }}
+                        />
+                    ) : (
+                        loggedInUser
+                            ? loggedInUser === 'admin@sccourier.com'
+                                ? 'A'
+                                : assignedStaff.includes(loggedInUser)
+                                    ? 'S'
+                                    : loggedInUser.charAt(0)
+                            : 'U'
+                    )}
+                </div>
+
+                {showProfileMenu && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            top: '52px',
+                            right: 0,
+                            width: '260px',
+                            background: 'rgba(20, 20, 20, 0.98)',
+                            border: '1px solid var(--card-border)',
+                            borderRadius: '16px',
+                            padding: '1.2rem',
+                            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.45)',
+                            zIndex: 999,
+                        }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginBottom: '1rem' }}>
+                            <div
+                                style={{
+                                    width: '46px',
+                                    height: '46px',
+                                    borderRadius: '50%',
+                                    background: 'var(--accent-color)',
+                                    color: '#fff',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontWeight: 'bold',
+                                    fontSize: '1.2rem',
+                                    overflow: 'hidden',
+                                }}
+                            >
+                                {profilePhoto ? (
+                                    <img
+                                        src={profilePhoto}
+                                        alt="Profile"
+                                        style={{
+                                            width: '100%',
+                                            height: '100%',
+                                            borderRadius: '50%',
+                                            objectFit: 'cover',
+                                        }}
+                                    />
+                                ) : (
+                                    profileDetails.role?.toLowerCase() === 'admin' ? 'A' : profileDetails.role?.toLowerCase() === 'staff' ? 'S' : 'U'
+                                )}
+                            </div>
+
+                            <div>
+                                <h4 style={{ color: '#fff', marginBottom: '0.2rem' }}>
+                                    {profileDetails.name}
+                                </h4>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                    {profileDetails.role}
+                                </p>
+                            </div>
                         </div>
-                        <button className="nav-login-btn" onClick={() => { setLoggedInUser(null); setActiveForm('login'); }} style={{ marginLeft: '0.5rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.6rem' }}>
+                            <i className="bx bx-envelope" style={{ color: 'var(--accent-color)', marginRight: '0.4rem' }}></i>
+                            {profileDetails.email}
+                        </p>
+
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                            <i className="bx bx-phone" style={{ color: 'var(--accent-color)', marginRight: '0.4rem' }}></i>
+                            {profileDetails.phone}
+                        </p>
+
+                        <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem' }}>
+                            <button
+                                type="button"
+                                onClick={() => profilePhotoInputRef.current?.click()}
+                                style={{
+                                    flex: 1,
+                                    padding: '0.65rem',
+                                    borderRadius: '10px',
+                                    border: '1px solid var(--card-border)',
+                                    background: 'rgba(255,255,255,0.06)',
+                                    color: '#fff',
+                                    cursor: 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                <i className="bx bx-camera" style={{ marginRight: '0.35rem' }}></i>
+                                Upload
+                            </button>
+
+                            {profilePhoto && (
+                                <button
+                                    type="button"
+                                    onClick={handleRemoveProfilePhoto}
+                                    style={{
+                                        flex: 1,
+                                        padding: '0.65rem',
+                                        borderRadius: '10px',
+                                        border: '1px solid rgba(239, 68, 68, 0.25)',
+                                        background: 'rgba(239, 68, 68, 0.1)',
+                                        color: '#ef4444',
+                                        cursor: 'pointer',
+                                        fontWeight: '600',
+                                    }}
+                                >
+                                    <i className="bx bx-trash" style={{ marginRight: '0.35rem' }}></i>
+                                    Remove
+                                </button>
+                            )}
+
+                            <input
+                                ref={profilePhotoInputRef}
+                                type="file"
+                                accept="image/*"
+                                onChange={handleProfilePhotoChange}
+                                style={{ display: 'none' }}
+                            />
+                        </div>
+                    </div>
+                )}
+            </div>
+                        <button className="nav-login-btn" onClick={() => { setLoggedInUser(null); setShowProfileMenu(false); setActiveForm('login'); }} style={{ marginLeft: '0.5rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                             <i className='bx bx-log-out'></i>
                             <span>Logout</span>
                         </button>
