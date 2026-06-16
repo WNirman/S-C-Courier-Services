@@ -13,7 +13,36 @@ import Chatbot from './Chatbot';
 
 function App({ onNavigate }) {
     
-    const [activeForm, setActiveForm] = useState('tracking'); // 'tracking' or 'login'
+    const [loggedInUser, setLoggedInUser] = useState(() => {
+        return localStorage.getItem('loggedInUser') || null;
+    });
+
+    const [activeForm, setActiveForm] = useState(() => {
+        const savedForm = localStorage.getItem('activeForm') || 'tracking';
+        const savedUser = localStorage.getItem('loggedInUser');
+        const authRoutes = ['dashboard', 'admin', 'staff', 'atr'];
+        if (!savedUser && authRoutes.includes(savedForm)) {
+            return 'tracking';
+        }
+        return savedForm;
+    });
+
+    useEffect(() => {
+        if (loggedInUser) {
+            localStorage.setItem('loggedInUser', loggedInUser);
+        } else {
+            localStorage.removeItem('loggedInUser');
+            const authRoutes = ['dashboard', 'admin', 'staff', 'atr'];
+            if (authRoutes.includes(activeForm)) {
+                setActiveForm('tracking');
+            }
+        }
+    }, [loggedInUser, activeForm]);
+
+    useEffect(() => {
+        localStorage.setItem('activeForm', activeForm);
+    }, [activeForm]);
+
     const [showPassword, setShowPassword] = useState(false);
 
     const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -36,7 +65,6 @@ function App({ onNavigate }) {
     const [password, setPassword] = useState('');
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loginSuccess, setLoginSuccess] = useState(false);
-    const [loggedInUser, setLoggedInUser] = useState(null);
     const [assignedStaff, setAssignedStaff] = useState([]); // Array to store assigned staff emails
 
     useEffect(() => {
@@ -547,7 +575,7 @@ function App({ onNavigate }) {
                 ) : activeForm === 'dashboard' ? (
                     <CustomerDashboard onDeliver={() => setActiveForm('atr')} loggedInUser={loggedInUser} />
                 ) : activeForm === 'atr' ? (
-                    <AtrForm onBack={() => setActiveForm('dashboard')} />
+                    <AtrForm onBack={() => setActiveForm('dashboard')} loggedInUser={loggedInUser} />
                 ) : activeForm === 'register' ? (
                     <div className="atr-page">
                         <div className="atr-split-layout">
