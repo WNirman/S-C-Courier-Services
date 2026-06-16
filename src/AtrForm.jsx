@@ -1,24 +1,39 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import logoImg from './assets/favicon.png';
+import { supabase } from './supabaseClient';
 
-function AtrForm({ onBack }) {
-    const [formData, setFormData] = useState({
-        atrNumber: '',
-        department: '',
-        requiredDate: '',
-        requiredTime: '',
-        vehicleType: '',
-        purposeOfTravel: '',
-        passengerName: '',
-        passengerDesignation: '',
-        estimatedDistance: '',
-        estimatedCost: '',
-        actualDistance: '',
-        actualCost: '',
-        status: 'Pending',
-        approvedBy: '',
-        approvalDate: ''
+function AtrForm({ onBack, loggedInUser }) {
+    const [formData, setFormData] = useState(() => {
+        const saved = localStorage.getItem('atr_form_data');
+        if (saved) {
+            try {
+                return JSON.parse(saved);
+            } catch (e) {
+                console.error("Error parsing saved ATR form data:", e);
+            }
+        }
+        return {
+            atrNumber: '',
+            department: '',
+            requiredDate: '',
+            requiredTime: '',
+            vehicleType: '',
+            purposeOfTravel: '',
+            passengerName: '',
+            passengerDesignation: '',
+            estimatedDistance: '',
+            estimatedCost: '',
+            actualDistance: '',
+            actualCost: '',
+            status: 'Pending',
+            approvedBy: '',
+            approvalDate: ''
+        };
     });
+
+    useEffect(() => {
+        localStorage.setItem('atr_form_data', JSON.stringify(formData));
+    }, [formData]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -36,10 +51,41 @@ function AtrForm({ onBack }) {
         return map[formData.status] || 'pending';
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         console.log('ATR Form Submitted:', formData);
-        alert('Authorization To Request submitted successfully!');
+
+        try {
+            const insertData = {
+                dep_id: parseInt(formData.department),
+                atr_number: formData.atrNumber,
+                required_date: formData.requiredDate,
+                required_time: formData.requiredTime,
+                vehicle_type: formData.vehicleType,
+                purpose_of_travel: formData.purposeOfTravel,
+                principal_passenger_name: formData.passengerName,
+                principal_passenger_designation: formData.passengerDesignation,
+                estimated_distance: parseFloat(formData.estimatedDistance),
+                estimated_cost: parseFloat(formData.estimatedCost),
+                actual_distance: formData.actualDistance ? parseFloat(formData.actualDistance) : null,
+                actual_cost: formData.actualCost ? parseFloat(formData.actualCost) : null,
+                status: formData.status,
+                approved_by: formData.approvedBy ? parseInt(formData.approvedBy) : null,
+                approval_date: formData.approvalDate ? formData.approvalDate : null,
+                cust_email: loggedInUser
+            };
+
+            const { data, error } = await supabase.from('atr').insert(insertData);
+            if (error) throw error;
+
+            alert('Your ATR request has been sent successfully!');
+            localStorage.removeItem('atr_form_data');
+            handleReset();
+            if (onBack) onBack();
+        } catch (err) {
+            console.error('Error submitting ATR request:', err);
+            alert('Failed to submit ATR request: ' + err.message);
+        }
     };
 
     const handleReset = () => {
@@ -60,6 +106,7 @@ function AtrForm({ onBack }) {
             approvedBy: '',
             approvalDate: ''
         });
+        localStorage.removeItem('atr_form_data');
     };
 
     return (

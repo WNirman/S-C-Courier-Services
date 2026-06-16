@@ -17,6 +17,8 @@ const CustomerDashboard = ({ onDeliver, loggedInUser }) => {
     const [profilePic, setProfilePic] = useState(null);
     const [custName, setCustName] = useState('');
     const [showModal, setShowModal] = useState(false);
+    const [atrRequests, setAtrRequests] = useState([]);
+    const [loadingAtr, setLoadingAtr] = useState(true);
 
     // Cropper state
     const [imageSrc, setImageSrc] = useState(null);
@@ -45,6 +47,30 @@ const CustomerDashboard = ({ onDeliver, loggedInUser }) => {
                 .then(({ data }) => {
                     if (data && data.cust_name) setCustName(data.cust_name);
                 });
+        }
+    }, [loggedInUser]);
+
+    // Fetch ATR requests from Supabase
+    useEffect(() => {
+        if (loggedInUser) {
+            const fetchAtrRequests = async () => {
+                setLoadingAtr(true);
+                try {
+                    const { data, error } = await supabase
+                        .from('atr')
+                        .select('*')
+                        .eq('cust_email', loggedInUser)
+                        .order('atr_id', { ascending: false });
+                    
+                    if (error) throw error;
+                    setAtrRequests(data || []);
+                } catch (err) {
+                    console.error('Error fetching ATR requests:', err);
+                } finally {
+                    setLoadingAtr(false);
+                }
+            };
+            fetchAtrRequests();
         }
     }, [loggedInUser]);
 
@@ -286,6 +312,61 @@ const CustomerDashboard = ({ onDeliver, loggedInUser }) => {
                             </div>
                         ))}
                     </div>
+                </div>
+
+                {/* ATR Requests */}
+                <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInRight 1s ease backwards 0.3s', margin: 0 }}>
+                    <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                            <i className='bx bx-car' style={{ color: 'var(--accent-color)' }}></i> ATR Requests
+                        </h3>
+                        <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>
+                            {atrRequests.length} Total
+                        </span>
+                    </div>
+
+                    {loadingAtr ? (
+                        <p style={{ color: 'var(--text-secondary)' }}>
+                            <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading ATR requests...
+                        </p>
+                    ) : atrRequests.length === 0 ? (
+                        <p style={{ color: 'var(--text-secondary)' }}>No ATR requests found.</p>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '5px' }}>
+                            {atrRequests.map((req, index) => (
+                                <div key={req.atr_id || index} className="delivery-item" style={{
+                                    padding: '1.25rem', background: 'rgba(255,255,255,0.03)', borderRadius: '16px',
+                                    border: '1px solid var(--card-border)', display: 'flex', justifyContent: 'space-between',
+                                    alignItems: 'center', transition: 'all 0.3s ease'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.2)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor='var(--card-border)'; }}
+                                >
+                                    <div>
+                                        <h4 style={{ color: 'var(--text-primary)', marginBottom: '0.25rem', fontSize: '1.1rem' }}>{req.atr_number}</h4>
+                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                            <i className='bx bx-car' style={{ color: 'var(--accent-color)', marginRight: '4px' }}></i>{req.vehicle_type}
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                            <strong>Required:</strong> {req.required_date} @ {req.required_time}
+                                        </p>
+                                    </div>
+                                    <div style={{ textAlign: 'right' }}>
+                                        <span style={{
+                                            display: 'inline-block', padding: '0.35rem 0.85rem',
+                                            background: req.status === 'Approved' || req.status === 'Completed' ? 'rgba(16,185,129,0.1)' : req.status === 'Pending' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                            color: req.status === 'Approved' || req.status === 'Completed' ? 'var(--success)' : req.status === 'Pending' ? '#f59e0b' : 'var(--danger)',
+                                            borderRadius: '100px', fontSize: '0.85rem', fontWeight: '600',
+                                            border: req.status === 'Approved' || req.status === 'Completed' ? '1px solid rgba(16,185,129,0.2)' : req.status === 'Pending' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                        }}>{req.status}</span>
+                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+                                            {req.estimated_cost} LKR
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
 
