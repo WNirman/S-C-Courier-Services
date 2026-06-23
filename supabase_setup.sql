@@ -28,6 +28,16 @@ CREATE TABLE IF NOT EXISTS department(
     FOREIGN KEY (comp_id) REFERENCES company(comp_id)
 );
 
+CREATE TABLE IF NOT EXISTS client_approver(
+    approver_id SERIAL PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    designation VARCHAR(100) NOT NULL,
+    email VARCHAR(150) NOT NULL,
+    signature_url TEXT,
+    dep_id INT REFERENCES department(dep_id),
+    cust_email VARCHAR(150) NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS reviews(
     review_id SERIAL PRIMARY KEY,
     review_com TEXT,
@@ -94,8 +104,11 @@ CREATE TABLE IF NOT EXISTS atr (
     status VARCHAR(100),
     approved_by INT,
     approval_date TIMESTAMP,
+    approval_token VARCHAR(255),
+    client_approver_id INT,
     FOREIGN KEY (dep_id) REFERENCES department(dep_id),
-    FOREIGN KEY (approved_by) REFERENCES staff(staff_id)
+    FOREIGN KEY (approved_by) REFERENCES staff(staff_id),
+    FOREIGN KEY (client_approver_id) REFERENCES client_approver(approver_id)
 );
 
 CREATE TABLE IF NOT EXISTS trip(
@@ -165,6 +178,12 @@ INSERT INTO department (dep_name, comp_id) VALUES
   ('Logistics', 1), ('Administration', 1), ('IT', 1), ('Marketing', 1)
 ON CONFLICT DO NOTHING;
 
+-- client_approver rows are added per-customer via the Customer Dashboard UI.
+-- Run the following to migrate an existing table (safe to run multiple times):
+-- ALTER TABLE client_approver ADD COLUMN IF NOT EXISTS cust_email VARCHAR(150);
+-- ALTER TABLE client_approver ALTER COLUMN dep_id DROP NOT NULL;
+-- ALTER TABLE client_approver ALTER COLUMN signature_url DROP NOT NULL;
+
 -- ================================================
 -- Disable RLS on tables used by the frontend
 -- (Supabase enables RLS by default, which blocks anon access)
@@ -196,3 +215,7 @@ CREATE POLICY "Allow anon select on company" ON company FOR SELECT USING (true);
 
 CREATE POLICY "Allow anon all on atr" ON atr FOR ALL USING (true);
 CREATE POLICY "Allow anon update on staff" ON staff FOR UPDATE USING (true);
+
+ALTER TABLE client_approver ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow anon select on client_approver" ON client_approver FOR SELECT USING (true);
+CREATE POLICY "Allow anon insert on client_approver" ON client_approver FOR INSERT WITH CHECK (true);

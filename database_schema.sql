@@ -23,6 +23,16 @@ CREATE TABLE Department(
     FOREIGN KEY (comp_id) REFERENCES Company(comp_id)
 );
 
+CREATE TABLE client_approver(
+    approver_id SERIAL PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    designation VARCHAR(100) NOT NULL,
+    email VARCHAR(150) NOT NULL,
+    signature_url TEXT,
+    dep_id INT REFERENCES Department(dep_id),
+    cust_email VARCHAR(150) NOT NULL
+);
+
 CREATE TABLE Reviews(
     review_id SERIAL PRIMARY KEY ,
     review_com TEXT,
@@ -92,8 +102,11 @@ CREATE TABLE ATR (
     status VARCHAR(100),
     approved_by INT,
     approval_date TIMESTAMP,
+    approval_token VARCHAR(255),
+    client_approver_id INT,
     FOREIGN KEY (dep_id) REFERENCES Department(dep_id),
-    FOREIGN KEY (approved_by) REFERENCES Staff(staff_id)
+    FOREIGN KEY (approved_by) REFERENCES Staff(staff_id),
+    FOREIGN KEY (client_approver_id) REFERENCES client_approver(approver_id)
 );
 
 CREATE TABLE Trip(

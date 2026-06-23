@@ -35,9 +35,36 @@ function AtrForm({ onBack, loggedInUser }) {
         localStorage.setItem('atr_form_data', JSON.stringify(formData));
     }, [formData]);
 
+    const [clientApprovers, setClientApprovers] = useState([]);
+
+    useEffect(() => {
+        const fetchApprovers = async () => {
+            if (!loggedInUser) {
+                setClientApprovers([]);
+                return;
+            }
+            try {
+                const { data, error } = await supabase
+                    .from('client_approver')
+                    .select('*')
+                    .eq('cust_email', loggedInUser);
+                if (error) throw error;
+                setClientApprovers(data || []);
+            } catch (err) {
+                console.error('Error fetching client approvers:', err);
+            }
+        };
+        fetchApprovers();
+    }, [loggedInUser]);
+
     const handleChange = (e) => {
         const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
+        // Reset approvedBy if department changes
+        if (name === 'department') {
+            setFormData(prev => ({ ...prev, [name]: value, approvedBy: '' }));
+        } else {
+            setFormData(prev => ({ ...prev, [name]: value }));
+        }
     };
 
     const getStatusClass = () => {
@@ -56,6 +83,9 @@ function AtrForm({ onBack, loggedInUser }) {
         console.log('ATR Form Submitted:', formData);
 
         try {
+            // Generate secure token for the magic approval link
+            const token = crypto.randomUUID ? crypto.randomUUID() : (Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15));
+
             const insertData = {
                 dep_id: parseInt(formData.department),
                 atr_number: formData.atrNumber,
@@ -69,16 +99,36 @@ function AtrForm({ onBack, loggedInUser }) {
                 estimated_cost: parseFloat(formData.estimatedCost),
                 actual_distance: formData.actualDistance ? parseFloat(formData.actualDistance) : null,
                 actual_cost: formData.actualCost ? parseFloat(formData.actualCost) : null,
-                status: formData.status,
-                approved_by: formData.approvedBy ? parseInt(formData.approvedBy) : null,
-                approval_date: formData.approvalDate ? formData.approvalDate : null,
+                status: 'Pending', // Force pending initial state
+                approved_by: null,
+                approval_date: null,
+                approval_token: token,
+                client_approver_id: formData.approvedBy ? parseInt(formData.approvedBy) : null,
                 cust_email: loggedInUser
             };
 
-            const { data, error } = await supabase.from('atr').insert(insertData);
+            const { data, error } = await supabase.from('atr').insert(insertData).select();
             if (error) throw error;
 
-            alert('Your ATR request has been sent successfully!');
+            const insertedAtr = data && data.length > 0 ? data[0] : null;
+            const atrId = insertedAtr ? insertedAtr.atr_id : null;
+
+            if (atrId) {
+                // Trigger backend email approval notification
+                try {
+                    await fetch('http://localhost:5000/api/atr/send-approval-email', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ atrId }),
+                    });
+                } catch (emailErr) {
+                    console.error('Failed to trigger approval email:', emailErr);
+                }
+            }
+
+            alert('Your ATR request has been submitted and sent for approval successfully!');
             localStorage.removeItem('atr_form_data');
             handleReset();
             if (onBack) onBack();
@@ -314,7 +364,7 @@ function AtrForm({ onBack, loggedInUser }) {
                         <div className="atr-form-row three-col">
                             <div className="atr-form-group">
                                 <label>Status</label>
-                                <select name="status" value={formData.status} onChange={handleChange}>
+                                <select name="status" value={formData.status} onChange={handleChange} disabled>
                                     <option value="Pending">Pending</option>
                                     <option value="Approved">Approved</option>
                                     <option value="Rejected">Rejected</option>
@@ -328,16 +378,16 @@ function AtrForm({ onBack, loggedInUser }) {
                                 </div>
                             </div>
                             <div className="atr-form-group">
-                                <label>Approved By</label>
+                                <label>Approved By <span className="required">*</span></label>
                                 <div className="atr-input-with-icon">
                                     <i className='bx bx-user-check'></i>
-                                    <select name="approvedBy" value={formData.approvedBy} onChange={handleChange}>
-                                        <option value="">Not Assigned</option>
-                                        <option value="801">Mr. Perera (Director)</option>
-                                        <option value="802">Mrs. Silva (GM)</option>
-                                        <option value="803">Mr. Wijesinghe (AGM)</option>
-                                        <option value="804">Mrs. Jayawardena (HOD)</option>
-                                        <option value="805">Mr. Ratnayake (Manager)</option>
+                                    <select name="approvedBy" value={formData.approvedBy} onChange={handleChange} required>
+                                        <option value="">Select Approver</option>
+                                        {clientApprovers.map(approver => (
+                                            <option key={approver.approver_id} value={approver.approver_id}>
+                                                {approver.name} ({approver.designation})
+                                            </option>
+                                        ))}
                                     </select>
                                 </div>
                             </div>
@@ -350,13 +400,7 @@ function AtrForm({ onBack, loggedInUser }) {
                                         name="approvalDate" 
                                         value={formData.approvalDate} 
                                         onChange={handleChange} 
-                                        onClick={(e) => {
-                                            try {
-                                                e.target.showPicker();
-                                            } catch (err) {
-                                                console.error(err);
-                                            }
-                                        }}
+                                        disabled
                                     />
                                 </div>
                             </div>
