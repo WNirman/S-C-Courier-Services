@@ -10,6 +10,13 @@ import AdminDashboard from './AdminDashboard';
 import StaffDashboard from './StaffDashboard';
 import Chatbot from './Chatbot';
 
+const hashPassword = async (password) => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+};
 
 function App({ onNavigate }) {
     
@@ -66,6 +73,23 @@ function App({ onNavigate }) {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loginSuccess, setLoginSuccess] = useState(false);
     const [assignedStaff, setAssignedStaff] = useState([]); // Array to store assigned staff emails
+
+    useEffect(() => {
+        const fetchStaff = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('staff')
+                    .select('staff_email');
+                if (error) throw error;
+                if (data) {
+                    setAssignedStaff(data.map(s => s.staff_email));
+                }
+            } catch (err) {
+                console.error('Failed to fetch staff list:', err);
+            }
+        };
+        fetchStaff();
+    }, []);
 
     useEffect(() => {
         const loadProfileDetails = async () => {
@@ -218,7 +242,19 @@ function App({ onNavigate }) {
                 .single();
 
             if (staffData) {
-                if (staffData.staff_password === password) {
+                // Allow access only if the account is active
+                if (staffData.staff_active_status === false) {
+                    alert('Account is inactive. Access denied.');
+                    setIsLoggingIn(false);
+                    return;
+                }
+
+                // Verify the username and password against the stored account
+                const dbPassword = staffData.staff_password;
+                const isHashed = dbPassword && dbPassword.length === 64 && /^[0-9a-f]+$/i.test(dbPassword);
+                const passwordToCompare = isHashed ? await hashPassword(password) : password;
+
+                if (dbPassword === passwordToCompare) {
                     setIsLoggingIn(false);
                     setLoginSuccess(true);
                     setTimeout(() => {
@@ -569,6 +605,7 @@ function App({ onNavigate }) {
                             await supabase.from('staff').delete().eq('staff_email', email);
                             setAssignedStaff(assignedStaff.filter(s => s !== email));
                         }}
+                        loggedInUser={loggedInUser}
                     />
                 ) : activeForm === 'staff' ? (
                     <StaffDashboard />

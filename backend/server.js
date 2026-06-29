@@ -44,8 +44,22 @@ app.post('/api/auth/login', async (req, res) => {
     // 2. Check Staff Table
     const staffCheck = await pool.query('SELECT * FROM Staff WHERE staff_email = $1', [email]);
     if (staffCheck.rows.length > 0) {
-      if (staffCheck.rows[0].staff_password === password) {
-        return res.json({ role: 'staff', name: staffCheck.rows[0].staff_name });
+      const staffUser = staffCheck.rows[0];
+      const dbPassword = staffUser.staff_password;
+
+      // Determine if dbPassword is a 64-char hex SHA-256 hash
+      const isHashed = dbPassword && dbPassword.length === 64 && /^[0-9a-f]+$/i.test(dbPassword);
+      let passwordToCompare = password;
+      if (isHashed) {
+        const crypto = require('crypto');
+        passwordToCompare = crypto.createHash('sha256').update(password).digest('hex');
+      }
+
+      if (dbPassword === passwordToCompare) {
+        if (staffUser.staff_active_status === false) {
+          return res.status(403).json({ error: 'Account is inactive. Access denied.' });
+        }
+        return res.json({ role: 'staff', name: staffUser.staff_name });
       } else {
         return res.status(401).json({ error: 'Incorrect staff password' });
       }
@@ -113,59 +127,132 @@ app.get('/api/admin/staff', async (req, res) => {
   }
 });
 
-// Admin Route: Assign a new staff member
+// Admin Route: Assign a new staff member (simplified registration form)
 app.post('/api/admin/staff', async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-
-    // Server-Side email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ error: 'Invalid email format' });
+    const { name, phone, role, branchId } = req.body;
+    if (!name || !phone || !role || !branchId) {
+      return res.status(400).json({ error: 'All fields are required' });
     }
 
-    // Check if user exists
-    const checkStaff = await pool.query('SELECT * FROM Staff WHERE staff_email = $1', [email]);
-    if (checkStaff.rows.length > 0) {
-      return res.status(400).json({ error: 'Staff member already assigned' });
+    const phoneTrimmed = phone.trim();
+    if (phoneTrimmed.length < 9 || phoneTrimmed.length > 15 || !/^\+?[0-9]+$/.test(phoneTrimmed)) {
+      return res.status(400).json({ error: 'Invalid contact number format' });
     }
 
-    // Fetch existing customer details to preserve their name, phone, and password.
-    // Admin can ONLY assign staff members that have already registered.
-    const checkCustomer = await pool.query('SELECT * FROM Customer WHERE cust_email = $1', [email]);
-
-    if (checkCustomer.rows.length === 0) {
-      return res.status(404).json({ error: 'User is not registered. Cannot assign as staff.' });
+    // Check duplicate phone in Staff table
+    const phoneCheck = await pool.query('SELECT * FROM Staff WHERE staff_phone = $1', [phoneTrimmed]);
+    if (phoneCheck.rows.length > 0) {
+      return res.status(400).json({ error: 'Contact Number is already in use by another staff member' });
     }
 
-    const cust = checkCustomer.rows[0];
-    const staffName = cust.cust_name || 'New Staff';
-    // PostgreSQL converts column names to lowercase by default
-    const staffPhone = cust.cust_phoneno || cust.cust_phoneNo || '555-0000';
-    const staffPassword = cust.cust_password;
+    // Generate unique username: first name + @sccourier.com
+    const baseName = name.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    const base = baseName || 'staff';
+    const domain = '@sccourier.com';
+    let generatedUsername = `${base}${domain}`;
 
-    // Ensure at least one Branch exists so the Foreign Key doesn't fail!
-    const branchCheck = await pool.query('SELECT branch_ID FROM Branch LIMIT 1');
-    let dbBranchId = 1;
-    if (branchCheck.rows.length === 0) {
-      const newBranch = await pool.query("INSERT INTO Branch (branch_location) VALUES ('Main Office') RETURNING branch_ID");
-      dbBranchId = newBranch.rows[0].branch_id;
-    } else {
-      dbBranchId = branchCheck.rows[0].branch_id;
+    // Get all existing staff emails starting with base
+    const matchingEmails = await pool.query('SELECT staff_email FROM Staff WHERE staff_email LIKE $1', [`${base}%${domain}`]);
+    const existingUsernames = matchingEmails.rows.map(r => r.staff_email);
+    
+    let counter = 1;
+    while (existingUsernames.includes(generatedUsername)) {
+      generatedUsername = `${base}${counter}${domain}`;
+      counter++;
     }
 
-    // Insert staff using actual details (if they were a customer) or default generics
-    const newStaff = await pool.query(
-      `INSERT INTO Staff (staff_name, staff_email, staff_phone, branch_id, staff_role, staff_active_status, staff_password) 
-       VALUES ($1, $2, $3, $4, 'staff', true, $5) RETURNING *`,
-      [staffName, email, staffPhone, dbBranchId, staffPassword]
+    // Generate secure temporary password
+    const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lowercase = 'abcdefghijkmnopqrstuvwxyz';
+    const numbers = '23456789';
+    const symbols = '@#$%&*!';
+    const getRandom = (set, count) => {
+      let r = '';
+      for (let i = 0; i < count; i++) {
+        r += set.charAt(Math.floor(Math.random() * set.length));
+      }
+      return r;
+    };
+    let rawPassword = getRandom(uppercase, 2) + getRandom(lowercase, 2) + getRandom(numbers, 2) + getRandom(symbols, 2);
+    // Shuffle
+    const tempPassword = rawPassword.split('').sort(() => Math.random() - 0.5).join('');
+
+    // Encrypt password (SHA-256)
+    const crypto = require('crypto');
+    const hashedPassword = crypto.createHash('sha256').update(tempPassword).digest('hex');
+
+    // Insert staff
+    const result = await pool.query(
+      `INSERT INTO Staff (
+        staff_name, staff_phone, branch_id, staff_role, staff_active_status, 
+        staff_email, staff_password
+      ) VALUES ($1, $2, $3, $4, true, $5, $6) RETURNING *`,
+      [name, phoneTrimmed, branchId, role, generatedUsername, hashedPassword]
     );
 
-    res.json(newStaff.rows[0]);
+    res.json({
+      staff: result.rows[0],
+      generatedUsername,
+      tempPassword
+    });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: 'Server error during staff assignment' });
+  }
+});
+
+// Admin Route: Send generated credentials via email
+app.post('/api/admin/send-staff-credentials', async (req, res) => {
+  const { personalEmail, username, password, staffName } = req.body;
+  if (!personalEmail || !username || !password) {
+    return res.status(400).json({ error: 'Missing personalEmail, username, or password' });
+  }
+
+  const mailOptions = {
+    from: `"SC Courier Services" <${process.env.SMTP_USER || 'no-reply@sccourier.com'}>`,
+    to: personalEmail,
+    subject: 'SC Courier Services — Your Staff Account Credentials',
+    html: `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; border: 1px solid #e5e7eb; border-radius: 16px; background-color: #ffffff; color: #1f2937; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <h2 style="color: #ea580c; font-size: 24px; font-weight: 700; margin: 0;">SC Courier Services</h2>
+          <p style="color: #6b7280; font-size: 14px; margin: 5px 0 0 0;">Staff Account Registration</p>
+        </div>
+        <div style="border-top: 1px solid #e5e7eb; padding-top: 20px;">
+          <p>Dear <strong>${staffName || 'Staff Member'}</strong>,</p>
+          <p>Welcome to the team! Your staff account has been successfully created. You can now access the Staff Dashboard using the temporary credentials provided below:</p>
+          
+          <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin: 24px 0; font-family: monospace; font-size: 16px; color: #111827;">
+            <div style="margin-bottom: 10px;"><strong>Username:</strong> ${username}</div>
+            <div><strong>Temporary Password:</strong> ${password}</div>
+          </div>
+          
+          <p style="color: #ef4444; font-size: 13px; font-weight: 600; background-color: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; padding: 12px;">
+            ⚠️ Security Reminder: Please change your password immediately after your first login to ensure account security.
+          </p>
+          
+          <p style="margin-top: 24px; font-size: 14px; color: #4b5563; border-top: 1px solid #e5e7eb; padding-top: 20px;">
+            If you did not request this account, please contact the System Administrator.
+          </p>
+          <p style="font-size: 14px; color: #4b5563; margin-top: 10px;">
+            Regards,<br><strong>SC Courier Services Team</strong>
+          </p>
+        </div>
+      </div>
+    `
+  };
+
+  try {
+    if (!transporter) {
+      await setupTransporter();
+    }
+    const info = await transporter.sendMail(mailOptions);
+    const previewUrl = nodemailer.getTestMessageUrl(info);
+    res.json({ message: 'Email sent successfully!', previewUrl });
+  } catch (err) {
+    console.error('Error sending credentials email:', err);
+    res.status(500).json({ error: 'Failed to send credentials email. Check SMTP configuration.' });
   }
 });
 
