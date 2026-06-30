@@ -1,13 +1,44 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 
-const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) => {
+const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, loggedInUser }) => {
     const [showAssignForm, setShowAssignForm] = useState(false);
-    const [staffEmail, setStaffEmail] = useState('');
     const [assignStatus, setAssignStatus] = useState('');
     const [selectedStaff, setSelectedStaff] = useState(null);
     const [staffDetailsLoading, setStaffDetailsLoading] = useState(false);
     const [selectedStat, setSelectedStat] = useState(null);
+
+    // Registration Form Fields State
+    const [regFullName, setRegFullName] = useState('');
+    const [regPhone, setRegPhone] = useState('');
+    const [regRole, setRegRole] = useState('staff');
+    const [regBranchId, setRegBranchId] = useState('');
+
+    // Success Screen State
+    const [registeredCredentials, setRegisteredCredentials] = useState(null);
+    const [sendEmailAddress, setSendEmailAddress] = useState('');
+    const [copiedField, setCopiedField] = useState(null);
+    const [sendingEmail, setSendingEmail] = useState(false);
+
+    // Branches state
+    const [branches, setBranches] = useState([]);
+
+    // Fetch branches from Supabase on mount
+    useEffect(() => {
+        const fetchBranches = async () => {
+            try {
+                const { data, error } = await supabase.from('branch').select('*');
+                if (error) throw error;
+                setBranches(data || []);
+                if (data && data.length > 0) {
+                    setRegBranchId(data[0].branch_id);
+                }
+            } catch (err) {
+                console.error('Failed to load branches:', err);
+            }
+        };
+        fetchBranches();
+    }, []);
 
     // Load staff from Supabase on mount
     useEffect(() => {
@@ -25,80 +56,169 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
         loadStaff();
     }, []);
 
+    // SHA-256 client-side hashing helper
+    const hashPasswordClient = async (password) => {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(password);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    };
+
+    // Credentials Clipboard Copy Actions
+    const handleCopy = (text, field) => {
+        navigator.clipboard.writeText(text);
+        setCopiedField(field);
+        setTimeout(() => setCopiedField(null), 2000);
+    };
+
+    const handleCopyAll = () => {
+        if (!registeredCredentials) return;
+        const text = `Staff Assigned Successfully\n\nUsername: ${registeredCredentials.username}\nTemporary Password: ${registeredCredentials.tempPassword}`;
+        navigator.clipboard.writeText(text);
+        setCopiedField('all');
+        setTimeout(() => setCopiedField(null), 2000);
+    };
+
+    // Send Credentials via Express Backend Nodemailer
+    const handleSendEmail = async () => {
+        if (!registeredCredentials || !sendEmailAddress.trim()) {
+            alert('Please enter a destination email address.');
+            return;
+        }
+        setSendingEmail(true);
+        try {
+            const res = await fetch('http://localhost:5000/api/admin/send-staff-credentials', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    personalEmail: sendEmailAddress.trim(),
+                    username: registeredCredentials.username,
+                    password: registeredCredentials.tempPassword,
+                    staffName: registeredCredentials.staffName
+                }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                let msg = 'Credentials email sent successfully!';
+                if (data.previewUrl) {
+                    msg += `\n\n(Local Dev Ethereal Mail link: ${data.previewUrl})`;
+                }
+                alert(msg);
+            } else {
+                alert('Failed to send email: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            console.error('Email dispatch error:', err);
+            alert('Failed to send email. Please ensure the backend server is running on http://localhost:5000.');
+        } finally {
+            setSendingEmail(false);
+        }
+    };
+
+    // Full Staff Registration submission
     const handleAssignStaff = async (e) => {
         e.preventDefault();
-        if (!staffEmail) return;
+        
+        // 1. Validate all required fields
+        if (!regFullName.trim() || !regPhone.trim() || !regRole || !regBranchId) {
+            alert('All fields are required');
+            return;
+        }
+
+        const phoneTrimmed = regPhone.trim();
+        if (phoneTrimmed.length < 9 || phoneTrimmed.length > 15 || !/^\+?[0-9]+$/.test(phoneTrimmed)) {
+            alert('Invalid contact number format (9 to 15 digits expected)');
+            return;
+        }
 
         setAssignStatus('assigning');
 
         try {
-            // Check if already a staff member
-            const { data: existingStaff } = await supabase
+            // 2. Ensure Contact Number is unique
+            const { data: dupPhone } = await supabase
                 .from('staff')
                 .select('staff_id')
-                .eq('staff_email', staffEmail)
-                .single();
+                .eq('staff_phone', phoneTrimmed);
 
-            if (existingStaff) {
-                alert('Staff member already assigned');
+            if (dupPhone && dupPhone.length > 0) {
+                alert('Contact Number is already in use by another staff member');
                 setAssignStatus('');
                 return;
             }
 
-            // Check if user is a registered customer
-            const { data: customer } = await supabase
-                .from('customer')
-                .select('*')
-                .eq('cust_email', staffEmail)
-                .single();
+            // 3. Generate a unique username in the format: username@sccourier.com
+            const baseName = regFullName.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+            const base = baseName || 'staff';
+            const domain = '@sccourier.com';
+            let generatedUsername = `${base}${domain}`;
 
-            if (!customer) {
-                alert('User is not registered. Cannot assign as staff.');
-                setAssignStatus('');
-                return;
+            // Fetch existing matching usernames to append sequential numbers if duplicate
+            const { data: matches, error: matchErr } = await supabase
+                .from('staff')
+                .select('staff_email')
+                .like('staff_email', `${base}%${domain}`);
+
+            if (matchErr) throw matchErr;
+
+            const existingUsernames = matches ? matches.map(m => m.staff_email) : [];
+            let counter = 1;
+            while (existingUsernames.includes(generatedUsername)) {
+                generatedUsername = `${base}${counter}${domain}`;
+                counter++;
             }
 
-            // Ensure a branch exists
-            let { data: branches } = await supabase
-                .from('branch')
-                .select('branch_id')
-                .limit(1);
+            // 4. Automatically generate a secure temporary password
+            const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+            const lowercase = 'abcdefghijkmnopqrstuvwxyz';
+            const numbers = '23456789';
+            const symbols = '@#$%&*!';
+            const getRandom = (set, count) => {
+                let r = '';
+                for (let i = 0; i < count; i++) {
+                    r += set.charAt(Math.floor(Math.random() * set.length));
+                }
+                return r;
+            };
+            let rawPassword = getRandom(uppercase, 2) + getRandom(lowercase, 2) + getRandom(numbers, 2) + getRandom(symbols, 2);
+            const tempPassword = rawPassword.split('').sort(() => Math.random() - 0.5).join('');
 
-            let branchId = 1;
-            if (!branches || branches.length === 0) {
-                const { data: newBranch } = await supabase
-                    .from('branch')
-                    .insert({ branch_location: 'Main Office' })
-                    .select('branch_id')
-                    .single();
-                branchId = newBranch.branch_id;
-            } else {
-                branchId = branches[0].branch_id;
-            }
+            // 5. Store generated username and encrypted (hashed) password along with staff details
+            const hashedPassword = await hashPasswordClient(tempPassword);
 
-            // Insert staff
-            const { error } = await supabase.from('staff').insert({
-                staff_name: customer.cust_name || 'New Staff',
-                staff_email: staffEmail,
-                staff_phone: customer.cust_phoneno || '555-0000',
-                branch_id: branchId,
-                staff_role: 'staff',
-                staff_active_status: true,
-                staff_password: customer.cust_password,
-            });
+            const { error: insertErr } = await supabase
+                .from('staff')
+                .insert({
+                    staff_name: regFullName.trim(),
+                    staff_phone: phoneTrimmed,
+                    branch_id: parseInt(regBranchId),
+                    staff_role: regRole,
+                    staff_active_status: true,
+                    staff_email: generatedUsername,
+                    staff_password: hashedPassword
+                });
 
-            if (error) throw error;
+            if (insertErr) throw insertErr;
 
             setAssignStatus('success');
-            if (onAssignStaff) onAssignStaff(staffEmail);
-            setTimeout(() => {
-                setShowAssignForm(false);
-                setStaffEmail('');
-                setAssignStatus('');
-            }, 1500);
+            if (onAssignStaff) onAssignStaff(generatedUsername);
+            
+            // Set credentials to trigger Success message view
+            setRegisteredCredentials({
+                username: generatedUsername,
+                tempPassword,
+                staffName: regFullName.trim()
+            });
+
+            // Reset inputs
+            setRegFullName('');
+            setRegPhone('');
+            setRegRole('staff');
         } catch (err) {
             console.error('Assign staff error:', err);
-            alert('Failed to assign staff. Please try again.');
+            alert('Failed to assign staff: ' + (err.message || err));
             setAssignStatus('');
         }
     };
@@ -211,57 +331,200 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff }) =>
             {/* Assign Staff Form (conditional) */}
             {showAssignForm && (
                 <div className="action-card" style={{ marginBottom: '2rem', animation: 'slideInDown 0.4s ease', padding: '2rem', border: '1px solid var(--card-border)', maxWidth: '100%', width: '100%' }}>
-                    <h3 style={{ fontSize: '1.2rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', textAlign: 'left' }}>
-                        <i className='bx bx-user-check' style={{ color: 'var(--accent-color)' }}></i> Assign New Staff Member
-                    </h3>
-                    <form onSubmit={handleAssignStaff} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                        <div className="form-control" style={{ flex: 1, minWidth: '250px', marginBottom: 0, textAlign: 'left' }}>
-                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Staff Email Address</label>
-                            <div className="input-wrapper" style={{ position: 'relative' }}>
-                                <i className='bx bx-envelope input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
-                                <input
-                                    type="email"
-                                    placeholder="e.g. staff@sccourier.com"
-                                    required
-                                    value={staffEmail}
-                                    onChange={(e) => setStaffEmail(e.target.value)}
-                                    disabled={assignStatus === 'assigning' || assignStatus === 'success'}
-                                    style={{
-                                        width: '100%',
-                                        padding: '0.8rem 1rem 0.8rem 2.8rem',
-                                        background: 'rgba(255, 255, 255, 0.05)',
-                                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                                        borderRadius: '8px',
-                                        color: '#fff',
-                                        fontSize: '1rem',
-                                        outline: 'none',
+                    {registeredCredentials ? (
+                        <div style={{ textAlign: 'left' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--card-border)', paddingBottom: '1rem' }}>
+                                <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>
+                                    <i className='bx bx-check-shield'></i>
+                                </div>
+                                <div>
+                                    <h3 style={{ fontSize: '1.3rem', color: '#fff', margin: 0 }}>Staff Assigned Successfully</h3>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.2rem 0 0 0' }}>Credentials generated and saved securely.</p>
+                                </div>
+                            </div>
+
+                            <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--card-border)', borderRadius: '12px', padding: '1.5rem', marginBottom: '1.5rem' }}>
+                                <div style={{ marginBottom: '1.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div>
+                                        <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>Generated Username</label>
+                                        <span style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', fontFamily: 'monospace' }}>{registeredCredentials.username}</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => handleCopy(registeredCredentials.username, 'username')}
+                                        className="secondary-btn" 
+                                        style={{ padding: '0.5rem 0.8rem', height: 'auto', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}
+                                    >
+                                        <i className={`bx ${copiedField === 'username' ? 'bx-check text-success' : 'bx-copy'}`}></i>
+                                        {copiedField === 'username' ? 'Copied!' : 'Copy'}
+                                    </button>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div>
+                                        <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>Temporary Password</label>
+                                        <span style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', fontFamily: 'monospace' }}>{registeredCredentials.tempPassword}</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => handleCopy(registeredCredentials.tempPassword, 'password')}
+                                        className="secondary-btn" 
+                                        style={{ padding: '0.5rem 0.8rem', height: 'auto', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}
+                                    >
+                                        <i className={`bx ${copiedField === 'password' ? 'bx-check text-success' : 'bx-copy'}`}></i>
+                                        {copiedField === 'password' ? 'Copied!' : 'Copy'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '2rem', flexWrap: 'wrap', borderBottom: '1px solid var(--card-border)', paddingBottom: '1.5rem' }}>
+                                <div className="form-control" style={{ flex: 1, minWidth: '220px', marginBottom: 0 }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Staff Contact/Personal Email</label>
+                                    <div className="input-wrapper" style={{ position: 'relative' }}>
+                                        <i className='bx bx-envelope input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                        <input
+                                            type="email"
+                                            placeholder="e.g. staff@gmail.com"
+                                            value={sendEmailAddress}
+                                            onChange={(e) => setSendEmailAddress(e.target.value)}
+                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                        />
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={handleSendEmail}
+                                    disabled={sendingEmail || !sendEmailAddress.trim()}
+                                    className="primary-btn" 
+                                    style={{ width: 'auto', height: '46px', padding: '0 1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--accent-color)', boxShadow: '0 4px 14px 0 var(--accent-glow)' }}
+                                >
+                                    {sendingEmail ? (
+                                        <><i className='bx bx-loader-alt bx-spin'></i> Sending...</>
+                                    ) : (
+                                        <><i className='bx bx-envelope'></i> Send Credentials via Email</>
+                                    )}
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                <button 
+                                    onClick={handleCopyAll}
+                                    className="primary-btn" 
+                                    style={{ width: 'auto', height: '44px', padding: '0 1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#3b82f6', boxShadow: '0 4px 14px 0 rgba(59, 130, 246, 0.4)' }}
+                                >
+                                    <i className={`bx ${copiedField === 'all' ? 'bx-check' : 'bx-copy'}`}></i>
+                                    {copiedField === 'all' ? 'Credentials Copied!' : 'Copy All Credentials'}
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                        setRegisteredCredentials(null);
+                                        setSendEmailAddress('');
                                     }}
-                                />
+                                    className="secondary-btn" 
+                                    style={{ width: 'auto', height: '44px', padding: '0 1.2rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                    Assign Another Staff
+                                </button>
                             </div>
                         </div>
-                        <button 
-                            type="submit" 
-                            className="primary-btn" 
-                            disabled={assignStatus === 'assigning' || assignStatus === 'success'}
-                            style={{ 
-                                width: 'auto', 
-                                height: '46px',
-                                padding: '0 1.5rem',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                ...(assignStatus === 'success' ? { background: 'var(--success)', boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)' } : {}) 
-                            }}
-                        >
-                            {assignStatus === 'assigning' ? (
-                                <><i className='bx bx-loader-alt bx-spin'></i> Assigning...</>
-                            ) : assignStatus === 'success' ? (
-                                <><i className='bx bx-check'></i> Staff Assigned</>
-                            ) : (
-                                <>Assign Staff <i className='bx bx-right-arrow-alt'></i></>
-                            )}
-                        </button>
-                    </form>
+                    ) : (
+                        <form onSubmit={handleAssignStaff} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'left' }}>
+                            <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                <i className='bx bx-user-check' style={{ color: 'var(--accent-color)' }}></i> Register & Assign New Staff
+                            </h3>
+                            
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
+                                <div className="form-control" style={{ marginBottom: 0 }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Full Name</label>
+                                    <div className="input-wrapper" style={{ position: 'relative' }}>
+                                        <i className='bx bx-user input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. John Doe"
+                                            required
+                                            value={regFullName}
+                                            onChange={(e) => setRegFullName(e.target.value)}
+                                            disabled={assignStatus === 'assigning'}
+                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="form-control" style={{ marginBottom: 0 }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Contact Number</label>
+                                    <div className="input-wrapper" style={{ position: 'relative' }}>
+                                        <i className='bx bx-phone input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. 0771234567"
+                                            required
+                                            value={regPhone}
+                                            onChange={(e) => setRegPhone(e.target.value)}
+                                            disabled={assignStatus === 'assigning'}
+                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
+                                <div className="form-control" style={{ marginBottom: 0 }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Staff Role</label>
+                                    <div className="input-wrapper" style={{ position: 'relative' }}>
+                                        <i className='bx bx-briefcase input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
+                                        <select
+                                            value={regRole}
+                                            onChange={(e) => setRegRole(e.target.value)}
+                                            disabled={assignStatus === 'assigning'}
+                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                        >
+                                            <option value="staff">Staff</option>
+                                            <option value="admin">Admin</option>
+                                        </select>
+                                        <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
+                                    </div>
+                                </div>
+                                <div className="form-control" style={{ marginBottom: 0 }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Branch</label>
+                                    <div className="input-wrapper" style={{ position: 'relative' }}>
+                                        <i className='bx bx-buildings input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
+                                        <select
+                                            value={regBranchId}
+                                            onChange={(e) => setRegBranchId(e.target.value)}
+                                            disabled={assignStatus === 'assigning'}
+                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                        >
+                                            {branches.map((b) => (
+                                                <option key={b.branch_id} value={b.branch_id}>{b.branch_location}</option>
+                                            ))}
+                                        </select>
+                                        <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="submit"
+                                    className="primary-btn"
+                                    disabled={assignStatus === 'assigning'}
+                                    style={{ width: 'auto', height: '46px', padding: '0 2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                >
+                                    {assignStatus === 'assigning' ? (
+                                        <><i className='bx bx-loader-alt bx-spin'></i> Generating Credentials...</>
+                                    ) : (
+                                        <>Register & Assign Staff <i className='bx bx-right-arrow-alt'></i></>
+                                    )}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowAssignForm(false);
+                                        setRegisteredCredentials(null);
+                                    }}
+                                    className="secondary-btn"
+                                    style={{ width: 'auto', height: '46px', padding: '0 1.5rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    )}
                 </div>
             )}
 
