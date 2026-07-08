@@ -608,7 +608,7 @@ function App({ onNavigate }) {
                         loggedInUser={loggedInUser}
                     />
                 ) : activeForm === 'staff' ? (
-                    <StaffDashboard />
+                    <StaffDashboard loggedInUser={loggedInUser} />
                 ) : activeForm === 'dashboard' ? (
                     <CustomerDashboard onDeliver={() => setActiveForm('atr')} loggedInUser={loggedInUser} />
                 ) : activeForm === 'atr' ? (
