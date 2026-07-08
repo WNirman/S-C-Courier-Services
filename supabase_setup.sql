@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS staff(
     staff_active_status BOOLEAN,
     FOREIGN KEY(branch_id) REFERENCES branch(branch_id),
     staff_email VARCHAR(150) UNIQUE,
-    staff_password TEXT
+    staff_password TEXT,
+    availability_status VARCHAR(50) DEFAULT 'Available'
 );
 
 CREATE TABLE IF NOT EXISTS invoice (
@@ -106,6 +107,7 @@ CREATE TABLE IF NOT EXISTS atr (
     approval_date TIMESTAMP,
     approval_token VARCHAR(255),
     client_approver_id INT,
+    rider_id INT REFERENCES staff(staff_id),
     FOREIGN KEY (dep_id) REFERENCES department(dep_id),
     FOREIGN KEY (approved_by) REFERENCES staff(staff_id),
     FOREIGN KEY (client_approver_id) REFERENCES client_approver(approver_id)
@@ -196,6 +198,8 @@ ALTER TABLE department ENABLE ROW LEVEL SECURITY;
 ALTER TABLE company ENABLE ROW LEVEL SECURITY;
 ALTER TABLE atr ENABLE ROW LEVEL SECURITY;
 ALTER TABLE staff ADD COLUMN IF NOT EXISTS staff_avatar_url TEXT;
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS availability_status VARCHAR(50) DEFAULT 'Available';
+ALTER TABLE atr ADD COLUMN IF NOT EXISTS rider_id INT REFERENCES staff(staff_id);
 
 -- Create policies to allow anon access (for the frontend client)
 CREATE POLICY "Allow anon select on customer" ON customer FOR SELECT USING (true);

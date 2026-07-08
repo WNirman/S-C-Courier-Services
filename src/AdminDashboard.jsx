@@ -8,6 +8,93 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     const [staffDetailsLoading, setStaffDetailsLoading] = useState(false);
     const [selectedStat, setSelectedStat] = useState(null);
 
+    // Ride Assignment and Rider Availability State
+    const [activeTab, setActiveTab] = useState('overview');
+    const [ridersList, setRidersList] = useState([]);
+    const [atrRequests, setAtrRequests] = useState([]);
+    const [loadingRiders, setLoadingRiders] = useState(false);
+    const [loadingAtr, setLoadingAtr] = useState(false);
+
+    const loadRiders = async () => {
+        setLoadingRiders(true);
+        try {
+            const { data, error } = await supabase
+                .from('staff')
+                .select('staff_id, staff_name, staff_email, staff_phone, staff_role, staff_active_status, branch_id, availability_status')
+                .eq('staff_role', 'staff');
+            if (error) throw error;
+            setRidersList(data || []);
+        } catch (err) {
+            console.error('Error loading riders:', err);
+        } finally {
+            setLoadingRiders(false);
+        }
+    };
+
+    const loadAtrRequests = async () => {
+        setLoadingAtr(true);
+        try {
+            const { data, error } = await supabase
+                .from('atr')
+                .select('*')
+                .order('atr_id', { ascending: false });
+            if (error) throw error;
+            setAtrRequests(data || []);
+        } catch (err) {
+            console.error('Error loading ATR requests:', err);
+        } finally {
+            setLoadingAtr(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'rides') {
+            loadRiders();
+            loadAtrRequests();
+        }
+    }, [activeTab]);
+
+    const handleAssignRider = async (atrId, riderId) => {
+        try {
+            const { error } = await supabase
+                .from('atr')
+                .update({ rider_id: riderId ? parseInt(riderId) : null })
+                .eq('atr_id', atrId);
+            
+            if (error) throw error;
+
+            if (riderId) {
+                await supabase
+                    .from('staff')
+                    .update({ availability_status: 'Busy' })
+                    .eq('staff_id', parseInt(riderId));
+            }
+
+            alert('Rider assigned successfully!');
+            loadAtrRequests();
+            loadRiders();
+        } catch (err) {
+            console.error('Error assigning rider:', err);
+            alert('Failed to assign rider: ' + err.message);
+        }
+    };
+
+    const handleUpdateRiderStatus = async (staffId, newStatus) => {
+        try {
+            const { error } = await supabase
+                .from('staff')
+                .update({ availability_status: newStatus })
+                .eq('staff_id', staffId);
+            if (error) throw error;
+            
+            alert('Rider status updated!');
+            loadRiders();
+        } catch (err) {
+            console.error('Error updating rider status:', err);
+            alert('Failed to update rider status: ' + err.message);
+        }
+    };
+
     // Registration Form Fields State
     const [regFullName, setRegFullName] = useState('');
     const [regPhone, setRegPhone] = useState('');
@@ -328,8 +415,52 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 </div>
             </div>
 
-            {/* Assign Staff Form (conditional) */}
-            {showAssignForm && (
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--card-border)', marginBottom: '2rem', paddingBottom: '0.5rem' }}>
+                <button 
+                    onClick={() => setActiveTab('overview')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'overview' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'overview' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-grid-alt'></i> Overview & Staff
+                </button>
+                <button 
+                    onClick={() => setActiveTab('rides')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'rides' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'rides' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-navigation'></i> Ride Assignment
+                </button>
+            </div>
+
+            {activeTab === 'overview' && (
+                <>
+                    {/* Assign Staff Form (conditional) */}
+                    {showAssignForm && (
                 <div className="action-card" style={{ marginBottom: '2rem', animation: 'slideInDown 0.4s ease', padding: '2rem', border: '1px solid var(--card-border)', maxWidth: '100%', width: '100%' }}>
                     {registeredCredentials ? (
                         <div style={{ textAlign: 'left' }}>
@@ -931,6 +1062,214 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     </div>
                 </div>
             </div>
+            </>
+            )}
+
+            {activeTab === 'rides' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem', animation: 'fadeIn 0.4s ease' }}>
+                    
+                    {/* Rider Management Card */}
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
+                                    <i className='bx bx-run' style={{ color: 'var(--accent-color)' }}></i> Rider Availability Management
+                                </h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>View and update the real-time status of your courier riders.</p>
+                            </div>
+                            <button onClick={loadRiders} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                                <i className='bx bx-refresh'></i> Refresh Riders
+                            </button>
+                        </div>
+
+                        {loadingRiders ? (
+                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading riders...</p>
+                        ) : ridersList.length === 0 ? (
+                            <p style={{ color: 'var(--text-secondary)' }}>No riders registered in the system. Use the "Assign Staff" button above to register riders with the "Staff" role.</p>
+                        ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
+                                {ridersList.map((rider) => {
+                                    const statusColors = {
+                                        'Available': { bg: 'rgba(16, 185, 129, 0.1)', text: 'var(--success)', border: '1px solid rgba(16, 185, 129, 0.2)' },
+                                        'Busy': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                        'On Break': { bg: 'rgba(239, 68, 68, 0.1)', text: 'var(--danger)', border: '1px solid rgba(239, 68, 68, 0.2)' }
+                                    };
+                                    const statusStyle = statusColors[rider.availability_status || 'Available'] || statusColors['Available'];
+
+                                    return (
+                                        <div key={rider.staff_id} style={{
+                                            padding: '1.25rem',
+                                            background: 'rgba(255, 255, 255, 0.02)',
+                                            borderRadius: '16px',
+                                            border: '1px solid var(--card-border)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '1rem',
+                                            transition: 'all 0.3s ease'
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
+                                        >
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                                                    {rider.staff_name ? rider.staff_name.charAt(0).toUpperCase() : 'R'}
+                                                </div>
+                                                <div style={{ textAlign: 'left' }}>
+                                                    <h4 style={{ color: '#fff', margin: 0, fontSize: '1rem' }}>{rider.staff_name}</h4>
+                                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.1rem 0 0 0' }}>{rider.staff_email}</p>
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.75rem' }}>
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    padding: '0.25rem 0.65rem',
+                                                    background: statusStyle.bg,
+                                                    color: statusStyle.text,
+                                                    borderRadius: '100px',
+                                                    fontSize: '0.8rem',
+                                                    fontWeight: '600',
+                                                    border: statusStyle.border
+                                                }}>
+                                                    {rider.availability_status || 'Available'}
+                                                </span>
+
+                                                <div className="input-wrapper" style={{ position: 'relative', width: '130px', margin: 0 }}>
+                                                    <select
+                                                        value={rider.availability_status || 'Available'}
+                                                        onChange={(e) => handleUpdateRiderStatus(rider.staff_id, e.target.value)}
+                                                        style={{ width: '100%', padding: '0.4rem 1.8rem 0.4rem 0.75rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                                    >
+                                                        <option value="Available">Available</option>
+                                                        <option value="Busy">Busy</option>
+                                                        <option value="On Break">On Break</option>
+                                                    </select>
+                                                    <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }}></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Ride Assignment Card */}
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
+                                    <i className='bx bx-map-pin' style={{ color: 'var(--accent-color)' }}></i> Ride Assignment Panel
+                                </h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Assign travel requests and courier requests to riders.</p>
+                            </div>
+                            <button onClick={loadAtrRequests} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                                <i className='bx bx-refresh'></i> Refresh Rides
+                            </button>
+                        </div>
+
+                        {loadingAtr ? (
+                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading rides...</p>
+                        ) : atrRequests.length === 0 ? (
+                            <p style={{ color: 'var(--text-secondary)' }}>No ride requests found in the system.</p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                                {atrRequests.map((req) => {
+                                    const assignedRider = ridersList.find(r => r.staff_id === req.rider_id);
+                                    
+                                    return (
+                                        <div key={req.atr_id} style={{
+                                            padding: '1.5rem',
+                                            background: 'rgba(255, 255, 255, 0.02)',
+                                            borderRadius: '16px',
+                                            border: '1px solid var(--card-border)',
+                                            display: 'flex',
+                                            flexWrap: 'wrap',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            gap: '1.5rem',
+                                            transition: 'all 0.3s ease',
+                                            textAlign: 'left'
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
+                                        >
+                                            <div style={{ flex: '1 1 300px' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                                                    <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fff' }}>{req.atr_number}</span>
+                                                    <span style={{
+                                                        display: 'inline-block', padding: '0.25rem 0.65rem',
+                                                        background: req.status === 'Approved' || req.status === 'Completed' ? 'rgba(16,185,129,0.1)' : req.status === 'Pending' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                                        color: req.status === 'Approved' || req.status === 'Completed' ? 'var(--success)' : req.status === 'Pending' ? '#f59e0b' : 'var(--danger)',
+                                                        borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                        border: req.status === 'Approved' || req.status === 'Completed' ? '1px solid rgba(16,185,129,0.2)' : req.status === 'Pending' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                                    }}>{req.status}</span>
+                                                </div>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                    <div><strong>Passenger:</strong> {req.principal_passenger_name} ({req.principal_passenger_designation})</div>
+                                                    <div><strong>Vehicle Type:</strong> {req.vehicle_type}</div>
+                                                    <div><strong>Required Date:</strong> {req.required_date} @ {req.required_time}</div>
+                                                    <div><strong>Est. Cost:</strong> {req.estimated_cost} LKR</div>
+                                                </div>
+                                            </div>
+
+                                            <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                                                {assignedRider ? (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '0.5rem 1rem', borderRadius: '12px' }}>
+                                                        <div style={{ textAlign: 'left' }}>
+                                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: 0 }}>Assigned Rider</p>
+                                                            <p style={{ color: '#fff', fontSize: '0.9rem', fontWeight: '600', margin: 0 }}>{assignedRider.staff_name}</p>
+                                                        </div>
+                                                        <button 
+                                                            onClick={() => handleAssignRider(req.atr_id, null)}
+                                                            className="secondary-btn" 
+                                                            style={{ padding: '0.35rem 0.6rem', height: 'auto', fontSize: '0.8rem', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.15)', cursor: 'pointer', borderRadius: '8px' }}
+                                                        >
+                                                            Unassign
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                        <div className="input-wrapper" style={{ position: 'relative', width: '220px', margin: 0 }}>
+                                                            <select
+                                                                id={`select-rider-${req.atr_id}`}
+                                                                defaultValue=""
+                                                                style={{ width: '100%', padding: '0.6rem 2rem 0.6rem 0.85rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                                            >
+                                                                <option value="" disabled>Select a Rider...</option>
+                                                                {ridersList.map(r => (
+                                                                    <option key={r.staff_id} value={r.staff_id}>
+                                                                        {r.staff_name} ({r.availability_status})
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                            <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }}></i>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => {
+                                                                const sel = document.getElementById(`select-rider-${req.atr_id}`);
+                                                                if (sel && sel.value) {
+                                                                    handleAssignRider(req.atr_id, sel.value);
+                                                                } else {
+                                                                    alert('Please select a rider first.');
+                                                                }
+                                                            }}
+                                                            className="primary-btn"
+                                                            style={{ width: 'auto', padding: '0.6rem 1.25rem', height: '38px', fontSize: '0.85rem', background: 'var(--accent-color)' }}
+                                                        >
+                                                            Assign
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
