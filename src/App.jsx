@@ -6,6 +6,7 @@ import aboutGif from './assets/about.gif';
 import contactGif from './assets/contact.gif';
 import CustomerDashboard from './CustomerDashboard';
 import AtrForm from './AtrForm';
+import PersonalDeliveryForm from './PersonalDeliveryForm';
 import AdminDashboard from './AdminDashboard';
 import StaffDashboard from './StaffDashboard';
 import Chatbot from './Chatbot';
@@ -27,7 +28,7 @@ function App({ onNavigate }) {
     const [activeForm, setActiveForm] = useState(() => {
         const savedForm = localStorage.getItem('activeForm') || 'tracking';
         const savedUser = localStorage.getItem('loggedInUser');
-        const authRoutes = ['dashboard', 'admin', 'staff', 'atr'];
+        const authRoutes = ['dashboard', 'admin', 'staff', 'atr', 'personal-delivery'];
         if (!savedUser && authRoutes.includes(savedForm)) {
             return 'tracking';
         }
@@ -39,7 +40,7 @@ function App({ onNavigate }) {
             localStorage.setItem('loggedInUser', loggedInUser);
         } else {
             localStorage.removeItem('loggedInUser');
-            const authRoutes = ['dashboard', 'admin', 'staff', 'atr'];
+            const authRoutes = ['dashboard', 'admin', 'staff', 'atr', 'personal-delivery'];
             if (authRoutes.includes(activeForm)) {
                 setActiveForm('tracking');
             }
@@ -610,9 +611,15 @@ function App({ onNavigate }) {
                 ) : activeForm === 'staff' ? (
                     <StaffDashboard loggedInUser={loggedInUser} />
                 ) : activeForm === 'dashboard' ? (
-                    <CustomerDashboard onDeliver={() => setActiveForm('atr')} loggedInUser={loggedInUser} />
+                    <CustomerDashboard
+                        onDeliver={() => setActiveForm('atr')}
+                        onPersonalDeliver={() => setActiveForm('personal-delivery')}
+                        loggedInUser={loggedInUser}
+                    />
                 ) : activeForm === 'atr' ? (
                     <AtrForm onBack={() => setActiveForm('dashboard')} loggedInUser={loggedInUser} />
+                ) : activeForm === 'personal-delivery' ? (
+                    <PersonalDeliveryForm onBack={() => setActiveForm('dashboard')} loggedInUser={loggedInUser} />
                 ) : activeForm === 'register' ? (
                     <div className="atr-page">
                         <div className="atr-split-layout">

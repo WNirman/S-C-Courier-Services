@@ -59,8 +59,7 @@ CREATE TABLE IF NOT EXISTS staff(
     staff_active_status BOOLEAN,
     FOREIGN KEY(branch_id) REFERENCES branch(branch_id),
     staff_email VARCHAR(150) UNIQUE,
-    staff_password TEXT,
-    availability_status VARCHAR(50) DEFAULT 'Available'
+    staff_password TEXT
 );
 
 CREATE TABLE IF NOT EXISTS invoice (
@@ -107,7 +106,6 @@ CREATE TABLE IF NOT EXISTS atr (
     approval_date TIMESTAMP,
     approval_token VARCHAR(255),
     client_approver_id INT,
-    rider_id INT REFERENCES staff(staff_id),
     FOREIGN KEY (dep_id) REFERENCES department(dep_id),
     FOREIGN KEY (approved_by) REFERENCES staff(staff_id),
     FOREIGN KEY (client_approver_id) REFERENCES client_approver(approver_id)
@@ -198,8 +196,6 @@ ALTER TABLE department ENABLE ROW LEVEL SECURITY;
 ALTER TABLE company ENABLE ROW LEVEL SECURITY;
 ALTER TABLE atr ENABLE ROW LEVEL SECURITY;
 ALTER TABLE staff ADD COLUMN IF NOT EXISTS staff_avatar_url TEXT;
-ALTER TABLE staff ADD COLUMN IF NOT EXISTS availability_status VARCHAR(50) DEFAULT 'Available';
-ALTER TABLE atr ADD COLUMN IF NOT EXISTS rider_id INT REFERENCES staff(staff_id);
 
 -- Create policies to allow anon access (for the frontend client)
 CREATE POLICY "Allow anon select on customer" ON customer FOR SELECT USING (true);
@@ -222,4 +218,49 @@ CREATE POLICY "Allow anon update on staff" ON staff FOR UPDATE USING (true);
 
 ALTER TABLE client_approver ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow anon select on client_approver" ON client_approver FOR SELECT USING (true);
-CREATE POLICY "Allow anon insert on client_approver" ON client_approver FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow anon delete on client_approver" ON client_approver FOR DELETE USING (true);
+
+-- ================================================
+-- Personal Delivery Requests
+-- ================================================
+
+CREATE TABLE IF NOT EXISTS personal_delivery (
+    pd_id            SERIAL PRIMARY KEY,
+    cust_email       VARCHAR(150) NOT NULL,
+
+    -- Pickup details
+    pickup_address   TEXT NOT NULL,
+    pickup_lat       DOUBLE PRECISION,
+    pickup_lng       DOUBLE PRECISION,
+
+    -- Drop details
+    drop_address     TEXT NOT NULL,
+    drop_lat         DOUBLE PRECISION,
+    drop_lng         DOUBLE PRECISION,
+
+    -- Item details
+    item_type        VARCHAR(100) NOT NULL,
+    item_weight      VARCHAR(50),
+    item_description TEXT,
+
+    -- Sender details
+    sender_name      VARCHAR(150) NOT NULL,
+    sender_phone     VARCHAR(20)  NOT NULL,
+
+    -- Receiver details
+    receiver_name    VARCHAR(150) NOT NULL,
+    receiver_phone   VARCHAR(20)  NOT NULL,
+    receiver_nic     VARCHAR(100),
+
+    -- Status & timing
+    status           VARCHAR(50)  NOT NULL DEFAULT 'Pending',
+    requested_date   DATE         NOT NULL,
+    requested_time   TIME         NOT NULL,
+    created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Allow anon access from the frontend
+ALTER TABLE personal_delivery ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow anon all on personal_delivery"
+    ON personal_delivery FOR ALL USING (true);
+

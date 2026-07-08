@@ -55,8 +55,7 @@ CREATE TABLE Staff(
     staff_active_status BOOLEAN,
     FOREIGN KEY(branch_ID) REFERENCES Branch(branch_ID),
 	staff_email VARCHAR(150) UNIQUE,
-	staff_password TEXT,
-	availability_status VARCHAR(50) DEFAULT 'Available'
+	staff_password TEXT
 );
 
 
@@ -105,7 +104,6 @@ CREATE TABLE ATR (
     approval_date TIMESTAMP,
     approval_token VARCHAR(255),
     client_approver_id INT,
-    rider_id INT REFERENCES Staff(staff_id),
     FOREIGN KEY (dep_id) REFERENCES Department(dep_id),
     FOREIGN KEY (approved_by) REFERENCES Staff(staff_id),
     FOREIGN KEY (client_approver_id) REFERENCES client_approver(approver_id)

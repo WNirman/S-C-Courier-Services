@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 
-const CustomerDashboard = ({ onDeliver, loggedInUser }) => {
+const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
     const previousDeliveries = [
         { id: 'SC100892', date: '2023-10-15', status: 'Delivered', destination: 'Los Angeles, CA' },
         { id: 'SC100865', date: '2023-10-10', status: 'Delivered', destination: 'Chicago, IL' },
@@ -19,6 +19,8 @@ const CustomerDashboard = ({ onDeliver, loggedInUser }) => {
     const [showModal, setShowModal] = useState(false);
     const [atrRequests, setAtrRequests] = useState([]);
     const [loadingAtr, setLoadingAtr] = useState(true);
+    const [personalDeliveries, setPersonalDeliveries] = useState([]);
+    const [loadingPersonal, setLoadingPersonal] = useState(true);
 
     // Approver management state
     const [approvers, setApprovers] = useState([]);
@@ -79,6 +81,29 @@ const CustomerDashboard = ({ onDeliver, loggedInUser }) => {
                 }
             };
             fetchAtrRequests();
+        }
+    }, [loggedInUser]);
+
+    // Fetch personal delivery requests from Supabase
+    useEffect(() => {
+        if (loggedInUser) {
+            const fetchPersonalDeliveries = async () => {
+                setLoadingPersonal(true);
+                try {
+                    const { data, error } = await supabase
+                        .from('personal_delivery')
+                        .select('*')
+                        .eq('cust_email', loggedInUser)
+                        .order('pd_id', { ascending: false });
+                    if (error) throw error;
+                    setPersonalDeliveries(data || []);
+                } catch (err) {
+                    console.error('Error fetching personal deliveries:', err);
+                } finally {
+                    setLoadingPersonal(false);
+                }
+            };
+            fetchPersonalDeliveries();
         }
     }, [loggedInUser]);
 
@@ -319,10 +344,23 @@ const CustomerDashboard = ({ onDeliver, loggedInUser }) => {
                     <span className="profile-badge"><i className='bx bx-check-shield'></i> Verified Account</span>
                 </div>
 
-                {/* Deliver Now button */}
-                <button className="primary-btn" onClick={onDeliver} style={{ marginLeft: 'auto', width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <i className='bx bx-truck'></i> Deliver Now
-                </button>
+                {/* Deliver Now + Personal Delivery buttons */}
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <button
+                        className="primary-btn"
+                        onClick={onPersonalDeliver}
+                        style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.35)', color: 'var(--accent-color)' }}
+                    >
+                        <i className='bx bx-package'></i> Personal Delivery
+                    </button>
+                    <button
+                        className="primary-btn"
+                        onClick={onDeliver}
+                        style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                    >
+                        <i className='bx bx-truck'></i> Corporate ATR
+                    </button>
+                </div>
             </div>
 
             {/* ── Dashboard Grid ─────────────────────────────────────────── */}
@@ -446,6 +484,78 @@ const CustomerDashboard = ({ onDeliver, loggedInUser }) => {
                                         }}>{req.status}</span>
                                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.5rem' }}>
                                             {req.estimated_cost} LKR
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* ── Personal Deliveries ────────────────────────────────── */}
+                <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInRight 1s ease backwards 0.45s', margin: 0 }}>
+                    <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                            <i className='bx bx-package' style={{ color: 'var(--accent-color)' }}></i> Personal Deliveries
+                        </h3>
+                        <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>
+                            {personalDeliveries.length} Total
+                        </span>
+                    </div>
+
+                    {loadingPersonal ? (
+                        <p style={{ color: 'var(--text-secondary)' }}>
+                            <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading personal deliveries...
+                        </p>
+                    ) : personalDeliveries.length === 0 ? (
+                        <div style={{
+                            padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px',
+                            border: '1px dashed var(--card-border)', textAlign: 'center', color: 'var(--text-secondary)'
+                        }}>
+                            <i className='bx bx-package' style={{ fontSize: '2rem', marginBottom: '0.5rem', display: 'block', opacity: 0.4 }}></i>
+                            No personal deliveries yet. Click <strong style={{ color: 'var(--accent-color)' }}>Personal Delivery</strong> to book one.
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '5px' }}>
+                            {personalDeliveries.map((req, index) => (
+                                <div key={req.pd_id || index} className="delivery-item" style={{
+                                    padding: '1.25rem', background: 'rgba(255,255,255,0.03)', borderRadius: '16px',
+                                    border: '1px solid var(--card-border)', display: 'flex', justifyContent: 'space-between',
+                                    alignItems: 'flex-start', transition: 'all 0.3s ease', gap: '1rem'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.2)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor='var(--card-border)'; }}
+                                >
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                                            <span style={{
+                                                background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.2)',
+                                                color: 'var(--accent-color)', borderRadius: '8px', padding: '0.15rem 0.6rem',
+                                                fontSize: '0.78rem', fontWeight: 600
+                                            }}>{req.item_type}</span>
+                                        </div>
+                                        <p style={{ color: 'var(--text-primary)', fontSize: '0.9rem', marginBottom: '0.25rem', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                                            <i className='bx bx-current-location' style={{ color: 'var(--accent-color)', flexShrink: 0, marginTop: '2px' }}></i>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.pickup_address}</span>
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                                            <i className='bx bx-map-pin' style={{ flexShrink: 0, marginTop: '2px' }}></i>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.drop_address}</span>
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.4rem' }}>
+                                            <strong>To:</strong> {req.receiver_name} · {req.receiver_phone}
+                                        </p>
+                                    </div>
+                                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                        <span style={{
+                                            display: 'inline-block', padding: '0.35rem 0.85rem',
+                                            background: req.status === 'Delivered' ? 'rgba(16,185,129,0.1)' : req.status === 'Pending' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                            color: req.status === 'Delivered' ? 'var(--success)' : req.status === 'Pending' ? '#f59e0b' : 'var(--danger)',
+                                            borderRadius: '100px', fontSize: '0.85rem', fontWeight: '600',
+                                            border: req.status === 'Delivered' ? '1px solid rgba(16,185,129,0.2)' : req.status === 'Pending' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                        }}>{req.status}</span>
+                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginTop: '0.4rem' }}>
+                                            {req.requested_date}
                                         </p>
                                     </div>
                                 </div>
