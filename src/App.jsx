@@ -9,6 +9,7 @@ import AtrForm from './AtrForm';
 import AdminDashboard from './AdminDashboard';
 import StaffDashboard from './StaffDashboard';
 import Chatbot from './Chatbot';
+import StatsSection from './StatsSection';
 
 const hashPassword = async (password) => {
     const encoder = new TextEncoder();
@@ -789,6 +790,7 @@ function App({ onNavigate }) {
                                 <>
                                     <h1>Track Your <br /><span className="highlight">Delivery</span> Instantly</h1>
                                     <p>Enter your tracking number below to get real-time updates on your package location and delivery status.</p>
+                                    <StatsSection />
                                 </>
                             )}
                         </div>
