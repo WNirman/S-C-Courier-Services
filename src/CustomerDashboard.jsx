@@ -89,19 +89,24 @@ const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
         if (loggedInUser) {
             const fetchPersonalDeliveries = async () => {
                 setLoadingPersonal(true);
+                let fetchedData = [];
                 try {
                     const { data, error } = await supabase
                         .from('personal_delivery')
                         .select('*')
                         .eq('cust_email', loggedInUser)
                         .order('pd_id', { ascending: false });
-                    if (error) throw error;
-                    setPersonalDeliveries(data || []);
+                    if (!error && data) fetchedData = data;
                 } catch (err) {
-                    console.error('Error fetching personal deliveries:', err);
-                } finally {
-                    setLoadingPersonal(false);
+                    console.error('Error fetching personal deliveries from Supabase:', err);
                 }
+                const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]')
+                    .filter(item => item.cust_email === loggedInUser);
+                const combined = [...localData, ...fetchedData];
+                // Remove duplicates by pd_id
+                const unique = Array.from(new Map(combined.map(item => [item.pd_id, item])).values());
+                setPersonalDeliveries(unique);
+                setLoadingPersonal(false);
             };
             fetchPersonalDeliveries();
         }
@@ -545,15 +550,33 @@ const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
                                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.4rem' }}>
                                             <strong>To:</strong> {req.receiver_name} · {req.receiver_phone}
                                         </p>
+                                        {req.scheduled_date && (
+                                            <p style={{ color: '#a855f7', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                                                <strong>📅 Scheduled:</strong> {req.scheduled_date} @ {req.scheduled_time}
+                                            </p>
+                                        )}
                                     </div>
                                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                                        <span style={{
-                                            display: 'inline-block', padding: '0.35rem 0.85rem',
-                                            background: req.status === 'Delivered' ? 'rgba(16,185,129,0.1)' : req.status === 'Pending' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
-                                            color: req.status === 'Delivered' ? 'var(--success)' : req.status === 'Pending' ? '#f59e0b' : 'var(--danger)',
-                                            borderRadius: '100px', fontSize: '0.85rem', fontWeight: '600',
-                                            border: req.status === 'Delivered' ? '1px solid rgba(16,185,129,0.2)' : req.status === 'Pending' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
-                                        }}>{req.status}</span>
+                                        {(() => {
+                                            const statusMap = {
+                                                'Pending': { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', border: 'rgba(245,158,11,0.2)' },
+                                                'Accepted': { bg: 'rgba(59,130,246,0.1)', text: '#3b82f6', border: 'rgba(59,130,246,0.2)' },
+                                                'Scheduled': { bg: 'rgba(168,85,247,0.1)', text: '#a855f7', border: 'rgba(168,85,247,0.2)' },
+                                                'Assigned': { bg: 'rgba(16,185,129,0.1)', text: '#10b981', border: 'rgba(16,185,129,0.2)' },
+                                                'In Transit': { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', border: 'rgba(245,158,11,0.2)' },
+                                                'Completed': { bg: 'rgba(16,185,129,0.15)', text: '#059669', border: 'rgba(16,185,129,0.3)' },
+                                                'Delivered': { bg: 'rgba(16,185,129,0.15)', text: '#059669', border: 'rgba(16,185,129,0.3)' }
+                                            };
+                                            const st = statusMap[req.status] || statusMap['Pending'];
+                                            return (
+                                                <span style={{
+                                                    display: 'inline-block', padding: '0.35rem 0.85rem',
+                                                    background: st.bg, color: st.text,
+                                                    borderRadius: '100px', fontSize: '0.85rem', fontWeight: '600',
+                                                    border: `1px solid ${st.border}`
+                                                }}>{req.status}</span>
+                                            );
+                                        })()}
                                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginTop: '0.4rem' }}>
                                             {req.requested_date}
                                         </p>

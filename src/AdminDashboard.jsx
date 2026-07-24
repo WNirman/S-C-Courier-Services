@@ -16,12 +16,17 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     const [loadingRiders, setLoadingRiders] = useState(false);
     const [loadingAtr, setLoadingAtr] = useState(false);
 
+    // Personal Deliveries State
+    const [personalDeliveries, setPersonalDeliveries] = useState([]);
+    const [loadingPD, setLoadingPD] = useState(false);
+    const [acceptingPD, setAcceptingPD] = useState(null);
+
     const loadRiders = async () => {
         setLoadingRiders(true);
         try {
             const { data, error } = await supabase
                 .from('staff')
-                .select('staff_id, staff_name, staff_email, staff_phone, staff_role, staff_active_status, branch_id, availability_status')
+                .select('staff_id, staff_name, staff_email, staff_phone, staff_role, staff_active_status, branch_id')
                 .eq('staff_role', 'staff');
             if (error) throw error;
             setRidersList(data || []);
@@ -48,10 +53,90 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         }
     };
 
+    const loadPersonalDeliveries = async () => {
+        setLoadingPD(true);
+        let fetchedData = [];
+        try {
+            const res = await fetch('http://localhost:5000/api/personal-deliveries');
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) fetchedData = data;
+            }
+        } catch (err) {
+            console.error('Error loading personal deliveries:', err);
+        }
+        const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+        const combined = [...localData, ...fetchedData];
+        const unique = Array.from(new Map(combined.map(item => [item.pd_id, item])).values());
+        setPersonalDeliveries(unique);
+        setLoadingPD(false);
+    };
+
+    const handleAcceptDelivery = async (pdId) => {
+        setAcceptingPD(pdId);
+        try {
+            const acceptedByEmail = loggedInUser || 'admin@sccourier.com';
+
+            // 1. Update status via Supabase (if table exists)
+            try {
+                await supabase
+                    .from('personal_delivery')
+                    .update({
+                        status: 'Accepted',
+                        accepted_by: acceptedByEmail,
+                        accepted_at: new Date().toISOString()
+                    })
+                    .eq('pd_id', pdId);
+            } catch (sbErr) {
+                console.warn('Supabase status update note:', sbErr);
+            }
+
+            // 2. Update status in local storage fallback
+            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? {
+                ...pd,
+                status: 'Accepted',
+                accepted_by: acceptedByEmail,
+                accepted_at: new Date().toISOString()
+            } : pd);
+            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
+
+            // 3. Try sending acceptance & scheduling email via Express backend (if running)
+            let emailMsg = '';
+            try {
+                const res = await fetch('http://localhost:5000/api/delivery/accept', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    emailMsg = ' Scheduling email sent to customer.';
+                    if (data.previewUrl) {
+                        console.log('Ethereal Email Preview:', data.previewUrl);
+                    }
+                }
+            } catch (err) {
+                console.log('Backend notification server off — acceptance saved locally.');
+            }
+
+            alert('Delivery accepted successfully!' + emailMsg);
+            loadPersonalDeliveries();
+        } catch (err) {
+            console.error('Error accepting delivery:', err);
+            alert('Failed to accept delivery: ' + err.message);
+        } finally {
+            setAcceptingPD(null);
+        }
+    };
+
     useEffect(() => {
         if (activeTab === 'rides') {
             loadRiders();
             loadAtrRequests();
+        }
+        if (activeTab === 'deliveries') {
+            loadPersonalDeliveries();
         }
     }, [activeTab]);
 
@@ -59,16 +144,32 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         try {
             const { error } = await supabase
                 .from('atr')
-                .update({ rider_id: riderId ? parseInt(riderId) : null })
+                .update({ approved_by: riderId ? parseInt(riderId) : null })
                 .eq('atr_id', atrId);
             
             if (error) throw error;
 
             if (riderId) {
+                // availability_status column doesn't exist in the current Supabase schema
+                /*
                 await supabase
                     .from('staff')
                     .update({ availability_status: 'Busy' })
                     .eq('staff_id', parseInt(riderId));
+                */
+                    
+                // Trigger assignment email
+                try {
+                    await fetch('http://localhost:5000/api/atr/send-assignment-email', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ atrId, riderId }),
+                    });
+                } catch (emailErr) {
+                    console.error('Failed to trigger assignment email:', emailErr);
+                }
             }
 
             alert('Rider assigned successfully!');
@@ -676,6 +777,25 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     }}
                 >
                     <i className='bx bx-navigation'></i> Ride Assignment
+                </button>
+                <button 
+                    onClick={() => setActiveTab('deliveries')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'deliveries' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'deliveries' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-package'></i> Personal Deliveries
                 </button>
             </div>
 
@@ -1397,7 +1517,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                                 {atrRequests.map((req) => {
-                                    const assignedRider = ridersList.find(r => r.staff_id === req.rider_id);
+                                    const assignedRider = ridersList.find(r => r.staff_id === req.approved_by);
                                     
                                     return (
                                         <div key={req.atr_id} style={{
@@ -1483,6 +1603,141 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                         </button>
                                                     </div>
                                                 )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'deliveries' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem', animation: 'fadeIn 0.4s ease' }}>
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
+                                    <i className='bx bx-package' style={{ color: '#a855f7' }}></i> Personal Delivery Requests
+                                </h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Accept delivery requests and send scheduling emails to customers.</p>
+                            </div>
+                            <button onClick={loadPersonalDeliveries} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                                <i className='bx bx-refresh'></i> Refresh
+                            </button>
+                        </div>
+
+                        {loadingPD ? (
+                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading deliveries...</p>
+                        ) : personalDeliveries.length === 0 ? (
+                            <p style={{ color: 'var(--text-secondary)' }}>No personal delivery requests found.</p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                                {personalDeliveries.map((pd) => {
+                                    const statusColors = {
+                                        'Pending': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                        'Accepted': { bg: 'rgba(59, 130, 246, 0.1)', text: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.2)' },
+                                        'Scheduled': { bg: 'rgba(168, 85, 247, 0.1)', text: '#a855f7', border: '1px solid rgba(168, 85, 247, 0.2)' },
+                                        'Assigned': { bg: 'rgba(16, 185, 129, 0.1)', text: '#10b981', border: '1px solid rgba(16, 185, 129, 0.2)' },
+                                        'In Transit': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                        'Completed': { bg: 'rgba(16, 185, 129, 0.15)', text: '#059669', border: '1px solid rgba(16, 185, 129, 0.3)' },
+                                    };
+                                    const sc = statusColors[pd.status] || statusColors['Pending'];
+
+                                    return (
+                                        <div key={pd.pd_id} style={{
+                                            padding: '1.5rem',
+                                            background: 'rgba(255, 255, 255, 0.02)',
+                                            borderRadius: '16px',
+                                            border: '1px solid var(--card-border)',
+                                            transition: 'all 0.3s ease',
+                                            textAlign: 'left'
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                                                <div style={{ flex: '1 1 300px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                                                        <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#fff' }}>PD-{pd.pd_id}</span>
+                                                        <span style={{
+                                                            display: 'inline-block', padding: '0.25rem 0.65rem',
+                                                            background: sc.bg, color: sc.text,
+                                                            borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                            border: sc.border
+                                                        }}>{pd.status}</span>
+                                                    </div>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                        <div><strong>📍 Pickup:</strong> {pd.pickup_address}</div>
+                                                        <div><strong>📍 Drop:</strong> {pd.drop_address}</div>
+                                                        <div><strong>📦 Item:</strong> {pd.item_type} {pd.item_weight ? `(${pd.item_weight})` : ''}</div>
+                                                        <div><strong>👤 Sender:</strong> {pd.sender_name} ({pd.sender_phone})</div>
+                                                        <div><strong>👤 Receiver:</strong> {pd.receiver_name} ({pd.receiver_phone})</div>
+                                                        <div><strong>📅 Requested:</strong> {pd.requested_date} @ {pd.requested_time}</div>
+                                                        {pd.scheduled_date && (
+                                                            <div style={{ color: '#a855f7' }}><strong>📅 Scheduled:</strong> {pd.scheduled_date} @ {pd.scheduled_time}</div>
+                                                        )}
+                                                        {pd.assigned_rider_nic && (
+                                                            <div style={{ color: '#10b981' }}><strong>🏍️ Rider NIC:</strong> {pd.assigned_rider_nic}</div>
+                                                        )}
+                                                        {pd.accepted_by && (
+                                                            <div><strong>✅ Accepted by:</strong> {pd.accepted_by}</div>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                    {pd.status === 'Pending' && (
+                                                        <button
+                                                            onClick={() => handleAcceptDelivery(pd.pd_id)}
+                                                            disabled={acceptingPD === pd.pd_id}
+                                                            className="primary-btn pulse-effect"
+                                                            style={{
+                                                                width: 'auto',
+                                                                background: 'linear-gradient(135deg, #7c3aed, #9333ea)',
+                                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                height: '40px', padding: '0 1.25rem',
+                                                                boxShadow: '0 4px 14px rgba(124, 58, 237, 0.3)',
+                                                                opacity: acceptingPD === pd.pd_id ? 0.7 : 1,
+                                                                cursor: acceptingPD === pd.pd_id ? 'not-allowed' : 'pointer'
+                                                            }}
+                                                        >
+                                                            {acceptingPD === pd.pd_id ? (
+                                                                <><i className='bx bx-loader-alt bx-spin'></i> Accepting...</>
+                                                            ) : (
+                                                                <><i className='bx bx-check-circle'></i> Accept & Send Schedule</>
+                                                            )}
+                                                        </button>
+                                                    )}
+                                                    {(pd.status === 'Assigned' || pd.status === 'In Transit') && (
+                                                        <a
+                                                            href={`http://localhost:5000/api/delivery/${pd.pd_id}/map`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="secondary-btn"
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                padding: '0.5rem 1rem', height: 'auto',
+                                                                background: 'rgba(59, 130, 246, 0.1)',
+                                                                color: '#3b82f6',
+                                                                border: '1px solid rgba(59, 130, 246, 0.2)',
+                                                                textDecoration: 'none', borderRadius: '10px',
+                                                                fontSize: '0.85rem', fontWeight: '600'
+                                                            }}
+                                                        >
+                                                            <i className='bx bx-map'></i> View Map
+                                                        </a>
+                                                    )}
+                                                    {pd.status === 'Completed' && (
+                                                        <span style={{
+                                                            display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                            color: '#059669', fontSize: '0.9rem', fontWeight: '600'
+                                                        }}>
+                                                            <i className='bx bx-check-double'></i> Delivered
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     );

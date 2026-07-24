@@ -797,7 +797,6 @@ function App({ onNavigate }) {
                                 <>
                                     <h1>Track Your <br /><span className="highlight">Delivery</span> Instantly</h1>
                                     <p>Enter your tracking number below to get real-time updates on your package location and delivery status.</p>
-                                    <StatsSection />
                                 </>
                             )}
                         </div>

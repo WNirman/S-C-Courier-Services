@@ -6,6 +6,11 @@ const StaffDashboard = ({ loggedInUser }) => {
     const [assignedRides, setAssignedRides] = useState([]);
     const [loading, setLoading] = useState(true);
 
+    // Personal Deliveries State
+    const [personalDeliveries, setPersonalDeliveries] = useState([]);
+    const [loadingPD, setLoadingPD] = useState(false);
+    const [acceptingPD, setAcceptingPD] = useState(null);
+
     const loadRiderData = async () => {
         if (!loggedInUser) return;
         setLoading(true);
@@ -25,7 +30,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                 const { data: atrData, error: atrError } = await supabase
                     .from('atr')
                     .select('*')
-                    .eq('rider_id', staffData.staff_id)
+                    .eq('approved_by', staffData.staff_id)
                     .order('atr_id', { ascending: false });
 
                 if (atrError) throw atrError;
@@ -38,8 +43,101 @@ const StaffDashboard = ({ loggedInUser }) => {
         }
     };
 
+    const loadPersonalDeliveries = async () => {
+        setLoadingPD(true);
+        let fetchedData = [];
+        try {
+            const res = await fetch('http://localhost:5000/api/personal-deliveries');
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) fetchedData = data;
+            }
+        } catch (err) {
+            console.error('Error loading personal deliveries:', err);
+        }
+        const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+        const combined = [...localData, ...fetchedData];
+        const unique = Array.from(new Map(combined.map(item => [item.pd_id, item])).values());
+        setPersonalDeliveries(unique);
+        setLoadingPD(false);
+    };
+
+    const handleAcceptDelivery = async (pdId) => {
+        setAcceptingPD(pdId);
+        try {
+            const acceptedByEmail = loggedInUser || 'staff@sccourier.com';
+
+            // 1. Update status via Supabase (if table exists)
+            try {
+                await supabase
+                    .from('personal_delivery')
+                    .update({
+                        status: 'Accepted',
+                        accepted_by: acceptedByEmail,
+                        accepted_at: new Date().toISOString()
+                    })
+                    .eq('pd_id', pdId);
+            } catch (sbErr) {
+                console.warn('Supabase status update note:', sbErr);
+            }
+
+            // 2. Update status in local storage fallback
+            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? {
+                ...pd,
+                status: 'Accepted',
+                accepted_by: acceptedByEmail,
+                accepted_at: new Date().toISOString()
+            } : pd);
+            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
+
+            // 3. Try sending acceptance email via Express backend (if running)
+            let emailMsg = '';
+            try {
+                const res = await fetch('http://localhost:5000/api/delivery/accept', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    emailMsg = ' Scheduling email sent to customer.';
+                    if (data.previewUrl) {
+                        console.log('Ethereal Email Preview:', data.previewUrl);
+                    }
+                }
+            } catch (err) {
+                console.log('Backend notification server off — acceptance saved locally.');
+            }
+
+            alert('Delivery accepted successfully!' + emailMsg);
+            loadPersonalDeliveries();
+        } catch (err) {
+            console.error('Error accepting delivery:', err);
+            alert('Failed to accept delivery: ' + err.message);
+        } finally {
+            setAcceptingPD(null);
+        }
+    };
+
+    const handleUpdateDeliveryStatus = async (pdId, newStatus) => {
+        try {
+            const { error } = await supabase
+                .from('personal_delivery')
+                .update({ status: newStatus })
+                .eq('pd_id', pdId);
+            if (error) throw error;
+            alert(`Delivery status updated to ${newStatus}!`);
+            loadPersonalDeliveries();
+        } catch (err) {
+            console.error('Error updating delivery status:', err);
+            alert('Failed to update status: ' + err.message);
+        }
+    };
+
     useEffect(() => {
         loadRiderData();
+        loadPersonalDeliveries();
     }, [loggedInUser]);
 
     const handleUpdateAvailability = async (newStatus) => {
@@ -91,11 +189,13 @@ const StaffDashboard = ({ loggedInUser }) => {
     const totalDeliveries = assignedRides.filter(r => r.status === 'Completed').length;
     const pendingDeliveries = assignedRides.filter(r => r.status !== 'Completed' && r.status !== 'Cancelled' && r.status !== 'Rejected').length;
     const currentAvailability = riderProfile ? riderProfile.availability_status : 'Available';
+    const pendingPD = personalDeliveries.filter(pd => pd.status === 'Pending').length;
 
     const stats = [
         { title: 'Total Completed', value: totalDeliveries.toString(), icon: 'bx-check-double', color: 'var(--success)' },
         { title: 'Pending Rides', value: pendingDeliveries.toString(), icon: 'bx-navigation', color: '#f59e0b' },
         { title: 'My Availability', value: currentAvailability, icon: 'bx-run', color: 'var(--accent-color)' },
+        { title: 'Pending Deliveries', value: pendingPD.toString(), icon: 'bx-package', color: '#a855f7' },
     ];
 
     return (
@@ -115,7 +215,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                 {riderProfile && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'rgba(255,255,255,0.03)', padding: '0.75rem 1.25rem', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
                         <div style={{ textAlign: 'left' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8' + 'rem', margin: 0 }}>Availability Status</p>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: 0 }}>Availability Status</p>
                             <strong style={{ 
                                 color: riderProfile.availability_status === 'Available' ? 'var(--success)' : 
                                        riderProfile.availability_status === 'Busy' ? '#f59e0b' : 'var(--danger)',
@@ -141,7 +241,7 @@ const StaffDashboard = ({ loggedInUser }) => {
             </div>
 
             {/* Stats Grid */}
-            <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
                 {stats.map((stat, index) => (
                     <div key={index} className="stat-card" style={{
                         padding: '1.5rem',
@@ -157,7 +257,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                             width: '60px',
                             height: '60px',
                             borderRadius: '50%',
-                            background: `rgba(${stat.color === 'var(--success)' ? '16, 185, 129' : stat.color === 'var(--accent-color)' ? '59, 130, 246' : '245, 158, 11'}, 0.1)`,
+                            background: `rgba(${stat.color === 'var(--success)' ? '16, 185, 129' : stat.color === 'var(--accent-color)' ? '59, 130, 246' : stat.color === '#a855f7' ? '168, 85, 247' : '245, 158, 11'}, 0.1)`,
                             color: stat.color,
                             display: 'flex',
                             alignItems: 'center',
@@ -176,6 +276,8 @@ const StaffDashboard = ({ loggedInUser }) => {
 
             {/* Main content grid */}
             <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
+                
+                {/* Assigned Rides Section */}
                 <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInUp 1s ease backwards 0.8s', margin: 0 }}>
                     <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
@@ -285,6 +387,145 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                 >
                                                     Cancel
                                                 </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                {/* Personal Deliveries Section */}
+                <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInUp 1.2s ease backwards 1s', margin: 0 }}>
+                    <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                            <i className='bx bx-package' style={{ color: '#a855f7' }}></i> Personal Delivery Requests
+                        </h3>
+                        <button onClick={loadPersonalDeliveries} style={{ background: 'transparent', border: 'none', color: '#a855f7', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                            <i className='bx bx-refresh'></i> Refresh
+                        </button>
+                    </div>
+
+                    {loadingPD ? (
+                        <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading deliveries...</p>
+                    ) : personalDeliveries.length === 0 ? (
+                        <p style={{ color: 'var(--text-secondary)' }}>No personal delivery requests at this time.</p>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            {personalDeliveries.map((pd) => {
+                                const statusColors = {
+                                    'Pending': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                    'Accepted': { bg: 'rgba(59, 130, 246, 0.1)', text: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.2)' },
+                                    'Scheduled': { bg: 'rgba(168, 85, 247, 0.1)', text: '#a855f7', border: '1px solid rgba(168, 85, 247, 0.2)' },
+                                    'Assigned': { bg: 'rgba(16, 185, 129, 0.1)', text: '#10b981', border: '1px solid rgba(16, 185, 129, 0.2)' },
+                                    'In Transit': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                    'Completed': { bg: 'rgba(16, 185, 129, 0.15)', text: '#059669', border: '1px solid rgba(16, 185, 129, 0.3)' },
+                                };
+                                const sc = statusColors[pd.status] || statusColors['Pending'];
+
+                                return (
+                                    <div key={pd.pd_id} style={{
+                                        padding: '1.5rem',
+                                        background: 'rgba(255, 255, 255, 0.02)',
+                                        borderRadius: '16px',
+                                        border: '1px solid var(--card-border)',
+                                        display: 'flex',
+                                        flexWrap: 'wrap',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        transition: 'all 0.3s ease',
+                                        gap: '1.5rem',
+                                        textAlign: 'left'
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
+                                    >
+                                        <div style={{ flex: '1 1 300px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                                                <h4 style={{ color: '#fff', margin: 0, fontSize: '1.1rem' }}>PD-{pd.pd_id}</h4>
+                                                <span style={{
+                                                    display: 'inline-block', padding: '0.25rem 0.65rem',
+                                                    background: sc.bg, color: sc.text,
+                                                    borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                    border: sc.border
+                                                }}>{pd.status}</span>
+                                            </div>
+                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                <div><strong>📍 Pickup:</strong> {pd.pickup_address}</div>
+                                                <div><strong>📍 Drop:</strong> {pd.drop_address}</div>
+                                                <div><strong>📦 Item:</strong> {pd.item_type}</div>
+                                                <div><strong>👤 Receiver:</strong> {pd.receiver_name} ({pd.receiver_phone})</div>
+                                                <div><strong>📅 Requested:</strong> {pd.requested_date} @ {pd.requested_time}</div>
+                                                {pd.scheduled_date && (
+                                                    <div style={{ color: '#a855f7' }}><strong>📅 Scheduled:</strong> {pd.scheduled_date} @ {pd.scheduled_time}</div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                            {pd.status === 'Pending' && (
+                                                <button
+                                                    onClick={() => handleAcceptDelivery(pd.pd_id)}
+                                                    disabled={acceptingPD === pd.pd_id}
+                                                    className="primary-btn pulse-effect"
+                                                    style={{
+                                                        width: 'auto',
+                                                        background: 'linear-gradient(135deg, #7c3aed, #9333ea)',
+                                                        display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                        height: '38px', padding: '0 1rem', fontSize: '0.85rem',
+                                                        boxShadow: '0 4px 14px rgba(124, 58, 237, 0.3)',
+                                                        opacity: acceptingPD === pd.pd_id ? 0.7 : 1
+                                                    }}
+                                                >
+                                                    {acceptingPD === pd.pd_id ? (
+                                                        <><i className='bx bx-loader-alt bx-spin'></i> Accepting...</>
+                                                    ) : (
+                                                        <><i className='bx bx-check-circle'></i> Accept</>
+                                                    )}
+                                                </button>
+                                            )}
+                                            {pd.status === 'Assigned' && (
+                                                <button
+                                                    onClick={() => handleUpdateDeliveryStatus(pd.pd_id, 'In Transit')}
+                                                    className="primary-btn pulse-effect"
+                                                    style={{ width: 'auto', background: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '0.35rem', height: '38px', padding: '0 1rem', fontSize: '0.85rem' }}
+                                                >
+                                                    <i className='bx bx-play'></i> Start Delivery
+                                                </button>
+                                            )}
+                                            {pd.status === 'In Transit' && (
+                                                <button
+                                                    onClick={() => handleUpdateDeliveryStatus(pd.pd_id, 'Completed')}
+                                                    className="primary-btn"
+                                                    style={{ width: 'auto', background: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.35rem', height: '38px', padding: '0 1rem', fontSize: '0.85rem', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)' }}
+                                                >
+                                                    <i className='bx bx-check'></i> Complete
+                                                </button>
+                                            )}
+                                            {(pd.status === 'Assigned' || pd.status === 'In Transit') && (
+                                                <a
+                                                    href={`http://localhost:5000/api/delivery/${pd.pd_id}/map`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="secondary-btn"
+                                                    style={{
+                                                        display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                        padding: '0.5rem 0.85rem', height: 'auto',
+                                                        background: 'rgba(59, 130, 246, 0.1)',
+                                                        color: '#3b82f6',
+                                                        border: '1px solid rgba(59, 130, 246, 0.2)',
+                                                        textDecoration: 'none', borderRadius: '10px',
+                                                        fontSize: '0.85rem', fontWeight: '600'
+                                                    }}
+                                                >
+                                                    <i className='bx bx-map'></i> Map
+                                                </a>
+                                            )}
+                                            {pd.status === 'Completed' && (
+                                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: '#059669', fontSize: '0.85rem', fontWeight: '600' }}>
+                                                    <i className='bx bx-check-double'></i> Delivered
+                                                </span>
                                             )}
                                         </div>
                                     </div>

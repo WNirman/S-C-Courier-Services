@@ -256,11 +256,50 @@ CREATE TABLE IF NOT EXISTS personal_delivery (
     status           VARCHAR(50)  NOT NULL DEFAULT 'Pending',
     requested_date   DATE         NOT NULL,
     requested_time   TIME         NOT NULL,
-    created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+    created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+
+    -- Scheduling & assignment (added for delivery notification system)
+    scheduled_date      DATE,
+    scheduled_time      TIME,
+    schedule_token      VARCHAR(255),
+    assigned_rider_nic  VARCHAR(20),
+    accepted_by         VARCHAR(150),
+    accepted_at         TIMESTAMP
 );
 
 -- Allow anon access from the frontend
 ALTER TABLE personal_delivery ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow anon all on personal_delivery"
     ON personal_delivery FOR ALL USING (true);
+
+-- ================================================
+-- Rider Table (dedicated courier riders with location)
+-- ================================================
+
+CREATE TABLE IF NOT EXISTS rider (
+    nic              VARCHAR(20) PRIMARY KEY,
+    name             VARCHAR(100) NOT NULL,
+    phone_number     VARCHAR(20) NOT NULL,
+    branch           VARCHAR(100),
+    email            VARCHAR(100) UNIQUE NOT NULL,
+    password         VARCHAR(255) NOT NULL,
+    nic_front_image  VARCHAR(255),
+    nic_back_image   VARCHAR(255),
+    address          TEXT,
+    emergency_contact VARCHAR(20),
+    vehicle_type     VARCHAR(50),
+    vehicle_no       VARCHAR(50),
+    driver_licence_no VARCHAR(50),
+    current_lat      DOUBLE PRECISION,
+    current_lng      DOUBLE PRECISION,
+    availability_status VARCHAR(50) DEFAULT 'Available',
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE rider ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow anon all on rider" ON rider FOR ALL USING (true);
+
+-- Add foreign key for assigned_rider_nic (run after rider table exists)
+-- ALTER TABLE personal_delivery ADD CONSTRAINT fk_assigned_rider
+--     FOREIGN KEY (assigned_rider_nic) REFERENCES rider(nic);
 
