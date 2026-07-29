@@ -15,26 +15,63 @@ const StaffDashboard = ({ loggedInUser }) => {
         if (!loggedInUser) return;
         setLoading(true);
         try {
-            // 1. Fetch rider profile matching logged-in user email
-            const { data: staffData, error: staffError } = await supabase
-                .from('staff')
-                .select('staff_id, staff_name, staff_email, staff_phone, staff_active_status, availability_status')
-                .eq('staff_email', loggedInUser)
-                .single();
+            // 1. Fetch rider profile matching logged-in user email or NIC from public.rider
+            let profile = null;
+            try {
+                const { data: rData } = await supabase
+                    .from('rider')
+                    .select('*')
+                    .or(`email.eq.${loggedInUser},NIC.eq.${loggedInUser}`);
+                
+                if (rData && rData.length > 0) {
+                    const r = rData[0];
+                    profile = {
+                        staff_id: r.NIC,
+                        nic: r.NIC,
+                        staff_name: r.Name,
+                        staff_email: r.email || loggedInUser,
+                        staff_phone: r.Phone_Number,
+                        vehicle_type: r.Vehicle_Type,
+                        vehicle_number: r.Vehicle_Number,
+                        availability_status: r.availability_status || 'Available'
+                    };
+                }
+            } catch (rErr) {
+                console.warn('Note looking up public.rider:', rErr);
+            }
 
-            if (staffError) throw staffError;
-            setRiderProfile(staffData);
+            if (!profile) {
+                // Fallback to staff table
+                try {
+                    const { data: staffData } = await supabase
+                        .from('staff')
+                        .select('staff_id, staff_name, staff_email, staff_phone, staff_active_status, availability_status')
+                        .eq('staff_email', loggedInUser)
+                        .single();
 
-            if (staffData) {
+                    if (staffData) profile = staffData;
+                } catch (sErr) {
+                    console.warn('Note looking up staff:', sErr);
+                }
+            }
+
+            setRiderProfile(profile);
+
+            if (profile) {
                 // 2. Fetch active and past ATR requests assigned to this rider
-                const { data: atrData, error: atrError } = await supabase
+                const riderIdFilter = profile.staff_id;
+                const { data: atrData } = await supabase
                     .from('atr')
                     .select('*')
-                    .eq('approved_by', staffData.staff_id)
                     .order('atr_id', { ascending: false });
 
-                if (atrError) throw atrError;
-                setAssignedRides(atrData || []);
+                const myRides = (atrData || []).filter(a => 
+                    a.approved_by === riderIdFilter || 
+                    a.approved_by === parseInt(riderIdFilter) ||
+                    a.approved_by === profile.nic
+                );
+
+                setAssignedRides(myRides);
             }
         } catch (err) {
             console.error('Error loading rider dashboard data:', err);

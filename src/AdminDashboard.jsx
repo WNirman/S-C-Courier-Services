@@ -24,14 +24,29 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     const loadRiders = async () => {
         setLoadingRiders(true);
         try {
+            // Fetch riders exclusively from public.rider table
             const { data, error } = await supabase
-                .from('staff')
-                .select('staff_id, staff_name, staff_email, staff_phone, staff_role, staff_active_status, branch_id')
-                .eq('staff_role', 'staff');
+                .from('rider')
+                .select('*');
+            
             if (error) throw error;
-            setRidersList(data || []);
+            
+            const formattedRiders = (data || []).map((r, idx) => ({
+                staff_id: r.NIC || `rider-${idx}`,
+                nic: r.NIC,
+                staff_name: r.Name || 'Rider',
+                staff_email: r.email || `${r.NIC}@sccourier.com`,
+                staff_phone: r.Phone_Number || 'N/A',
+                vehicle_type: r.Vehicle_Type || 'N/A',
+                vehicle_number: r.Vehicle_Number || 'N/A',
+                licence_no: r.Driver_Licence_No || 'N/A',
+                branch: r.Branch || 'Main Branch',
+                availability_status: r.availability_status || 'Available'
+            }));
+
+            setRidersList(formattedRiders);
         } catch (err) {
-            console.error('Error loading riders:', err);
+            console.error('Error loading riders from rider table:', err);
         } finally {
             setLoadingRiders(false);
         }
@@ -134,11 +149,52 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         if (activeTab === 'rides') {
             loadRiders();
             loadAtrRequests();
+            loadPersonalDeliveries();
         }
         if (activeTab === 'deliveries') {
             loadPersonalDeliveries();
         }
     }, [activeTab]);
+
+    const [assignmentCategory, setAssignmentCategory] = useState('all');
+    const [assignmentStatus, setAssignmentStatus] = useState('all');
+
+    const handleAssignRiderToPD = async (pdId, riderId) => {
+        try {
+            const selectedRiderObj = ridersList.find(r => r.staff_id === riderId || r.nic === riderId);
+            const riderName = selectedRiderObj ? selectedRiderObj.staff_name : riderId;
+            const riderNic = selectedRiderObj ? (selectedRiderObj.nic || selectedRiderObj.staff_phone) : riderId;
+
+            try {
+                await supabase
+                    .from('personal_delivery')
+                    .update({
+                        status: riderId ? 'Assigned' : 'Accepted',
+                        accepted_by: selectedRiderObj ? selectedRiderObj.staff_email : null,
+                        assigned_rider_nic: riderNic
+                    })
+                    .eq('pd_id', pdId);
+            } catch (sbErr) {
+                console.warn('Supabase status update note:', sbErr);
+            }
+
+            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? {
+                ...pd,
+                status: riderId ? 'Assigned' : 'Accepted',
+                accepted_by: selectedRiderObj ? selectedRiderObj.staff_email : null,
+                assigned_rider_nic: riderNic
+            } : pd);
+            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
+
+            alert(`Rider (${riderName}) assigned to delivery order successfully!`);
+            loadPersonalDeliveries();
+            loadRiders();
+        } catch (err) {
+            console.error('Error assigning rider to delivery:', err);
+            alert('Failed to assign rider: ' + err.message);
+        }
+    };
 
     const handleAssignRider = async (atrId, riderId) => {
         try {
@@ -146,7 +202,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 .from('atr')
                 .update({ approved_by: riderId ? parseInt(riderId) : null })
                 .eq('atr_id', atrId);
-            
+
             if (error) throw error;
 
             if (riderId) {
@@ -157,7 +213,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     .update({ availability_status: 'Busy' })
                     .eq('staff_id', parseInt(riderId));
                 */
-                    
+
                 // Trigger assignment email
                 try {
                     await fetch('http://localhost:5000/api/atr/send-assignment-email', {
@@ -182,18 +238,17 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     };
 
     const handleUpdateRiderStatus = async (staffId, newStatus) => {
+        setRidersList(prev => prev.map(r => r.staff_id === staffId ? { ...r, availability_status: newStatus } : r));
         try {
             const { error } = await supabase
                 .from('staff')
                 .update({ availability_status: newStatus })
                 .eq('staff_id', staffId);
-            if (error) throw error;
-            
-            alert('Rider status updated!');
-            loadRiders();
+            if (error) {
+                console.warn('Supabase status update note:', error.message);
+            }
         } catch (err) {
-            console.error('Error updating rider status:', err);
-            alert('Failed to update rider status: ' + err.message);
+            console.warn('Error updating rider status in Supabase:', err);
         }
     };
 
@@ -310,7 +365,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     // Full Staff Registration submission
     const handleAssignStaff = async (e) => {
         e.preventDefault();
-        
+
         // 1. Validate all required fields
         if (!regFullName.trim() || !regPhone.trim() || !regRole || !regBranchId) {
             alert('All fields are required');
@@ -393,7 +448,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
             setAssignStatus('success');
             if (onAssignStaff) onAssignStaff(generatedUsername);
-            
+
             // Set credentials to trigger Success message view
             setRegisteredCredentials({
                 username: generatedUsername,
@@ -713,17 +768,17 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     <button className="secondary-btn" onClick={() => setShowAssignForm(!showAssignForm)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', height: '44px', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
                         <i className='bx bx-user-plus'></i> Assign Staff
                     </button>
-                    <button 
-                        className="primary-btn pulse-effect" 
-                        onClick={handleGenerateReport} 
-                        disabled={isGeneratingReport} 
-                        style={{ 
-                            width: 'auto', 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '0.5rem', 
-                            background: '#f59e0b', 
-                            boxShadow: '0 4px 15px rgba(245, 158, 11, 0.3)', 
+                    <button
+                        className="primary-btn pulse-effect"
+                        onClick={handleGenerateReport}
+                        disabled={isGeneratingReport}
+                        style={{
+                            width: 'auto',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            background: '#f59e0b',
+                            boxShadow: '0 4px 15px rgba(245, 158, 11, 0.3)',
                             height: '44px',
                             cursor: isGeneratingReport ? 'not-allowed' : 'pointer',
                             opacity: isGeneratingReport ? 0.8 : 1
@@ -740,7 +795,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--card-border)', marginBottom: '2rem', paddingBottom: '0.5rem' }}>
-                <button 
+                <button
                     onClick={() => setActiveTab('overview')}
                     style={{
                         background: 'transparent',
@@ -759,7 +814,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 >
                     <i className='bx bx-grid-alt'></i> Overview & Staff
                 </button>
-                <button 
+                <button
                     onClick={() => setActiveTab('rides')}
                     style={{
                         background: 'transparent',
@@ -778,7 +833,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 >
                     <i className='bx bx-navigation'></i> Ride Assignment
                 </button>
-                <button 
+                <button
                     onClick={() => setActiveTab('deliveries')}
                     style={{
                         background: 'transparent',
@@ -803,613 +858,619 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 <>
                     {/* Assign Staff Form (conditional) */}
                     {showAssignForm && (
-                <div className="action-card" style={{ marginBottom: '2rem', animation: 'slideInDown 0.4s ease', padding: '2rem', border: '1px solid var(--card-border)', maxWidth: '100%', width: '100%' }}>
-                    {registeredCredentials ? (
-                        <div style={{ textAlign: 'left' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--card-border)', paddingBottom: '1rem' }}>
-                                <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>
-                                    <i className='bx bx-check-shield'></i>
-                                </div>
-                                <div>
-                                    <h3 style={{ fontSize: '1.3rem', color: '#fff', margin: 0 }}>Staff Assigned Successfully</h3>
-                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.2rem 0 0 0' }}>Credentials generated and saved securely.</p>
-                                </div>
-                            </div>
-
-                            <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--card-border)', borderRadius: '12px', padding: '1.5rem', marginBottom: '1.5rem' }}>
-                                <div style={{ marginBottom: '1.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <div>
-                                        <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>Generated Username</label>
-                                        <span style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', fontFamily: 'monospace' }}>{registeredCredentials.username}</span>
+                        <div className="action-card" style={{ marginBottom: '2rem', animation: 'slideInDown 0.4s ease', padding: '2rem', border: '1px solid var(--card-border)', maxWidth: '100%', width: '100%' }}>
+                            {registeredCredentials ? (
+                                <div style={{ textAlign: 'left' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--card-border)', paddingBottom: '1rem' }}>
+                                        <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>
+                                            <i className='bx bx-check-shield'></i>
+                                        </div>
+                                        <div>
+                                            <h3 style={{ fontSize: '1.3rem', color: '#fff', margin: 0 }}>Staff Assigned Successfully</h3>
+                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.2rem 0 0 0' }}>Credentials generated and saved securely.</p>
+                                        </div>
                                     </div>
-                                    <button 
-                                        onClick={() => handleCopy(registeredCredentials.username, 'username')}
-                                        className="secondary-btn" 
-                                        style={{ padding: '0.5rem 0.8rem', height: 'auto', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}
+
+                                    <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--card-border)', borderRadius: '12px', padding: '1.5rem', marginBottom: '1.5rem' }}>
+                                        <div style={{ marginBottom: '1.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div>
+                                                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>Generated Username</label>
+                                                <span style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', fontFamily: 'monospace' }}>{registeredCredentials.username}</span>
+                                            </div>
+                                            <button
+                                                onClick={() => handleCopy(registeredCredentials.username, 'username')}
+                                                className="secondary-btn"
+                                                style={{ padding: '0.5rem 0.8rem', height: 'auto', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}
+                                            >
+                                                <i className={`bx ${copiedField === 'username' ? 'bx-check text-success' : 'bx-copy'}`}></i>
+                                                {copiedField === 'username' ? 'Copied!' : 'Copy'}
+                                            </button>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div>
+                                                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>Temporary Password</label>
+                                                <span style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', fontFamily: 'monospace' }}>{registeredCredentials.tempPassword}</span>
+                                            </div>
+                                            <button
+                                                onClick={() => handleCopy(registeredCredentials.tempPassword, 'password')}
+                                                className="secondary-btn"
+                                                style={{ padding: '0.5rem 0.8rem', height: 'auto', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}
+                                            >
+                                                <i className={`bx ${copiedField === 'password' ? 'bx-check text-success' : 'bx-copy'}`}></i>
+                                                {copiedField === 'password' ? 'Copied!' : 'Copy'}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '2rem', flexWrap: 'wrap', borderBottom: '1px solid var(--card-border)', paddingBottom: '1.5rem' }}>
+                                        <div className="form-control" style={{ flex: 1, minWidth: '220px', marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Staff Contact/Personal Email</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-envelope input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                                <input
+                                                    type="email"
+                                                    placeholder="e.g. staff@gmail.com"
+                                                    value={sendEmailAddress}
+                                                    onChange={(e) => setSendEmailAddress(e.target.value)}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                                />
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={handleSendEmail}
+                                            disabled={sendingEmail || !sendEmailAddress.trim()}
+                                            className="primary-btn"
+                                            style={{ width: 'auto', height: '46px', padding: '0 1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--accent-color)', boxShadow: '0 4px 14px 0 var(--accent-glow)' }}
+                                        >
+                                            {sendingEmail ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Sending...</>
+                                            ) : (
+                                                <><i className='bx bx-envelope'></i> Send Credentials via Email</>
+                                            )}
+                                        </button>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                        <button
+                                            onClick={handleCopyAll}
+                                            className="primary-btn"
+                                            style={{ width: 'auto', height: '44px', padding: '0 1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#3b82f6', boxShadow: '0 4px 14px 0 rgba(59, 130, 246, 0.4)' }}
+                                        >
+                                            <i className={`bx ${copiedField === 'all' ? 'bx-check' : 'bx-copy'}`}></i>
+                                            {copiedField === 'all' ? 'Credentials Copied!' : 'Copy All Credentials'}
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setRegisteredCredentials(null);
+                                                setSendEmailAddress('');
+                                            }}
+                                            className="secondary-btn"
+                                            style={{ width: 'auto', height: '44px', padding: '0 1.2rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                        >
+                                            Assign Another Staff
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <form onSubmit={handleAssignStaff} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'left' }}>
+                                    <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                        <i className='bx bx-user-check' style={{ color: 'var(--accent-color)' }}></i> Register & Assign New Staff
+                                    </h3>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
+                                        <div className="form-control" style={{ marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Full Name</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-user input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g. John Doe"
+                                                    required
+                                                    value={regFullName}
+                                                    onChange={(e) => setRegFullName(e.target.value)}
+                                                    disabled={assignStatus === 'assigning'}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="form-control" style={{ marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Contact Number</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-phone input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g. 0771234567"
+                                                    required
+                                                    value={regPhone}
+                                                    onChange={(e) => setRegPhone(e.target.value)}
+                                                    disabled={assignStatus === 'assigning'}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
+                                        <div className="form-control" style={{ marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Staff Role</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-briefcase input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
+                                                <select
+                                                    value={regRole}
+                                                    onChange={(e) => setRegRole(e.target.value)}
+                                                    disabled={assignStatus === 'assigning'}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                                >
+                                                    <option value="staff">Staff</option>
+                                                    <option value="admin">Admin</option>
+                                                </select>
+                                                <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
+                                            </div>
+                                        </div>
+                                        <div className="form-control" style={{ marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Branch</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-buildings input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
+                                                <select
+                                                    value={regBranchId}
+                                                    onChange={(e) => setRegBranchId(e.target.value)}
+                                                    disabled={assignStatus === 'assigning'}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                                >
+                                                    {branches.map((b) => (
+                                                        <option key={b.branch_id} value={b.branch_id}>{b.branch_location}</option>
+                                                    ))}
+                                                </select>
+                                                <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                                        <button
+                                            type="submit"
+                                            className="primary-btn"
+                                            disabled={assignStatus === 'assigning'}
+                                            style={{ width: 'auto', height: '46px', padding: '0 2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                        >
+                                            {assignStatus === 'assigning' ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Generating Credentials...</>
+                                            ) : (
+                                                <>Register & Assign Staff <i className='bx bx-right-arrow-alt'></i></>
+                                            )}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowAssignForm(false);
+                                                setRegisteredCredentials(null);
+                                            }}
+                                            className="secondary-btn"
+                                            style={{ width: 'auto', height: '46px', padding: '0 1.5rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </form>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Assigned Staff List */}
+                    {assignedStaff.length > 0 && (
+                        <div className="action-card" style={{ marginBottom: '2rem', padding: '2rem', border: '1px solid var(--card-border)', maxWidth: '100%', width: '100%', animation: 'fadeIn 0.5s ease' }}>
+                            <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h3 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                    <i className='bx bx-group' style={{ color: 'var(--accent-color)' }}></i> Assigned Staff Members
+                                </h3>
+                                <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>{assignedStaff.length} Total</span>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+                                {assignedStaff.map((staff, index) => (
+                                    <div
+                                        key={index}
+                                        className="delivery-item"
+                                        onClick={() => handleStaffClick(staff)}
+                                        style={{
+                                            padding: '1rem 1.25rem',
+                                            background: 'rgba(255, 255, 255, 0.03)',
+                                            borderRadius: '12px',
+                                            border: '1px solid var(--card-border)',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            transition: 'all 0.3s ease',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 0 0 rgba(249, 115, 22, 0)',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = 'rgba(249, 115, 22, 0.08)';
+                                            e.currentTarget.style.borderColor = 'rgba(238, 234, 231, 0.45)';
+                                            e.currentTarget.style.boxShadow = '0 0 18px rgba(249, 115, 22, 0.22)';
+                                            e.currentTarget.style.transform = 'translateY(-2px)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                                            e.currentTarget.style.borderColor = 'var(--card-border)';
+                                            e.currentTarget.style.boxShadow = '0 0 0 rgba(249, 115, 22, 0)';
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                        }}
                                     >
-                                        <i className={`bx ${copiedField === 'username' ? 'bx-check text-success' : 'bx-copy'}`}></i>
-                                        {copiedField === 'username' ? 'Copied!' : 'Copy'}
-                                    </button>
-                                </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <div>
-                                        <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>Temporary Password</label>
-                                        <span style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', fontFamily: 'monospace' }}>{registeredCredentials.tempPassword}</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                                            <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <i className='bx bx-user'></i>
+                                            </div>
+                                            <div>
+                                                <p style={{ color: '#fff', fontSize: '0.95rem', fontWeight: '500', marginBottom: '0.2rem' }}>{staff}</p>
+                                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Staff Role</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onRemoveStaff && onRemoveStaff(staff);
+                                            }}
+                                            style={{
+                                                background: 'rgba(239, 68, 68, 0.1)',
+                                                color: '#ef4444',
+                                                border: '1px solid rgba(239, 68, 68, 0.2)',
+                                                padding: '0.5rem',
+                                                borderRadius: '8px',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                transition: 'all 0.2s',
+                                            }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
+                                            title="Remove Staff"
+                                        >
+                                            <i className='bx bx-trash' style={{ fontSize: '1.2rem' }}></i>
+                                        </button>
                                     </div>
-                                    <button 
-                                        onClick={() => handleCopy(registeredCredentials.tempPassword, 'password')}
-                                        className="secondary-btn" 
-                                        style={{ padding: '0.5rem 0.8rem', height: 'auto', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}
-                                    >
-                                        <i className={`bx ${copiedField === 'password' ? 'bx-check text-success' : 'bx-copy'}`}></i>
-                                        {copiedField === 'password' ? 'Copied!' : 'Copy'}
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '2rem', flexWrap: 'wrap', borderBottom: '1px solid var(--card-border)', paddingBottom: '1.5rem' }}>
-                                <div className="form-control" style={{ flex: 1, minWidth: '220px', marginBottom: 0 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Staff Contact/Personal Email</label>
-                                    <div className="input-wrapper" style={{ position: 'relative' }}>
-                                        <i className='bx bx-envelope input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
-                                        <input
-                                            type="email"
-                                            placeholder="e.g. staff@gmail.com"
-                                            value={sendEmailAddress}
-                                            onChange={(e) => setSendEmailAddress(e.target.value)}
-                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
-                                        />
-                                    </div>
-                                </div>
-                                <button 
-                                    onClick={handleSendEmail}
-                                    disabled={sendingEmail || !sendEmailAddress.trim()}
-                                    className="primary-btn" 
-                                    style={{ width: 'auto', height: '46px', padding: '0 1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--accent-color)', boxShadow: '0 4px 14px 0 var(--accent-glow)' }}
-                                >
-                                    {sendingEmail ? (
-                                        <><i className='bx bx-loader-alt bx-spin'></i> Sending...</>
-                                    ) : (
-                                        <><i className='bx bx-envelope'></i> Send Credentials via Email</>
-                                    )}
-                                </button>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                                <button 
-                                    onClick={handleCopyAll}
-                                    className="primary-btn" 
-                                    style={{ width: 'auto', height: '44px', padding: '0 1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#3b82f6', boxShadow: '0 4px 14px 0 rgba(59, 130, 246, 0.4)' }}
-                                >
-                                    <i className={`bx ${copiedField === 'all' ? 'bx-check' : 'bx-copy'}`}></i>
-                                    {copiedField === 'all' ? 'Credentials Copied!' : 'Copy All Credentials'}
-                                </button>
-                                <button 
-                                    onClick={() => {
-                                        setRegisteredCredentials(null);
-                                        setSendEmailAddress('');
-                                    }}
-                                    className="secondary-btn" 
-                                    style={{ width: 'auto', height: '44px', padding: '0 1.2rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                >
-                                    Assign Another Staff
-                                </button>
+                                ))}
                             </div>
                         </div>
-                    ) : (
-                        <form onSubmit={handleAssignStaff} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'left' }}>
-                            <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
-                                <i className='bx bx-user-check' style={{ color: 'var(--accent-color)' }}></i> Register & Assign New Staff
-                            </h3>
-                            
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
-                                <div className="form-control" style={{ marginBottom: 0 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Full Name</label>
-                                    <div className="input-wrapper" style={{ position: 'relative' }}>
-                                        <i className='bx bx-user input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
-                                        <input
-                                            type="text"
-                                            placeholder="e.g. John Doe"
-                                            required
-                                            value={regFullName}
-                                            onChange={(e) => setRegFullName(e.target.value)}
-                                            disabled={assignStatus === 'assigning'}
-                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
-                                        />
-                                    </div>
-                                </div>
-                                <div className="form-control" style={{ marginBottom: 0 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Contact Number</label>
-                                    <div className="input-wrapper" style={{ position: 'relative' }}>
-                                        <i className='bx bx-phone input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
-                                        <input
-                                            type="text"
-                                            placeholder="e.g. 0771234567"
-                                            required
-                                            value={regPhone}
-                                            onChange={(e) => setRegPhone(e.target.value)}
-                                            disabled={assignStatus === 'assigning'}
-                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
-                                <div className="form-control" style={{ marginBottom: 0 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Staff Role</label>
-                                    <div className="input-wrapper" style={{ position: 'relative' }}>
-                                        <i className='bx bx-briefcase input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
-                                        <select
-                                            value={regRole}
-                                            onChange={(e) => setRegRole(e.target.value)}
-                                            disabled={assignStatus === 'assigning'}
-                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
-                                        >
-                                            <option value="staff">Staff</option>
-                                            <option value="admin">Admin</option>
-                                        </select>
-                                        <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
-                                    </div>
-                                </div>
-                                <div className="form-control" style={{ marginBottom: 0 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Branch</label>
-                                    <div className="input-wrapper" style={{ position: 'relative' }}>
-                                        <i className='bx bx-buildings input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
-                                        <select
-                                            value={regBranchId}
-                                            onChange={(e) => setRegBranchId(e.target.value)}
-                                            disabled={assignStatus === 'assigning'}
-                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
-                                        >
-                                            {branches.map((b) => (
-                                                <option key={b.branch_id} value={b.branch_id}>{b.branch_location}</option>
-                                            ))}
-                                        </select>
-                                        <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-                                <button
-                                    type="submit"
-                                    className="primary-btn"
-                                    disabled={assignStatus === 'assigning'}
-                                    style={{ width: 'auto', height: '46px', padding: '0 2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                                >
-                                    {assignStatus === 'assigning' ? (
-                                        <><i className='bx bx-loader-alt bx-spin'></i> Generating Credentials...</>
-                                    ) : (
-                                        <>Register & Assign Staff <i className='bx bx-right-arrow-alt'></i></>
-                                    )}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setShowAssignForm(false);
-                                        setRegisteredCredentials(null);
-                                    }}
-                                    className="secondary-btn"
-                                    style={{ width: 'auto', height: '46px', padding: '0 1.5rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                >
-                                    Cancel
-                                </button>
-                            </div>
-                        </form>
                     )}
-                </div>
-            )}
 
-            {/* Assigned Staff List */}
-            {assignedStaff.length > 0 && (
-                <div className="action-card" style={{ marginBottom: '2rem', padding: '2rem', border: '1px solid var(--card-border)', maxWidth: '100%', width: '100%', animation: 'fadeIn 0.5s ease' }}>
-                    <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
-                            <i className='bx bx-group' style={{ color: 'var(--accent-color)' }}></i> Assigned Staff Members
-                        </h3>
-                        <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>{assignedStaff.length} Total</span>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-                        {assignedStaff.map((staff, index) => (
+                    {staffDetailsLoading && (
+                        <div
+                            className="action-card"
+                            style={{
+                                marginBottom: '2rem',
+                                padding: '1.5rem',
+                                border: '1px solid var(--card-border)',
+                                maxWidth: '100%',
+                                width: '100%',
+                            }}
+                        >
+                            <p style={{ color: 'var(--text-secondary)' }}>
+                                <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i>
+                                Loading staff details...
+                            </p>
+                        </div>
+                    )}
+
+                    {selectedStaff && (
+                        <div
+                            className="action-card"
+                            style={{
+                                marginBottom: '2rem',
+                                padding: '2rem',
+                                border: '1px solid var(--card-border)',
+                                maxWidth: '100%',
+                                width: '100%',
+                                animation: 'fadeIn 0.3s ease',
+                            }}
+                        >
                             <div
-                                key={index}
-                                className="delivery-item"
-                                onClick={() => handleStaffClick(staff)}
                                 style={{
-                                    padding: '1rem 1.25rem',
-                                    background: 'rgba(255, 255, 255, 0.03)',
-                                    borderRadius: '12px',
-                                    border: '1px solid var(--card-border)',
                                     display: 'flex',
                                     justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    transition: 'all 0.3s ease',
-                                    cursor: 'pointer',
-                                    boxShadow: '0 0 0 rgba(249, 115, 22, 0)',
+                                    alignItems: 'flex-start',
+                                    gap: '1rem',
+                                    marginBottom: '1.5rem',
                                 }}
+                            >
+                                <div>
+                                    <h3
+                                        style={{
+                                            color: '#fff',
+                                            fontSize: '1.3rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            marginBottom: '0.4rem',
+                                        }}
+                                    >
+                                        <i className="bx bx-id-card" style={{ color: 'var(--accent-color)' }}></i>
+                                        Staff Details
+                                    </h3>
+                                    <p style={{ color: 'var(--text-secondary)' }}>
+                                        Details for {selectedStaff.staff_email}
+                                    </p>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedStaff(null)}
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)',
+                                        border: '1px solid var(--card-border)',
+                                        color: '#fff',
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '10px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
+                                    title="Close details"
+                                >
+                                    <i className="bx bx-x" style={{ fontSize: '1.3rem' }}></i>
+                                </button>
+                            </div>
+
+                            <div
+                                style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                                    gap: '1rem',
+                                }}
+                            >
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Name</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.staff_name || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Email</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.staff_email || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Phone</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.staff_phone || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Role</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.staff_role || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Branch ID</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.branch_id || selectedStaff.branch_ID || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Status</p>
+                                    <h4 style={{ color: selectedStaff.staff_active_status ? 'var(--success)' : 'var(--danger)' }}>
+                                        {selectedStaff.staff_active_status ? 'Active' : 'Inactive'}
+                                    </h4>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Stats Grid */}
+                    <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+                        {stats.map((stat, index) => (
+                            <div key={stat.id} className="stat-card" onClick={() => setSelectedStat(stat.id)} style={{
+                                padding: '1.5rem',
+                                background: 'rgba(255, 255, 255, 0.03)',
+                                borderRadius: '16px',
+                                border: '1px solid var(--card-border)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '1.5rem',
+                                transition: 'all 0.3s ease',
+                                cursor: 'pointer',
+                                animation: `slideInRight 0.8s ease backwards ${(index + 1) * 0.2}s`
+                            }}
                                 onMouseEnter={(e) => {
-                                    e.currentTarget.style.background = 'rgba(249, 115, 22, 0.08)';
-                                    e.currentTarget.style.borderColor = 'rgba(238, 234, 231, 0.45)';
-                                    e.currentTarget.style.boxShadow = '0 0 18px rgba(249, 115, 22, 0.22)';
-                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
                                 }}
                                 onMouseLeave={(e) => {
                                     e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
                                     e.currentTarget.style.borderColor = 'var(--card-border)';
-                                    e.currentTarget.style.boxShadow = '0 0 0 rgba(249, 115, 22, 0)';
-                                    e.currentTarget.style.transform = 'translateY(0)';
-                                }}
-        >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <i className='bx bx-user'></i>
-                                    </div>
-                                    <div>
-                                        <p style={{ color: '#fff', fontSize: '0.95rem', fontWeight: '500', marginBottom: '0.2rem' }}>{staff}</p>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Staff Role</p>
-                                    </div>
+                                }}>
+                                <div style={{
+                                    width: '60px',
+                                    height: '60px',
+                                    borderRadius: '50%',
+                                    background: `rgba(${stat.color === 'var(--success)' ? '16, 185, 129' : stat.color === 'var(--accent-color)' ? '59, 130, 246' : '245, 158, 11'}, 0.1)`,
+                                    color: stat.color,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '2rem'
+                                }}>
+                                    <i className={`bx ${stat.icon}`}></i>
                                 </div>
-                                <button 
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        onRemoveStaff && onRemoveStaff(staff);
-                                    }}
-                                    style={{ 
-                                        background: 'rgba(239, 68, 68, 0.1)', 
-                                        color: '#ef4444', 
-                                        border: '1px solid rgba(239, 68, 68, 0.2)',
-                                        padding: '0.5rem',
-                                        borderRadius: '8px',
+                                <div>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.25rem' }}>{stat.title}</p>
+                                    <h3 style={{ color: '#fff', fontSize: '1.8rem', fontWeight: '700' }}>{stat.value}</h3>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {selectedStat && (
+                        <div
+                            className="action-card"
+                            style={{
+                                width: '100%',
+                                maxWidth: '100%',
+                                padding: '2rem',
+                                marginBottom: '2rem',
+                                animation: 'fadeIn 0.3s ease',
+                                border: '1px solid var(--card-border)',
+                            }}
+                        >
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'flex-start',
+                                    gap: '1rem',
+                                    marginBottom: '1.5rem',
+                                }}
+                            >
+                                <div>
+                                    <h3
+                                        style={{
+                                            color: '#fff',
+                                            fontSize: '1.35rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            marginBottom: '0.4rem',
+                                        }}
+                                    >
+                                        <i
+                                            className={`bx ${statDetails[selectedStat].icon}`}
+                                            style={{ color: 'var(--accent-color)' }}
+                                        ></i>
+                                        {statDetails[selectedStat].title}
+                                    </h3>
+                                    <p style={{ color: 'var(--text-secondary)' }}>
+                                        {statDetails[selectedStat].description}
+                                    </p>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedStat(null)}
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)',
+                                        border: '1px solid var(--card-border)',
+                                        color: '#fff',
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '10px',
                                         cursor: 'pointer',
                                         display: 'flex',
                                         alignItems: 'center',
-                                        transition: 'all 0.2s',
+                                        justifyContent: 'center',
                                     }}
-                                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'; }}
-                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
-                                    title="Remove Staff"
+                                    title="Close details"
                                 >
-                                    <i className='bx bx-trash' style={{ fontSize: '1.2rem' }}></i>
+                                    <i className="bx bx-x" style={{ fontSize: '1.3rem' }}></i>
                                 </button>
                             </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
-            {staffDetailsLoading && (
-                <div
-                    className="action-card"
-                    style={{
-                        marginBottom: '2rem',
-                        padding: '1.5rem',
-                        border: '1px solid var(--card-border)',
-                        maxWidth: '100%',
-                        width: '100%',
-                    }}
-                >
-                    <p style={{ color: 'var(--text-secondary)' }}>
-                        <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i>
-                        Loading staff details...
-                    </p>
-                </div>
-            )}
-
-            {selectedStaff && (
-                <div
-                    className="action-card"
-                    style={{
-                        marginBottom: '2rem',
-                        padding: '2rem',
-                        border: '1px solid var(--card-border)',
-                        maxWidth: '100%',
-                        width: '100%',
-                        animation: 'fadeIn 0.3s ease',
-                    }}
-                >
-                    <div
-                        style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'flex-start',
-                            gap: '1rem',
-                            marginBottom: '1.5rem',
-                        }}
-                    >
-                        <div>
-                            <h3
+                            <div
                                 style={{
-                                    color: '#fff',
-                                    fontSize: '1.3rem',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.5rem',
-                                    marginBottom: '0.4rem',
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                                    gap: '1rem',
                                 }}
                             >
-                                <i className="bx bx-id-card" style={{ color: 'var(--accent-color)' }}></i>
-                                Staff Details
-                            </h3>
-                            <p style={{ color: 'var(--text-secondary)' }}>
-                                Details for {selectedStaff.staff_email}
-                            </p>
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={() => setSelectedStaff(null)}
-                            style={{
-                                background: 'rgba(255,255,255,0.06)',
-                                border: '1px solid var(--card-border)',
-                                color: '#fff',
-                                width: '36px',
-                                height: '36px',
-                                borderRadius: '10px',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                            }}
-                            title="Close details"
-                        >
-                            <i className="bx bx-x" style={{ fontSize: '1.3rem' }}></i>
-                        </button>
-                    </div>
-
-                    <div
-                        style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                            gap: '1rem',
-                        }}
-                    >
-                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Name</p>
-                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_name || 'N/A'}</h4>
-                        </div>
-
-                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Email</p>
-                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_email || 'N/A'}</h4>
-                        </div>
-
-                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Phone</p>
-                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_phone || 'N/A'}</h4>
-                        </div>
-
-                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Role</p>
-                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_role || 'N/A'}</h4>
-                        </div>
-
-                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Branch ID</p>
-                            <h4 style={{ color: '#fff' }}>{selectedStaff.branch_id || selectedStaff.branch_ID || 'N/A'}</h4>
-                        </div>
-
-                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Status</p>
-                            <h4 style={{ color: selectedStaff.staff_active_status ? 'var(--success)' : 'var(--danger)' }}>
-                                {selectedStaff.staff_active_status ? 'Active' : 'Inactive'}
-                            </h4>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Stats Grid */}
-            <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
-                {stats.map((stat, index) => (
-                    <div key={stat.id} className="stat-card" onClick={() => setSelectedStat(stat.id)} style={{
-                        padding: '1.5rem',
-                        background: 'rgba(255, 255, 255, 0.03)',
-                        borderRadius: '16px',
-                        border: '1px solid var(--card-border)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '1.5rem',
-                        transition: 'all 0.3s ease',
-                        cursor: 'pointer',
-                        animation: `slideInRight 0.8s ease backwards ${(index + 1) * 0.2}s`
-                    }}
-                        onMouseEnter={(e) => {
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
-                            e.currentTarget.style.borderColor = 'var(--card-border)';
-                        }}>
-                        <div style={{
-                            width: '60px',
-                            height: '60px',
-                            borderRadius: '50%',
-                            background: `rgba(${stat.color === 'var(--success)' ? '16, 185, 129' : stat.color === 'var(--accent-color)' ? '59, 130, 246' : '245, 158, 11'}, 0.1)`,
-                            color: stat.color,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '2rem'
-                        }}>
-                            <i className={`bx ${stat.icon}`}></i>
-                        </div>
-                        <div>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.25rem' }}>{stat.title}</p>
-                            <h3 style={{ color: '#fff', fontSize: '1.8rem', fontWeight: '700' }}>{stat.value}</h3>
-                        </div>
-                    </div>
-                ))}
-            </div>
-
-            {selectedStat && (
-            <div
-                className="action-card"
-                style={{
-                    width: '100%',
-                    maxWidth: '100%',
-                    padding: '2rem',
-                    marginBottom: '2rem',
-                    animation: 'fadeIn 0.3s ease',
-                    border: '1px solid var(--card-border)',
-                }}
-            >
-                <div
-                    style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: '1rem',
-                        marginBottom: '1.5rem',
-                    }}
-                >
-                    <div>
-                        <h3
-                            style={{
-                                color: '#fff',
-                                fontSize: '1.35rem',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                marginBottom: '0.4rem',
-                            }}
-                        >
-                            <i
-                                className={`bx ${statDetails[selectedStat].icon}`}
-                                style={{ color: 'var(--accent-color)' }}
-                            ></i>
-                            {statDetails[selectedStat].title}
-                        </h3>
-                        <p style={{ color: 'var(--text-secondary)' }}>
-                            {statDetails[selectedStat].description}
-                        </p>
-                    </div>
-
-                    <button
-                        type="button"
-                        onClick={() => setSelectedStat(null)}
-                        style={{
-                            background: 'rgba(255,255,255,0.06)',
-                            border: '1px solid var(--card-border)',
-                            color: '#fff',
-                            width: '36px',
-                            height: '36px',
-                            borderRadius: '10px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                        }}
-                        title="Close details"
-                    >
-                        <i className="bx bx-x" style={{ fontSize: '1.3rem' }}></i>
-                    </button>
-                </div>
-
-                <div
-                    style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                        gap: '1rem',
-                    }}
-                >
-                    {statDetails[selectedStat].rows.map((item, index) => (
-                        <div
-                            key={index}
-                            style={{
-                                padding: '1rem',
-                                background: 'rgba(255,255,255,0.03)',
-                                borderRadius: '12px',
-                                border: '1px solid var(--card-border)',
-                            }}
-                        >
-                            <p
-                                style={{
-                                    color: 'var(--text-secondary)',
-                                    fontSize: '0.85rem',
-                                    marginBottom: '0.4rem',
-                                }}
-                            >
-                                {item.label}
-                            </p>
-                            <h4 style={{ color: '#fff', fontSize: '1.4rem' }}>
-                                {item.value}
-                            </h4>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        )}
-
-            {/* Main content grid */}
-            <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
-                <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInUp 1s ease backwards 0.8s', margin: 0 }}>
-                    <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
-                            <i className='bx bx-list-ul' style={{ color: 'var(--accent-color)' }}></i> Recent System Activity
-                        </h3>
-                        <button style={{ background: 'transparent', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.9rem' }}>View All</button>
-                    </div>
-                    
-                    <div className="deliveries-list" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                        {recentOrders.map((order, index) => (
-                            <div key={index} className="delivery-item" style={{ 
-                                padding: '1.25rem', 
-                                background: 'rgba(255, 255, 255, 0.03)', 
-                                borderRadius: '16px',
-                                border: '1px solid var(--card-border)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                transition: 'all 0.3s ease',
-                            }}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
-                                e.currentTarget.style.borderColor = 'var(--card-border)';
-                            }}
-                            >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
-                                        <i className='bx bx-user'></i>
-                                    </div>
-                                    <div>
-                                        <h4 style={{ color: 'var(--text-primary)', marginBottom: '0.2rem', fontSize: '1.05rem' }}>{order.customer} <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 'normal' }}>({order.id})</span></h4>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                                            <i className='bx bx-map' style={{ color: 'var(--accent-color)', marginRight: '4px' }}></i>
-                                            {order.destination}
+                                {statDetails[selectedStat].rows.map((item, index) => (
+                                    <div
+                                        key={index}
+                                        style={{
+                                            padding: '1rem',
+                                            background: 'rgba(255,255,255,0.03)',
+                                            borderRadius: '12px',
+                                            border: '1px solid var(--card-border)',
+                                        }}
+                                    >
+                                        <p
+                                            style={{
+                                                color: 'var(--text-secondary)',
+                                                fontSize: '0.85rem',
+                                                marginBottom: '0.4rem',
+                                            }}
+                                        >
+                                            {item.label}
                                         </p>
+                                        <h4 style={{ color: '#fff', fontSize: '1.4rem' }}>
+                                            {item.value}
+                                        </h4>
                                     </div>
-                                </div>
-                                <div style={{ textAlign: 'right' }}>
-                                    <span style={{ 
-                                        display: 'inline-block',
-                                        padding: '0.35rem 0.85rem',
-                                        background: order.status === 'Delivered' ? 'rgba(16, 185, 129, 0.1)' : order.status === 'In Transit' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(245, 158, 11, 0.1)',
-                                        color: order.status === 'Delivered' ? 'var(--success)' : order.status === 'In Transit' ? 'var(--accent-color)' : '#f59e0b',
-                                        borderRadius: '100px',
-                                        fontSize: '0.85rem',
-                                        fontWeight: '600',
-                                        border: order.status === 'Delivered' ? '1px solid rgba(16, 185, 129, 0.2)' : order.status === 'In Transit' ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid rgba(245, 158, 11, 0.2)'
-                                    }}>
-                                        {order.status}
-                                    </span>
-                                </div>
+                                ))}
                             </div>
-                        ))}
+                        </div>
+                    )}
+
+                    {/* Main content grid */}
+                    <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
+                        <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInUp 1s ease backwards 0.8s', margin: 0 }}>
+                            <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                    <i className='bx bx-list-ul' style={{ color: 'var(--accent-color)' }}></i> Recent System Activity
+                                </h3>
+                                <button style={{ background: 'transparent', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.9rem' }}>View All</button>
+                            </div>
+
+                            <div className="deliveries-list" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                {recentOrders.map((order, index) => (
+                                    <div key={index} className="delivery-item" style={{
+                                        padding: '1.25rem',
+                                        background: 'rgba(255, 255, 255, 0.03)',
+                                        borderRadius: '16px',
+                                        border: '1px solid var(--card-border)',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        transition: 'all 0.3s ease',
+                                    }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                                            e.currentTarget.style.borderColor = 'var(--card-border)';
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                            <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+                                                <i className='bx bx-user'></i>
+                                            </div>
+                                            <div>
+                                                <h4 style={{ color: 'var(--text-primary)', marginBottom: '0.2rem', fontSize: '1.05rem' }}>{order.customer} <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 'normal' }}>({order.id})</span></h4>
+                                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                    <i className='bx bx-map' style={{ color: 'var(--accent-color)', marginRight: '4px' }}></i>
+                                                    {order.destination}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div style={{ textAlign: 'right' }}>
+                                            <span style={{
+                                                display: 'inline-block',
+                                                padding: '0.35rem 0.85rem',
+                                                background: order.status === 'Delivered' ? 'rgba(16, 185, 129, 0.1)' : order.status === 'In Transit' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                                                color: order.status === 'Delivered' ? 'var(--success)' : order.status === 'In Transit' ? 'var(--accent-color)' : '#f59e0b',
+                                                borderRadius: '100px',
+                                                fontSize: '0.85rem',
+                                                fontWeight: '600',
+                                                border: order.status === 'Delivered' ? '1px solid rgba(16, 185, 129, 0.2)' : order.status === 'In Transit' ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid rgba(245, 158, 11, 0.2)'
+                                            }}>
+                                                {order.status}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </div>
-            </>
+                </>
             )}
 
             {activeTab === 'rides' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem', animation: 'fadeIn 0.4s ease' }}>
-                    
+                <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+                    gap: '2rem',
+                    alignItems: 'start',
+                    animation: 'fadeIn 0.4s ease'
+                }}>
+
                     {/* Rider Management Card */}
                     <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', margin: 0 }}>
                         <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1417,7 +1478,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
                                     <i className='bx bx-run' style={{ color: 'var(--accent-color)' }}></i> Rider Availability Management
                                 </h3>
-                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>View and update the real-time status of your courier riders.</p>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>View real-time availability of registered riders (updated automatically by rider app).</p>
                             </div>
                             <button onClick={loadRiders} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
                                 <i className='bx bx-refresh'></i> Refresh Riders
@@ -1425,21 +1486,21 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         </div>
 
                         {loadingRiders ? (
-                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading riders...</p>
+                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading riders from database...</p>
                         ) : ridersList.length === 0 ? (
-                            <p style={{ color: 'var(--text-secondary)' }}>No riders registered in the system. Use the "Assign Staff" button above to register riders with the "Staff" role.</p>
+                            <p style={{ color: 'var(--text-secondary)' }}>No registered riders found in the rider table.</p>
                         ) : (
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
                                 {ridersList.map((rider) => {
                                     const statusColors = {
-                                        'Available': { bg: 'rgba(16, 185, 129, 0.1)', text: 'var(--success)', border: '1px solid rgba(16, 185, 129, 0.2)' },
-                                        'Busy': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
-                                        'On Break': { bg: 'rgba(239, 68, 68, 0.1)', text: 'var(--danger)', border: '1px solid rgba(239, 68, 68, 0.2)' }
+                                        'Available': { bg: 'rgba(16, 185, 129, 0.1)', text: 'var(--success)', border: '1px solid rgba(16, 185, 129, 0.2)', icon: '🟢' },
+                                        'Busy': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)', icon: '🟡' },
+                                        'On Break': { bg: 'rgba(239, 68, 68, 0.1)', text: 'var(--danger)', border: '1px solid rgba(239, 68, 68, 0.2)', icon: '🔴' }
                                     };
                                     const statusStyle = statusColors[rider.availability_status || 'Available'] || statusColors['Available'];
 
                                     return (
-                                        <div key={rider.staff_id} style={{
+                                        <div key={rider.staff_id || rider.nic} style={{
                                             padding: '1.25rem',
                                             background: 'rgba(255, 255, 255, 0.02)',
                                             borderRadius: '16px',
@@ -1449,23 +1510,26 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                             gap: '1rem',
                                             transition: 'all 0.3s ease'
                                         }}
-                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; }}
-                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
                                         >
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                                                <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.1rem' }}>
                                                     {rider.staff_name ? rider.staff_name.charAt(0).toUpperCase() : 'R'}
                                                 </div>
                                                 <div style={{ textAlign: 'left' }}>
-                                                    <h4 style={{ color: '#fff', margin: 0, fontSize: '1rem' }}>{rider.staff_name}</h4>
-                                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.1rem 0 0 0' }}>{rider.staff_email}</p>
+                                                    <h4 style={{ color: '#fff', margin: 0, fontSize: '1.05rem' }}>{rider.staff_name}</h4>
+                                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.15rem 0 0 0' }}>{rider.staff_email || rider.staff_phone}</p>
+                                                    {rider.nic && (
+                                                        <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>NIC: {rider.nic}</span>
+                                                    )}
                                                 </div>
                                             </div>
 
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.75rem' }}>
                                                 <span style={{
-                                                    display: 'inline-block',
-                                                    padding: '0.25rem 0.65rem',
+                                                    display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                                                    padding: '0.3rem 0.75rem',
                                                     background: statusStyle.bg,
                                                     color: statusStyle.text,
                                                     borderRadius: '100px',
@@ -1473,21 +1537,12 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                     fontWeight: '600',
                                                     border: statusStyle.border
                                                 }}>
-                                                    {rider.availability_status || 'Available'}
+                                                    {statusStyle.icon} {rider.availability_status || 'Available'}
                                                 </span>
 
-                                                <div className="input-wrapper" style={{ position: 'relative', width: '130px', margin: 0 }}>
-                                                    <select
-                                                        value={rider.availability_status || 'Available'}
-                                                        onChange={(e) => handleUpdateRiderStatus(rider.staff_id, e.target.value)}
-                                                        style={{ width: '100%', padding: '0.4rem 1.8rem 0.4rem 0.75rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
-                                                    >
-                                                        <option value="Available">Available</option>
-                                                        <option value="Busy">Busy</option>
-                                                        <option value="On Break">On Break</option>
-                                                    </select>
-                                                    <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }}></i>
-                                                </div>
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                                    🏍️ {rider.vehicle_type || 'Vehicle'}
+                                                </span>
                                             </div>
                                         </div>
                                     );
@@ -1496,119 +1551,246 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         )}
                     </div>
 
-                    {/* Ride Assignment Card */}
+                    {/* Unified Ride & Order Delivery Assignment Card */}
                     <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', margin: 0 }}>
-                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
                             <div>
                                 <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
-                                    <i className='bx bx-map-pin' style={{ color: 'var(--accent-color)' }}></i> Ride Assignment Panel
+                                    <i className='bx bx-map-pin' style={{ color: 'var(--accent-color)' }}></i> Rider & Delivery Assignment Panel
                                 </h3>
-                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Assign travel requests and courier requests to riders.</p>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Assign passenger travel requests and package delivery orders to available riders.</p>
                             </div>
-                            <button onClick={loadAtrRequests} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
-                                <i className='bx bx-refresh'></i> Refresh Rides
-                            </button>
+                            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                                <button onClick={() => { loadAtrRequests(); loadPersonalDeliveries(); loadRiders(); }} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                                    <i className='bx bx-refresh'></i> Refresh All
+                                </button>
+                            </div>
                         </div>
 
-                        {loadingAtr ? (
-                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading rides...</p>
-                        ) : atrRequests.length === 0 ? (
-                            <p style={{ color: 'var(--text-secondary)' }}>No ride requests found in the system.</p>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                                {atrRequests.map((req) => {
-                                    const assignedRider = ridersList.find(r => r.staff_id === req.approved_by);
-                                    
-                                    return (
-                                        <div key={req.atr_id} style={{
-                                            padding: '1.5rem',
-                                            background: 'rgba(255, 255, 255, 0.02)',
-                                            borderRadius: '16px',
-                                            border: '1px solid var(--card-border)',
-                                            display: 'flex',
-                                            flexWrap: 'wrap',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            gap: '1.5rem',
-                                            transition: 'all 0.3s ease',
-                                            textAlign: 'left'
-                                        }}
-                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
-                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
-                                        >
-                                            <div style={{ flex: '1 1 300px' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                                                    <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fff' }}>{req.atr_number}</span>
-                                                    <span style={{
-                                                        display: 'inline-block', padding: '0.25rem 0.65rem',
-                                                        background: req.status === 'Approved' || req.status === 'Completed' ? 'rgba(16,185,129,0.1)' : req.status === 'Pending' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
-                                                        color: req.status === 'Approved' || req.status === 'Completed' ? 'var(--success)' : req.status === 'Pending' ? '#f59e0b' : 'var(--danger)',
-                                                        borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
-                                                        border: req.status === 'Approved' || req.status === 'Completed' ? '1px solid rgba(16,185,129,0.2)' : req.status === 'Pending' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
-                                                    }}>{req.status}</span>
-                                                </div>
-                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                                                    <div><strong>Passenger:</strong> {req.principal_passenger_name} ({req.principal_passenger_designation})</div>
-                                                    <div><strong>Vehicle Type:</strong> {req.vehicle_type}</div>
-                                                    <div><strong>Required Date:</strong> {req.required_date} @ {req.required_time}</div>
-                                                    <div><strong>Est. Cost:</strong> {req.estimated_cost} LKR</div>
-                                                </div>
-                                            </div>
-
-                                            <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-                                                {assignedRider ? (
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '0.5rem 1rem', borderRadius: '12px' }}>
-                                                        <div style={{ textAlign: 'left' }}>
-                                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: 0 }}>Assigned Rider</p>
-                                                            <p style={{ color: '#fff', fontSize: '0.9rem', fontWeight: '600', margin: 0 }}>{assignedRider.staff_name}</p>
-                                                        </div>
-                                                        <button 
-                                                            onClick={() => handleAssignRider(req.atr_id, null)}
-                                                            className="secondary-btn" 
-                                                            style={{ padding: '0.35rem 0.6rem', height: 'auto', fontSize: '0.8rem', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.15)', cursor: 'pointer', borderRadius: '8px' }}
-                                                        >
-                                                            Unassign
-                                                        </button>
-                                                    </div>
-                                                ) : (
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                                        <div className="input-wrapper" style={{ position: 'relative', width: '220px', margin: 0 }}>
-                                                            <select
-                                                                id={`select-rider-${req.atr_id}`}
-                                                                defaultValue=""
-                                                                style={{ width: '100%', padding: '0.6rem 2rem 0.6rem 0.85rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
-                                                            >
-                                                                <option value="" disabled>Select a Rider...</option>
-                                                                {ridersList.map(r => (
-                                                                    <option key={r.staff_id} value={r.staff_id}>
-                                                                        {r.staff_name} ({r.availability_status})
-                                                                    </option>
-                                                                ))}
-                                                            </select>
-                                                            <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }}></i>
-                                                        </div>
-                                                        <button
-                                                            onClick={() => {
-                                                                const sel = document.getElementById(`select-rider-${req.atr_id}`);
-                                                                if (sel && sel.value) {
-                                                                    handleAssignRider(req.atr_id, sel.value);
-                                                                } else {
-                                                                    alert('Please select a rider first.');
-                                                                }
-                                                            }}
-                                                            className="primary-btn"
-                                                            style={{ width: 'auto', padding: '0.6rem 1.25rem', height: '38px', fontSize: '0.85rem', background: 'var(--accent-color)' }}
-                                                        >
-                                                            Assign
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                        {/* Filter Bar */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', background: 'rgba(0,0,0,0.2)', padding: '1rem 1.25rem', borderRadius: '12px', marginBottom: '1.5rem', border: '1px solid var(--card-border)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: '600', marginRight: '0.5rem' }}>Filter Category:</span>
+                                <button
+                                    onClick={() => setAssignmentCategory('all')}
+                                    style={{
+                                        padding: '0.35rem 0.85rem', borderRadius: '8px', fontSize: '0.85rem', cursor: 'pointer', border: 'none',
+                                        background: assignmentCategory === 'all' ? 'var(--accent-color)' : 'rgba(255,255,255,0.05)',
+                                        color: '#fff', fontWeight: assignmentCategory === 'all' ? '600' : 'normal', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    All ({atrRequests.length + personalDeliveries.length})
+                                </button>
+                                <button
+                                    onClick={() => setAssignmentCategory('atr')}
+                                    style={{
+                                        padding: '0.35rem 0.85rem', borderRadius: '8px', fontSize: '0.85rem', cursor: 'pointer', border: 'none',
+                                        background: assignmentCategory === 'atr' ? '#3b82f6' : 'rgba(255,255,255,0.05)',
+                                        color: '#fff', fontWeight: assignmentCategory === 'atr' ? '600' : 'normal', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    ✈️ ATR Rides ({atrRequests.length})
+                                </button>
+                                <button
+                                    onClick={() => setAssignmentCategory('pd')}
+                                    style={{
+                                        padding: '0.35rem 0.85rem', borderRadius: '8px', fontSize: '0.85rem', cursor: 'pointer', border: 'none',
+                                        background: assignmentCategory === 'pd' ? '#a855f7' : 'rgba(255,255,255,0.05)',
+                                        color: '#fff', fontWeight: assignmentCategory === 'pd' ? '600' : 'normal', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    📦 Deliveries ({personalDeliveries.length})
+                                </button>
                             </div>
-                        )}
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: '600' }}>Status:</span>
+                                <select
+                                    value={assignmentStatus}
+                                    onChange={(e) => setAssignmentStatus(e.target.value)}
+                                    style={{ padding: '0.35rem 0.85rem', borderRadius: '8px', background: 'rgba(20,20,20,0.95)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
+                                >
+                                    <option value="all">All Statuses</option>
+                                    <option value="unassigned">Unassigned / Pending</option>
+                                    <option value="assigned">Assigned</option>
+                                    <option value="completed">Completed</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {loadingAtr || loadingPD ? (
+                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading requests and deliveries...</p>
+                        ) : (() => {
+                            // Build combined list
+                            const formattedAtrList = atrRequests.map(req => ({
+                                id: `atr-${req.atr_id}`,
+                                type: 'atr',
+                                refNumber: req.atr_number || `ATR-${req.atr_id}`,
+                                status: req.status,
+                                title: `ATR Passenger Travel: ${req.principal_passenger_name}`,
+                                subtitle: `${req.vehicle_type || 'Vehicle'} • ${req.required_date} @ ${req.required_time}`,
+                                details: [
+                                    { label: '👤 Passenger', val: `${req.principal_passenger_name} (${req.principal_passenger_designation || 'Staff'})` },
+                                    { label: '🚘 Vehicle Type', val: req.vehicle_type || 'Standard' },
+                                    { label: '📅 Date & Time', val: `${req.required_date} @ ${req.required_time}` },
+                                    { label: '💰 Est. Cost', val: `${req.estimated_cost || 0} LKR` }
+                                ],
+                                assignedRiderId: req.approved_by,
+                                rawItem: req
+                            }));
+
+                            const formattedPDList = personalDeliveries.map(pd => ({
+                                id: `pd-${pd.pd_id}`,
+                                type: 'pd',
+                                refNumber: `PD-${pd.pd_id}`,
+                                status: pd.status,
+                                title: `Package Delivery: ${pd.item_type || 'Parcel'}`,
+                                subtitle: `From: ${pd.pickup_address} ➔ To: ${pd.drop_address}`,
+                                details: [
+                                    { label: '📦 Item / Weight', val: `${pd.item_type || 'Parcel'} (${pd.item_weight || 'N/A'})` },
+                                    { label: '📍 Pickup', val: pd.pickup_address },
+                                    { label: '🏁 Dropoff', val: pd.drop_address },
+                                    { label: '👤 Sender/Receiver', val: `${pd.sender_name} (${pd.sender_phone}) ➔ ${pd.receiver_name}` },
+                                    { label: '📅 Scheduled', val: `${pd.requested_date || pd.scheduled_date || 'N/A'} @ ${pd.requested_time || pd.scheduled_time || 'N/A'}` }
+                                ],
+                                assignedRiderId: ridersList.find(r => r.staff_phone === pd.assigned_rider_nic || r.staff_email === pd.accepted_by)?.staff_id || (pd.assigned_rider_nic ? pd.assigned_rider_nic : null),
+                                assignedRiderName: pd.assigned_rider_nic || pd.accepted_by || null,
+                                rawItem: pd
+                            }));
+
+                            let combined = [];
+                            if (assignmentCategory === 'all') combined = [...formattedAtrList, ...formattedPDList];
+                            else if (assignmentCategory === 'atr') combined = formattedAtrList;
+                            else if (assignmentCategory === 'pd') combined = formattedPDList;
+
+                            if (assignmentStatus === 'unassigned') {
+                                combined = combined.filter(item => !item.assignedRiderId && item.status !== 'Completed' && item.status !== 'Assigned');
+                            } else if (assignmentStatus === 'assigned') {
+                                combined = combined.filter(item => item.assignedRiderId || item.status === 'Assigned');
+                            } else if (assignmentStatus === 'completed') {
+                                combined = combined.filter(item => item.status === 'Completed');
+                            }
+
+                            if (combined.length === 0) {
+                                return <p style={{ color: 'var(--text-secondary)', padding: '2rem 0' }}>No matching travel requests or package deliveries found for the selected filters.</p>;
+                            }
+
+                            return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                                    {combined.map((item) => {
+                                        const isAtr = item.type === 'atr';
+                                        const assignedRiderObj = typeof item.assignedRiderId === 'number'
+                                            ? ridersList.find(r => r.staff_id === item.assignedRiderId)
+                                            : ridersList.find(r => r.staff_phone === item.assignedRiderId || r.staff_email === item.assignedRiderId);
+
+                                        const riderDisplayName = assignedRiderObj ? assignedRiderObj.staff_name : (item.assignedRiderName || (typeof item.assignedRiderId === 'string' ? item.assignedRiderId : null));
+
+                                        return (
+                                            <div key={item.id} style={{
+                                                padding: '1.5rem',
+                                                background: isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)',
+                                                borderRadius: '16px',
+                                                border: isAtr ? '1px solid rgba(59, 130, 246, 0.15)' : '1px solid rgba(168, 85, 247, 0.15)',
+                                                display: 'flex',
+                                                flexWrap: 'wrap',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                gap: '1.5rem',
+                                                transition: 'all 0.3s ease',
+                                                textAlign: 'left'
+                                            }}
+                                                onMouseEnter={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.07)' : 'rgba(168, 85, 247, 0.07)'; }}
+                                                onMouseLeave={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)'; }}
+                                            >
+                                                <div style={{ flex: '1 1 350px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+                                                        <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fff', fontFamily: 'monospace', background: 'rgba(255,255,255,0.08)', padding: '0.2rem 0.6rem', borderRadius: '6px' }}>
+                                                            {item.refNumber}
+                                                        </span>
+                                                        <span style={{
+                                                            display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                                                            padding: '0.2rem 0.65rem', borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                            background: isAtr ? 'rgba(59, 130, 246, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                                                            color: isAtr ? '#60a5fa' : '#c084fc',
+                                                            border: isAtr ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(168, 85, 247, 0.3)'
+                                                        }}>
+                                                            {isAtr ? '✈️ ATR Travel Request' : '📦 Personal Package Delivery'}
+                                                        </span>
+                                                        <span style={{
+                                                            display: 'inline-block', padding: '0.2rem 0.65rem',
+                                                            background: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'rgba(16,185,129,0.1)' : item.status === 'Pending' || item.status === 'Accepted' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                                            color: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'var(--success)' : item.status === 'Pending' || item.status === 'Accepted' ? '#f59e0b' : 'var(--danger)',
+                                                            borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                            border: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'Pending' || item.status === 'Accepted' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                                        }}>{item.status}</span>
+                                                    </div>
+
+                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                        {item.details.map((d, idx) => (
+                                                            <div key={idx}><strong>{d.label}:</strong> <span style={{ color: '#e5e7eb' }}>{d.val}</span></div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                                                    {riderDisplayName ? (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '0.5rem 1rem', borderRadius: '12px' }}>
+                                                            <div style={{ textAlign: 'left' }}>
+                                                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: 0 }}>Assigned Rider</p>
+                                                                <p style={{ color: '#fff', fontSize: '0.9rem', fontWeight: '600', margin: 0 }}>👤 {riderDisplayName}</p>
+                                                            </div>
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (isAtr) handleAssignRider(item.rawItem.atr_id, null);
+                                                                    else handleAssignRiderToPD(item.rawItem.pd_id, null);
+                                                                }}
+                                                                className="secondary-btn"
+                                                                style={{ padding: '0.35rem 0.6rem', height: 'auto', fontSize: '0.8rem', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.15)', cursor: 'pointer', borderRadius: '8px' }}
+                                                            >
+                                                                Unassign
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                            <div className="input-wrapper" style={{ position: 'relative', width: '220px', margin: 0 }}>
+                                                                <select
+                                                                    id={`select-rider-${item.id}`}
+                                                                    defaultValue=""
+                                                                    style={{ width: '100%', padding: '0.6rem 2rem 0.6rem 0.85rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                                                >
+                                                                    <option value="" disabled>Select Rider to Assign...</option>
+                                                                    {ridersList.map(r => (
+                                                                        <option key={r.staff_id} value={r.staff_id}>
+                                                                            {r.staff_name} ({r.availability_status || 'Available'})
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                                <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }}></i>
+                                                            </div>
+                                                            <button
+                                                                onClick={() => {
+                                                                    const sel = document.getElementById(`select-rider-${item.id}`);
+                                                                    if (sel && sel.value) {
+                                                                        if (isAtr) handleAssignRider(item.rawItem.atr_id, sel.value);
+                                                                        else handleAssignRiderToPD(item.rawItem.pd_id, sel.value);
+                                                                    } else {
+                                                                        alert('Please select a rider from the dropdown first.');
+                                                                    }
+                                                                }}
+                                                                className="primary-btn"
+                                                                style={{ width: 'auto', padding: '0.6rem 1.25rem', height: '38px', fontSize: '0.85rem', background: isAtr ? 'var(--accent-color)' : '#a855f7' }}
+                                                            >
+                                                                Assign Rider
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })()}
                     </div>
                 </div>
             )}
@@ -1654,8 +1836,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                             transition: 'all 0.3s ease',
                                             textAlign: 'left'
                                         }}
-                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
-                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
                                         >
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
                                                 <div style={{ flex: '1 1 300px' }}>
