@@ -37,3 +37,7 @@ ALTER TABLE personal_delivery ADD COLUMN IF NOT EXISTS schedule_token VARCHAR(25
 ALTER TABLE personal_delivery ADD COLUMN IF NOT EXISTS assigned_rider_nic VARCHAR(20) REFERENCES rider(nic);
 ALTER TABLE personal_delivery ADD COLUMN IF NOT EXISTS accepted_by VARCHAR(150);
 ALTER TABLE personal_delivery ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMP;
+
+-- 3. Update approved_by column in atr table to support string NICs (e.g. 12-digit NICs) and remove legacy staff FK constraint
+ALTER TABLE atr DROP CONSTRAINT IF EXISTS atr_approved_by_fkey;
+ALTER TABLE atr ALTER COLUMN approved_by TYPE VARCHAR(20) USING approved_by::VARCHAR(20);

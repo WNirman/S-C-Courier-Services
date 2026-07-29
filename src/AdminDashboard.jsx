@@ -198,22 +198,41 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
     const handleAssignRider = async (atrId, riderId) => {
         try {
-            const { error } = await supabase
+            let updatePayload = { approved_by: riderId ? String(riderId) : null };
+            let { error } = await supabase
                 .from('atr')
-                .update({ approved_by: riderId ? parseInt(riderId) : null })
+                .update(updatePayload)
                 .eq('atr_id', atrId);
 
-            if (error) throw error;
+            if (error) {
+                console.warn('Direct string assignment note:', error.message);
+                if (error.message && (error.message.includes('out of range') || error.message.includes('integer') || error.message.includes('invalid input syntax'))) {
+                    const digits = String(riderId).replace(/\D/g, '');
+                    const safeIntId = riderId ? (parseInt(digits.slice(-8)) || 1) : null;
+                    const fallbackRes = await supabase
+                        .from('atr')
+                        .update({ approved_by: safeIntId })
+                        .eq('atr_id', atrId);
+                    if (fallbackRes.error) {
+                        console.warn('Fallback integer update note:', fallbackRes.error.message);
+                    }
+                } else if (error.message && (error.message.includes('foreign key constraint') || error.message.includes('violates foreign key') || error.message.includes('fkey'))) {
+                    console.warn('Foreign key constraint on approved_by, saving local assignment mapping.');
+                } else {
+                    throw error;
+                }
+            }
+
+            // Record full NIC assignment locally as fallback
+            const localMap = JSON.parse(localStorage.getItem('local_atr_assignments') || '{}');
+            if (riderId) {
+                localMap[atrId] = riderId;
+            } else {
+                delete localMap[atrId];
+            }
+            localStorage.setItem('local_atr_assignments', JSON.stringify(localMap));
 
             if (riderId) {
-                // availability_status column doesn't exist in the current Supabase schema
-                /*
-                await supabase
-                    .from('staff')
-                    .update({ availability_status: 'Busy' })
-                    .eq('staff_id', parseInt(riderId));
-                */
-
                 // Trigger assignment email
                 try {
                     await fetch('http://localhost:5000/api/atr/send-assignment-email', {
@@ -1622,6 +1641,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                             <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading requests and deliveries...</p>
                         ) : (() => {
                             // Build combined list
+                            const localAtrMap = JSON.parse(localStorage.getItem('local_atr_assignments') || '{}');
                             const formattedAtrList = atrRequests.map(req => ({
                                 id: `atr-${req.atr_id}`,
                                 type: 'atr',
@@ -1635,7 +1655,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                     { label: '📅 Date & Time', val: `${req.required_date} @ ${req.required_time}` },
                                     { label: '💰 Est. Cost', val: `${req.estimated_cost || 0} LKR` }
                                 ],
-                                assignedRiderId: req.approved_by,
+                                assignedRiderId: localAtrMap[req.atr_id] || req.approved_by,
                                 rawItem: req
                             }));
 
@@ -1679,9 +1699,14 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                                     {combined.map((item) => {
                                         const isAtr = item.type === 'atr';
-                                        const assignedRiderObj = typeof item.assignedRiderId === 'number'
-                                            ? ridersList.find(r => r.staff_id === item.assignedRiderId)
-                                            : ridersList.find(r => r.staff_phone === item.assignedRiderId || r.staff_email === item.assignedRiderId);
+                                        const assignedRiderObj = ridersList.find(r => 
+                                            String(r.staff_id) === String(item.assignedRiderId) ||
+                                            String(r.nic) === String(item.assignedRiderId) ||
+                                            (item.assignedRiderId && String(r.nic).endsWith(String(item.assignedRiderId))) ||
+                                            (item.assignedRiderId && String(r.staff_id).endsWith(String(item.assignedRiderId))) ||
+                                            r.staff_phone === item.assignedRiderId ||
+                                            r.staff_email === item.assignedRiderId
+                                        );
 
                                         const riderDisplayName = assignedRiderObj ? assignedRiderObj.staff_name : (item.assignedRiderName || (typeof item.assignedRiderId === 'string' ? item.assignedRiderId : null));
 

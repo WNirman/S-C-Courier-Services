@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS atr (
     actual_distance DECIMAL(8,2),
     actual_cost DECIMAL(10,2),
     status VARCHAR(100),
-    approved_by INT,
+    approved_by VARCHAR(20),
     approval_date TIMESTAMP,
     approval_token VARCHAR(255),
     client_approver_id INT,

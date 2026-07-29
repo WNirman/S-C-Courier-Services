@@ -65,11 +65,18 @@ const StaffDashboard = ({ loggedInUser }) => {
                     .select('*')
                     .order('atr_id', { ascending: false });
 
-                const myRides = (atrData || []).filter(a => 
-                    a.approved_by === riderIdFilter || 
-                    a.approved_by === parseInt(riderIdFilter) ||
-                    a.approved_by === profile.nic
-                );
+                const localAtrMap = JSON.parse(localStorage.getItem('local_atr_assignments') || '{}');
+                const myRides = (atrData || []).filter(a => {
+                    const localRider = localAtrMap[a.atr_id];
+                    return (
+                        String(a.approved_by) === String(riderIdFilter) || 
+                        String(a.approved_by) === String(profile.nic) ||
+                        (a.approved_by && String(riderIdFilter).endsWith(String(a.approved_by))) ||
+                        (a.approved_by && String(profile.nic).endsWith(String(a.approved_by))) ||
+                        String(localRider) === String(riderIdFilter) ||
+                        String(localRider) === String(profile.nic)
+                    );
+                });
 
                 setAssignedRides(myRides);
             }

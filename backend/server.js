@@ -859,13 +859,20 @@ app.post('/api/atr/send-assignment-email', async (req, res) => {
       return res.status(400).json({ error: 'No customer email found for this ATR' });
     }
 
-    // Fetch rider details
-    const riderRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/staff?staff_id=eq.${riderId}&select=*`,
+    // Fetch rider details (from public.rider or public.staff)
+    let riderRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/rider?nic=eq.${encodeURIComponent(riderId)}&select=*`,
       { headers }
     );
-    const riderRows = await riderRes.json();
-    if (!riderRows || riderRows.length === 0) {
+    let riderRows = await riderRes.json();
+    if (!Array.isArray(riderRows) || riderRows.length === 0) {
+      riderRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/staff?staff_id=eq.${encodeURIComponent(riderId)}&select=*`,
+        { headers }
+      );
+      riderRows = await riderRes.json();
+    }
+    if (!Array.isArray(riderRows) || riderRows.length === 0) {
       return res.status(404).json({ error: 'Assigned rider not found' });
     }
     const rider = riderRows[0];
@@ -897,8 +904,8 @@ app.post('/api/atr/send-assignment-email', async (req, res) => {
             
             <div class="rider-card">
               <h3 style="margin-top: 0; color: #374151; font-size: 18px;">Assigned Rider Details:</h3>
-              <p><strong>Name:</strong> ${rider.staff_name}</p>
-              <p><strong>Phone:</strong> ${rider.staff_phone}</p>
+              <p><strong>Name:</strong> ${rider.staff_name || rider.Name || rider.name || 'Rider'}</p>
+              <p><strong>Phone:</strong> ${rider.staff_phone || rider.Phone_Number || rider.phone_number || 'N/A'}</p>
             </div>
             
             <p style="font-size: 15px; color: #4b5563;">Your rider will contact you soon or you can reach out to them directly. Thank you for choosing SC Courier Services!</p>
