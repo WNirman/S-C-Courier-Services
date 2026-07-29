@@ -55,7 +55,12 @@ CREATE TABLE STAFF(
     staff_role VARCHAR(100),
     staff_active_status VARCHAR(100),
     PRIMARY KEY (staff_id),
-    FOREIGN KEY(branch_ID) REFERENCES BRANCH(branch_ID)
+    FOREIGN KEY(branch_ID) REFERENCES BRANCH(branch_ID),
+    staff_email VARCHAR(150) UNIQUE,
+    staff_password TEXT,
+    staff_dob DATE,
+    personal_email VARCHAR(150),
+    staff_address TEXT
 );
 
 

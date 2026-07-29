@@ -99,7 +99,9 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     // Registration Form Fields State
     const [regFullName, setRegFullName] = useState('');
     const [regPhone, setRegPhone] = useState('');
-    const [regRole, setRegRole] = useState('staff');
+    const [regEmail, setRegEmail] = useState('');
+    const [regDob, setRegDob] = useState('');
+    const [regAddress, setRegAddress] = useState('');
     const [regBranchId, setRegBranchId] = useState('');
 
     // Success Screen State
@@ -211,7 +213,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         e.preventDefault();
         
         // 1. Validate all required fields
-        if (!regFullName.trim() || !regPhone.trim() || !regRole || !regBranchId) {
+        if (!regFullName.trim() || !regPhone.trim() || !regEmail.trim() || !regDob || !regAddress.trim()) {
             alert('All fields are required');
             return;
         }
@@ -219,6 +221,13 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         const phoneTrimmed = regPhone.trim();
         if (phoneTrimmed.length < 9 || phoneTrimmed.length > 15 || !/^\+?[0-9]+$/.test(phoneTrimmed)) {
             alert('Invalid contact number format (9 to 15 digits expected)');
+            return;
+        }
+
+        const emailTrimmed = regEmail.trim();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(emailTrimmed)) {
+            alert('Invalid personal email format');
             return;
         }
 
@@ -281,11 +290,14 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 .insert({
                     staff_name: regFullName.trim(),
                     staff_phone: phoneTrimmed,
-                    branch_id: parseInt(regBranchId),
-                    staff_role: regRole,
+                    branch_id: parseInt(regBranchId) || 1,
+                    staff_role: 'staff',
                     staff_active_status: true,
                     staff_email: generatedUsername,
-                    staff_password: hashedPassword
+                    staff_password: hashedPassword,
+                    staff_dob: regDob,
+                    personal_email: emailTrimmed,
+                    staff_address: regAddress.trim()
                 });
 
             if (insertErr) throw insertErr;
@@ -297,13 +309,43 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             setRegisteredCredentials({
                 username: generatedUsername,
                 tempPassword,
-                staffName: regFullName.trim()
+                staffName: regFullName.trim(),
+                personalEmail: emailTrimmed
+            });
+
+            // Set destination email address for manual resend UI
+            setSendEmailAddress(emailTrimmed);
+
+            // Automatically send credentials to the registered personal email address
+            fetch('http://localhost:5000/api/admin/send-staff-credentials', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    personalEmail: emailTrimmed,
+                    username: generatedUsername,
+                    password: tempPassword,
+                    staffName: regFullName.trim()
+                }),
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('Automatic credentials email status:', data.message || 'Sent');
+                if (data.previewUrl) {
+                    console.log('Ethereal Mail Preview:', data.previewUrl);
+                }
+            })
+            .catch(err => {
+                console.error('Failed to send automatic credentials email:', err);
             });
 
             // Reset inputs
             setRegFullName('');
             setRegPhone('');
-            setRegRole('staff');
+            setRegEmail('');
+            setRegDob('');
+            setRegAddress('');
         } catch (err) {
             console.error('Assign staff error:', err);
             alert('Failed to assign staff: ' + (err.message || err));
@@ -318,7 +360,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         try {
             const { data, error } = await supabase
                 .from('staff')
-                .select('staff_id, staff_name, staff_email, staff_phone, staff_role, staff_active_status, branch_id')
+                .select('staff_id, staff_name, staff_email, staff_phone, staff_role, staff_active_status, branch_id, staff_dob, personal_email, staff_address')
                 .eq('staff_email', email)
                 .single();
 
@@ -813,40 +855,51 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                         />
                                     </div>
                                 </div>
+                                <div className="form-control" style={{ marginBottom: 0 }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Email Address (Personal)</label>
+                                    <div className="input-wrapper" style={{ position: 'relative' }}>
+                                        <i className='bx bx-envelope input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                        <input
+                                            type="email"
+                                            placeholder="e.g. john@gmail.com"
+                                            required
+                                            value={regEmail}
+                                            onChange={(e) => setRegEmail(e.target.value)}
+                                            disabled={assignStatus === 'assigning'}
+                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                        />
+                                    </div>
+                                </div>
                             </div>
 
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
                                 <div className="form-control" style={{ marginBottom: 0 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Staff Role</label>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Date of Birth</label>
                                     <div className="input-wrapper" style={{ position: 'relative' }}>
-                                        <i className='bx bx-briefcase input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
-                                        <select
-                                            value={regRole}
-                                            onChange={(e) => setRegRole(e.target.value)}
+                                        <i className='bx bx-calendar input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
+                                        <input
+                                            type="date"
+                                            required
+                                            value={regDob}
+                                            onChange={(e) => setRegDob(e.target.value)}
                                             disabled={assignStatus === 'assigning'}
-                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
-                                        >
-                                            <option value="staff">Staff</option>
-                                            <option value="admin">Admin</option>
-                                        </select>
-                                        <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
+                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', colorScheme: 'dark' }}
+                                        />
                                     </div>
                                 </div>
                                 <div className="form-control" style={{ marginBottom: 0 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Branch</label>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Residential Address</label>
                                     <div className="input-wrapper" style={{ position: 'relative' }}>
-                                        <i className='bx bx-buildings input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
-                                        <select
-                                            value={regBranchId}
-                                            onChange={(e) => setRegBranchId(e.target.value)}
+                                        <i className='bx bx-home input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. 123 Main Street, Colombo 03"
+                                            required
+                                            value={regAddress}
+                                            onChange={(e) => setRegAddress(e.target.value)}
                                             disabled={assignStatus === 'assigning'}
-                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
-                                        >
-                                            {branches.map((b) => (
-                                                <option key={b.branch_id} value={b.branch_id}>{b.branch_location}</option>
-                                            ))}
-                                        </select>
-                                        <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
+                                            style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -1074,6 +1127,21 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                             <h4 style={{ color: selectedStaff.staff_active_status ? 'var(--success)' : 'var(--danger)' }}>
                                 {selectedStaff.staff_active_status ? 'Active' : 'Inactive'}
                             </h4>
+                        </div>
+
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Date of Birth</p>
+                            <h4 style={{ color: '#fff' }}>{selectedStaff.staff_dob || 'N/A'}</h4>
+                        </div>
+
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Personal Email</p>
+                            <h4 style={{ color: '#fff', fontSize: '0.95rem', wordBreak: 'break-all' }}>{selectedStaff.personal_email || 'N/A'}</h4>
+                        </div>
+
+                        <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)', gridColumn: 'span 2' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Residential Address</p>
+                            <h4 style={{ color: '#fff', fontWeight: 'normal', lineHeight: '1.4' }}>{selectedStaff.staff_address || 'N/A'}</h4>
                         </div>
                     </div>
                 </div>

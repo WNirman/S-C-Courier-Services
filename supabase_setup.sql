@@ -59,7 +59,10 @@ CREATE TABLE IF NOT EXISTS staff(
     staff_active_status BOOLEAN,
     FOREIGN KEY(branch_id) REFERENCES branch(branch_id),
     staff_email VARCHAR(150) UNIQUE,
-    staff_password TEXT
+    staff_password TEXT,
+    staff_dob DATE,
+    personal_email VARCHAR(150),
+    staff_address TEXT
 );
 
 CREATE TABLE IF NOT EXISTS invoice (
@@ -263,4 +266,10 @@ CREATE TABLE IF NOT EXISTS personal_delivery (
 ALTER TABLE personal_delivery ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow anon all on personal_delivery"
     ON personal_delivery FOR ALL USING (true);
+
+-- Migration to add new fields to Staff table
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS staff_dob DATE;
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS personal_email VARCHAR(150);
+ALTER TABLE staff ADD COLUMN IF NOT EXISTS staff_address TEXT;
+
 

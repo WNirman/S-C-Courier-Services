@@ -55,7 +55,10 @@ CREATE TABLE Staff(
     staff_active_status BOOLEAN,
     FOREIGN KEY(branch_ID) REFERENCES Branch(branch_ID),
 	staff_email VARCHAR(150) UNIQUE,
-	staff_password TEXT
+	staff_password TEXT,
+    staff_dob DATE,
+    personal_email VARCHAR(150),
+    staff_address TEXT
 );
 
 
@@ -174,3 +177,9 @@ CREATE TABLE Rider (
     Vehicle_No VARCHAR(50),
     Driver_Licence_No VARCHAR(50)
 );
+
+-- Migration to add new fields to Staff table
+ALTER TABLE Staff ADD COLUMN IF NOT EXISTS staff_dob DATE;
+ALTER TABLE Staff ADD COLUMN IF NOT EXISTS personal_email VARCHAR(150);
+ALTER TABLE Staff ADD COLUMN IF NOT EXISTS staff_address TEXT;
+

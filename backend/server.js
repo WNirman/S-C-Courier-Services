@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -10,10 +11,35 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// PostgreSQL Connection Pool
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+// PostgreSQL Connection Pool Configuration (Robust to URL special characters)
+let connectionConfig;
+if (process.env.DATABASE_URL) {
+  try {
+    const url = require('url');
+    const params = url.parse(process.env.DATABASE_URL);
+    const auth = params.auth ? params.auth.split(':') : [];
+    connectionConfig = {
+      user: auth[0] ? decodeURIComponent(auth[0]) : undefined,
+      password: auth[1] ? decodeURIComponent(auth[1]) : undefined,
+      host: params.hostname,
+      port: params.port || 5432,
+      database: params.pathname ? params.pathname.split('/')[1] : undefined,
+      ssl: process.env.DATABASE_URL.includes('supabase') ? { rejectUnauthorized: false } : false
+    };
+  } catch (err) {
+    console.error('Error parsing DATABASE_URL, falling back to raw connectionString:', err.message);
+    connectionConfig = { connectionString: process.env.DATABASE_URL };
+  }
+} else {
+  connectionConfig = {
+    host: 'localhost',
+    port: 5432,
+    user: 'postgres',
+    database: 'sc_courier'
+  };
+}
+
+const pool = new Pool(connectionConfig);
 
 pool.connect((err) => {
   if (err) {
@@ -130,14 +156,20 @@ app.get('/api/admin/staff', async (req, res) => {
 // Admin Route: Assign a new staff member (simplified registration form)
 app.post('/api/admin/staff', async (req, res) => {
   try {
-    const { name, phone, role, branchId } = req.body;
-    if (!name || !phone || !role || !branchId) {
-      return res.status(400).json({ error: 'All fields are required' });
+    const { name, phone, email, dob, address } = req.body;
+    if (!name || !phone || !email || !dob || !address) {
+      return res.status(400).json({ error: 'All fields (name, phone, email, dob, address) are required' });
     }
 
     const phoneTrimmed = phone.trim();
     if (phoneTrimmed.length < 9 || phoneTrimmed.length > 15 || !/^\+?[0-9]+$/.test(phoneTrimmed)) {
       return res.status(400).json({ error: 'Invalid contact number format' });
+    }
+
+    const emailTrimmed = email.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emailTrimmed)) {
+      return res.status(400).json({ error: 'Invalid personal email format' });
     }
 
     // Check duplicate phone in Staff table
@@ -182,19 +214,36 @@ app.post('/api/admin/staff', async (req, res) => {
     const crypto = require('crypto');
     const hashedPassword = crypto.createHash('sha256').update(tempPassword).digest('hex');
 
+    // Get the first branch ID from Branch table to default it
+    const branchCheck = await pool.query('SELECT branch_id FROM Branch LIMIT 1');
+    const defaultBranchId = branchCheck.rows.length > 0 ? branchCheck.rows[0].branch_id : 1;
+
     // Insert staff
     const result = await pool.query(
       `INSERT INTO Staff (
         staff_name, staff_phone, branch_id, staff_role, staff_active_status, 
-        staff_email, staff_password
-      ) VALUES ($1, $2, $3, $4, true, $5, $6) RETURNING *`,
-      [name, phoneTrimmed, branchId, role, generatedUsername, hashedPassword]
+        staff_email, staff_password, staff_dob, personal_email, staff_address
+      ) VALUES ($1, $2, $3, 'staff', true, $4, $5, $6, $7, $8) RETURNING *`,
+      [name, phoneTrimmed, defaultBranchId, generatedUsername, hashedPassword, dob, emailTrimmed, address.trim()]
     );
+
+    // Automatically send credentials to the personal email address
+    let emailSent = false;
+    let previewUrl = null;
+    try {
+      const emailResult = await sendCredentialsEmail(emailTrimmed, generatedUsername, tempPassword, name);
+      emailSent = true;
+      previewUrl = emailResult.previewUrl;
+    } catch (mailErr) {
+      console.error('Failed to send automatic credentials email inside staff registration endpoint:', mailErr);
+    }
 
     res.json({
       staff: result.rows[0],
       generatedUsername,
-      tempPassword
+      tempPassword,
+      emailSent,
+      previewUrl
     });
   } catch (err) {
     console.error(err);
@@ -202,13 +251,8 @@ app.post('/api/admin/staff', async (req, res) => {
   }
 });
 
-// Admin Route: Send generated credentials via email
-app.post('/api/admin/send-staff-credentials', async (req, res) => {
-  const { personalEmail, username, password, staffName } = req.body;
-  if (!personalEmail || !username || !password) {
-    return res.status(400).json({ error: 'Missing personalEmail, username, or password' });
-  }
-
+// Helper to send credentials email
+const sendCredentialsEmail = async (personalEmail, username, password, staffName) => {
   const mailOptions = {
     from: `"SC Courier Services" <${process.env.SMTP_USER || 'no-reply@sccourier.com'}>`,
     to: personalEmail,
@@ -243,13 +287,24 @@ app.post('/api/admin/send-staff-credentials', async (req, res) => {
     `
   };
 
+  if (!transporter) {
+    await setupTransporter();
+  }
+  const info = await transporter.sendMail(mailOptions);
+  const previewUrl = nodemailer.getTestMessageUrl(info);
+  return { info, previewUrl };
+};
+
+// Admin Route: Send generated credentials via email
+app.post('/api/admin/send-staff-credentials', async (req, res) => {
+  const { personalEmail, username, password, staffName } = req.body;
+  if (!personalEmail || !username || !password) {
+    return res.status(400).json({ error: 'Missing personalEmail, username, or password' });
+  }
+
   try {
-    if (!transporter) {
-      await setupTransporter();
-    }
-    const info = await transporter.sendMail(mailOptions);
-    const previewUrl = nodemailer.getTestMessageUrl(info);
-    res.json({ message: 'Email sent successfully!', previewUrl });
+    const emailResult = await sendCredentialsEmail(personalEmail, username, password, staffName);
+    res.json({ message: 'Email sent successfully!', previewUrl: emailResult.previewUrl });
   } catch (err) {
     console.error('Error sending credentials email:', err);
     res.status(500).json({ error: 'Failed to send credentials email. Check SMTP configuration.' });
