@@ -930,6 +930,192 @@ body::before {
     margin-top: 0.3rem;
 }
 
+/* ATR Reference Number Auto-format & Suggestions */
+.atr-ref-form-group .atr-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.45rem;
+}
+
+.atr-ref-form-group .atr-label-row label {
+    margin-bottom: 0;
+}
+
+.atr-ref-valid-badge,
+.atr-ref-pattern-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    padding: 0.15rem 0.55rem;
+    border-radius: 20px;
+    animation: fadeInScale 0.2s ease-out;
+}
+
+.atr-ref-valid-badge {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.3);
+}
+
+.atr-ref-invalid-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    padding: 0.15rem 0.55rem;
+    border-radius: 20px;
+    animation: fadeInScale 0.2s ease-out;
+}
+
+.atr-input-with-addon {
+    position: relative;
+}
+
+.atr-input-with-addon input {
+    padding-right: 6.2rem;
+}
+
+.atr-input-addon-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.7rem;
+    border-radius: 8px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.atr-input-addon-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-50%) scale(1.02);
+}
+
+.atr-input-addon-btn.format-active {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.3) 0%, rgba(59, 130, 246, 0.3) 100%);
+    border-color: rgba(168, 85, 247, 0.5);
+    color: #e9d5ff;
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.25);
+    animation: pulseSubtle 1.8s infinite;
+}
+
+.atr-input-addon-btn.format-active:hover {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.5) 0%, rgba(59, 130, 246, 0.5) 100%);
+    border-color: rgba(168, 85, 247, 0.7);
+}
+
+.atr-ref-suggestions {
+    margin-top: 0.45rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.atr-ref-chip-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.4rem 0.75rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 9px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s ease;
+}
+
+.atr-ref-chip-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
+.atr-ref-chip-btn.highlight {
+    background: linear-gradient(90deg, rgba(168, 85, 247, 0.12) 0%, rgba(59, 130, 246, 0.08) 100%);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #f3e8ff;
+}
+
+.atr-ref-chip-btn.highlight:hover {
+    background: linear-gradient(90deg, rgba(168, 85, 247, 0.2) 0%, rgba(59, 130, 246, 0.15) 100%);
+    border-color: rgba(168, 85, 247, 0.6);
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.2);
+}
+
+.atr-ref-chip-btn strong {
+    color: #fff;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.atr-ref-chip-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.15rem 0.45rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.atr-ref-chip-btn.highlight .atr-ref-chip-action {
+    background: rgba(168, 85, 247, 0.3);
+    color: #e9d5ff;
+}
+
+.atr-ref-hint {
+    font-size: 0.76rem;
+    color: rgba(255, 255, 255, 0.4);
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.1rem 0.2rem;
+}
+
+.atr-ref-hint code {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fdba74;
+    padding: 0.08rem 0.35rem;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.76rem;
+}
+
+@keyframes fadeInScale {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulseSubtle {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.82; }
+}
+
 /* ATR Status Badge */
 .atr-status-preview {
     display: inline-flex;

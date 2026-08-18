@@ -155,12 +155,16 @@ function App({ onNavigate }) {
     }, [loggedInUser]);
 
     // Registration State
+    const [accountType, setAccountType] = useState('Individual'); // 'Individual' | 'Corporate'
     const [custName, setCustName] = useState('');
     const [custEmail, setCustEmail] = useState('');
     const [custAddress, setCustAddress] = useState('');
     const [custPhone, setCustPhone] = useState('');
     const [custPassword, setCustPassword] = useState('');
     const [custConfirm, setCustConfirm] = useState('');
+    const [companyName, setCompanyName] = useState('');
+    const [companyAddress, setCompanyAddress] = useState('');
+    const [companyPhone, setCompanyPhone] = useState('');
     const [isRegistering, setIsRegistering] = useState(false);
     const [registerSuccess, setRegisterSuccess] = useState(false);
 
@@ -196,22 +200,164 @@ function App({ onNavigate }) {
         }, 1500);
     };
 
-    const handleTrackPackage = (e) => {
-        e.preventDefault();
-        if (!trackingNumber) return;
+    const handleTrackPackage = async (e) => {
+        if (e) e.preventDefault();
+        const query = trackingNumber.trim();
+        if (!query) return;
 
         setIsTracking(true);
         setTrackingResult(null);
 
-        setTimeout(() => {
-            setIsTracking(false);
+        try {
+            // 1. Check if it's a Personal Delivery (e.g. PD-1, 1, or matching phone)
+            const numericId = parseInt(query.replace(/\D/g, ''), 10);
+            
+            let pdMatch = null;
+            if (!isNaN(numericId)) {
+                const { data: pdData } = await supabase
+                    .from('personal_delivery')
+                    .select('*')
+                    .eq('pd_id', numericId);
+                if (pdData && pdData.length > 0) pdMatch = pdData[0];
+            }
+            if (!pdMatch) {
+                const { data: pdPhoneData } = await supabase
+                    .from('personal_delivery')
+                    .select('*')
+                    .or(`receiver_phone.eq.${query},receiver_nic.eq.${query},sender_phone.eq.${query}`);
+                if (pdPhoneData && pdPhoneData.length > 0) pdMatch = pdPhoneData[0];
+            }
+
+            if (pdMatch) {
+                const progressMap = {
+                    'Pending': 25,
+                    'Assigned': 45,
+                    'In Transit': 75,
+                    'Completed': 100,
+                    'Delivered': 100,
+                    'Cancelled': 0
+                };
+                const statusColorMap = {
+                    'Pending': '#f59e0b',
+                    'Assigned': '#3b82f6',
+                    'In Transit': '#38bdf8',
+                    'Completed': '#10b981',
+                    'Delivered': '#10b981',
+                    'Cancelled': '#ef4444'
+                };
+
+                let locationText = 'Order registered & awaiting rider dispatch';
+                if (pdMatch.status === 'Assigned') locationText = `Assigned to Rider • Preparing for pickup at ${pdMatch.pickup_address}`;
+                else if (pdMatch.status === 'In Transit') locationText = `In Transit • Moving towards ${pdMatch.drop_address}`;
+                else if (pdMatch.status === 'Completed' || pdMatch.status === 'Delivered') locationText = `Delivered safely to ${pdMatch.receiver_name} at ${pdMatch.drop_address}`;
+
+                setTrackingResult({
+                    found: true,
+                    type: 'Personal Package Delivery',
+                    id: `PD-${pdMatch.pd_id}`,
+                    status: pdMatch.status,
+                    statusColor: statusColorMap[pdMatch.status] || '#3b82f6',
+                    progress: progressMap[pdMatch.status] || 50,
+                    location: locationText,
+                    origin: pdMatch.pickup_address,
+                    destination: pdMatch.drop_address,
+                    sender: `${pdMatch.sender_name} (${pdMatch.sender_phone})`,
+                    receiver: `${pdMatch.receiver_name} (${pdMatch.receiver_phone})`,
+                    item: `${pdMatch.item_type} ${pdMatch.item_weight ? `(${pdMatch.item_weight})` : ''}`,
+                    date: `${pdMatch.requested_date} @ ${pdMatch.requested_time}`,
+                    rider: pdMatch.assigned_rider_nic ? `Assigned Rider: ${pdMatch.assigned_rider_nic}` : null
+                });
+                return;
+            }
+
+            // 2. Check in ATR (Authorization to Request)
+            let atrMatch = null;
+            const { data: atrData } = await supabase
+                .from('atr')
+                .select('*')
+                .or(`atr_number.ilike.%${query}%,atr_number.eq.${query}`);
+            if (atrData && atrData.length > 0) {
+                atrMatch = atrData[0];
+            } else if (!isNaN(numericId)) {
+                const { data: atrIdData } = await supabase
+                    .from('atr')
+                    .select('*')
+                    .eq('atr_id', numericId);
+                if (atrIdData && atrIdData.length > 0) atrMatch = atrIdData[0];
+            }
+
+            if (atrMatch) {
+                const progressMap = {
+                    'Pending': 20,
+                    'Approved': 45,
+                    'In Transit': 75,
+                    'Completed': 100,
+                    'Cancelled': 0
+                };
+                const statusColorMap = {
+                    'Pending': '#f59e0b',
+                    'Approved': '#3b82f6',
+                    'In Transit': '#38bdf8',
+                    'Completed': '#10b981',
+                    'Cancelled': '#ef4444'
+                };
+
+                let locationText = 'ATR request submitted, awaiting dispatch';
+                if (atrMatch.status === 'Approved') locationText = 'Approved • Vehicle scheduled for passenger pickup';
+                else if (atrMatch.status === 'In Transit') locationText = `Vehicle In Transit with Passenger ${atrMatch.principal_passenger_name}`;
+                else if (atrMatch.status === 'Completed') locationText = `Trip completed successfully (${atrMatch.actual_distance || atrMatch.estimated_distance || ''} km)`;
+
+                setTrackingResult({
+                    found: true,
+                    type: 'Corporate ATR Transport Request',
+                    id: atrMatch.atr_number,
+                    status: atrMatch.status,
+                    statusColor: statusColorMap[atrMatch.status] || '#3b82f6',
+                    progress: progressMap[atrMatch.status] || 50,
+                    location: locationText,
+                    passenger: `${atrMatch.principal_passenger_name} (${atrMatch.principal_passenger_designation || 'Staff'})`,
+                    vehicle: atrMatch.vehicle_type,
+                    purpose: atrMatch.purpose_of_travel,
+                    date: `${atrMatch.required_date} @ ${atrMatch.required_time}`,
+                    cost: atrMatch.actual_cost ? `${atrMatch.actual_cost} LKR (Actual)` : `${atrMatch.estimated_cost || 0} LKR (Est.)`
+                });
+                return;
+            }
+
+            // 3. Fallback demo sample IDs (for SC101000, SC100892, etc.)
+            const upperQuery = query.toUpperCase();
+            if (upperQuery.startsWith('SC')) {
+                setTrackingResult({
+                    found: true,
+                    type: 'Standard Parcel Delivery',
+                    id: upperQuery,
+                    status: upperQuery === 'SC100892' ? 'Delivered' : 'In Transit',
+                    statusColor: upperQuery === 'SC100892' ? '#10b981' : '#38bdf8',
+                    progress: upperQuery === 'SC100892' ? 100 : 70,
+                    location: upperQuery === 'SC100892' ? 'Delivered to recipient in Colombo' : 'In Transit • Colombo Central Sorting Hub',
+                    origin: 'Colombo Hub',
+                    destination: 'Destination Address',
+                    date: new Date().toLocaleDateString()
+                });
+                return;
+            }
+
+            // Not found
             setTrackingResult({
-                id: trackingNumber,
-                status: 'In Transit',
-                location: 'Distribution Center, NY',
-                progress: 60
+                found: false,
+                query: query,
+                message: `No shipment or ATR found matching "${query}". Please check your tracking number (e.g. PD-1, ATR-2026-001) or enter your receiver phone number.`
             });
-        }, 1200);
+        } catch (err) {
+            console.error('Error tracking package:', err);
+            setTrackingResult({
+                found: false,
+                query: query,
+                message: 'Unable to connect to tracking servers. Please try again in a moment.'
+            });
+        } finally {
+            setIsTracking(false);
+        }
     };
 
     const handleLogin = async (e) => {
@@ -312,7 +458,16 @@ function App({ onNavigate }) {
 
     const handleRegister = async (e) => {
         e.preventDefault();
-        if (!custName || !custEmail || !custPhone || !custPassword || !custConfirm) return;
+        if (!custEmail || !custPassword || !custConfirm) {
+            alert('Please fill all required fields');
+            return;
+        }
+
+        if (accountType === 'Corporate' && (!companyName.trim() || !companyAddress.trim())) {
+            alert('Please provide your Company Name and Location / Address');
+            return;
+        }
+
         if (custPassword !== custConfirm) {
             alert('Passwords do not match');
             return;
@@ -345,14 +500,40 @@ function App({ onNavigate }) {
                 return;
             }
 
-            // Insert new customer
+            // 1. If Corporate, insert company record into `company` table
+            let registeredCompId = null;
+            if (accountType === 'Corporate') {
+                const { data: compInsert, error: compErr } = await supabase
+                    .from('company')
+                    .insert({
+                        comp_name: companyName.trim(),
+                        comp_address: companyAddress.trim(),
+                        comp_phoneno: companyPhone.trim() || custPhone.trim() || 'N/A'
+                    })
+                    .select('comp_id');
+
+                if (!compErr && compInsert && compInsert.length > 0) {
+                    registeredCompId = compInsert[0].comp_id;
+                    // Add default departments for this corporate company
+                    await supabase.from('department').insert([
+                        { dep_name: 'Operations', comp_id: registeredCompId },
+                        { dep_name: 'Finance', comp_id: registeredCompId },
+                        { dep_name: 'Logistics', comp_id: registeredCompId },
+                        { dep_name: 'Administration', comp_id: registeredCompId },
+                        { dep_name: 'IT', comp_id: registeredCompId },
+                        { dep_name: 'Human Resources', comp_id: registeredCompId }
+                    ]);
+                }
+            }
+
+            // 2. Insert new customer record
             const { error } = await supabase.from('customer').insert({
-                cust_name: custName,
-                cust_email: custEmail,
-                cust_address: custAddress || 'N/A',
-                cust_phoneno: custPhone,
-                cust_type: 'Regular',
-                cust_password: custPassword,
+                cust_name: accountType === 'Corporate' ? `${custName.trim()} (${companyName.trim()})` : custName.trim(),
+                cust_email: custEmail.trim(),
+                cust_address: accountType === 'Corporate' ? companyAddress.trim() : (custAddress.trim() || 'N/A'),
+                cust_phoneno: custPhone.trim(),
+                cust_type: accountType,
+                cust_password: custPassword
             });
 
             if (error) throw error;
@@ -369,10 +550,14 @@ function App({ onNavigate }) {
                 setCustPhone('');
                 setCustPassword('');
                 setCustConfirm('');
+                setCompanyName('');
+                setCompanyAddress('');
+                setCompanyPhone('');
+                setAccountType('Individual');
             }, 1500);
         } catch (err) {
             console.error('Registration error:', err);
-            alert('Registration failed. Please try again.');
+            alert('Registration failed. Please try again: ' + err.message);
             setIsRegistering(false);
         }
     };
@@ -649,62 +834,170 @@ function App({ onNavigate }) {
                                     <p>Provide the details below</p>
                                 </div>
                                 <form onSubmit={handleRegister}>
+                                    {/* Account Type Selector */}
+                                    <div style={{ marginBottom: '1.25rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', fontWeight: 600 }}>
+                                            Select Account Type <span className="required">*</span>
+                                        </label>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setAccountType('Individual')}
+                                                style={{
+                                                    padding: '0.75rem',
+                                                    borderRadius: '12px',
+                                                    border: accountType === 'Individual' ? '2px solid var(--accent-color)' : '1px solid var(--card-border)',
+                                                    background: accountType === 'Individual' ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.03)',
+                                                    color: '#fff',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '0.3rem',
+                                                    transition: 'all 0.2s ease'
+                                                }}
+                                            >
+                                                <i className='bx bx-user' style={{ fontSize: '1.3rem', color: accountType === 'Individual' ? 'var(--accent-color)' : 'var(--text-secondary)' }}></i>
+                                                <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Personal Account</span>
+                                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>For individual package deliveries</span>
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => setAccountType('Corporate')}
+                                                style={{
+                                                    padding: '0.75rem',
+                                                    borderRadius: '12px',
+                                                    border: accountType === 'Corporate' ? '2px solid #a855f7' : '1px solid var(--card-border)',
+                                                    background: accountType === 'Corporate' ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255,255,255,0.03)',
+                                                    color: '#fff',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '0.3rem',
+                                                    transition: 'all 0.2s ease'
+                                                }}
+                                            >
+                                                <i className='bx bx-buildings' style={{ fontSize: '1.3rem', color: accountType === 'Corporate' ? '#a855f7' : 'var(--text-secondary)' }}></i>
+                                                <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Corporate / Business</span>
+                                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>For company transport & ATR requests</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Corporate Specific Fields */}
+                                    {accountType === 'Corporate' && (
+                                        <div style={{ background: 'rgba(168, 85, 247, 0.05)', border: '1px solid rgba(168, 85, 247, 0.2)', padding: '1rem', borderRadius: '12px', marginBottom: '1.25rem' }}>
+                                            <div style={{ fontSize: '0.82rem', color: '#c084fc', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                <i className='bx bx-building'></i> Company / Corporate Details
+                                            </div>
+                                            <div className="atr-form-row">
+                                                <div className="atr-form-group">
+                                                    <label>Company / Organization Name <span className="required">*</span></label>
+                                                    <div className="atr-input-with-icon">
+                                                        <i className='bx bx-building'></i>
+                                                        <input
+                                                            type="text"
+                                                            value={companyName}
+                                                            onChange={(e) => setCompanyName(e.target.value)}
+                                                            placeholder="e.g. Apex Holdings Ltd"
+                                                            required
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="atr-form-group">
+                                                    <label>Company Phone / Hotline</label>
+                                                    <div className="atr-input-with-icon">
+                                                        <i className='bx bx-phone-call'></i>
+                                                        <input
+                                                            type="tel"
+                                                            value={companyPhone}
+                                                            onChange={(e) => setCompanyPhone(e.target.value)}
+                                                            placeholder="e.g. +94 11 234 5678"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="atr-form-row single">
+                                                <div className="atr-form-group">
+                                                    <label>Company Head Office Location / Address <span className="required">*</span></label>
+                                                    <div className="atr-input-with-icon">
+                                                        <i className='bx bx-map-pin'></i>
+                                                        <input
+                                                            type="text"
+                                                            value={companyAddress}
+                                                            onChange={(e) => setCompanyAddress(e.target.value)}
+                                                            placeholder="e.g. No. 45, Galle Road, Colombo 03"
+                                                            required
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Personal / Officer Details */}
                                     <div className="atr-form-row">
                                         <div className="atr-form-group">
-                                            <label>Full Name <span className="required">*</span></label>
+                                            <label>{accountType === 'Corporate' ? 'Authorized Officer Name' : 'Full Name'} <span className="required">*</span></label>
                                             <div className="atr-input-with-icon">
                                                 <i className='bx bx-user'></i>
                                                 <input
                                                     type="text"
                                                     value={custName}
                                                     onChange={(e) => setCustName(e.target.value)}
-                                                    placeholder="Enter full name"
+                                                    placeholder={accountType === 'Corporate' ? 'Officer / Representative Name' : 'Enter your full name'}
                                                     required
                                                 />
                                             </div>
                                         </div>
                                         <div className="atr-form-group">
-                                            <label>Email <span className="required">*</span></label>
+                                            <label>{accountType === 'Corporate' ? 'Work Email' : 'Email Address'} <span className="required">*</span></label>
                                             <div className="atr-input-with-icon">
                                                 <i className='bx bx-envelope'></i>
                                                 <input
                                                     type="email"
                                                     value={custEmail}
                                                     onChange={(e) => setCustEmail(e.target.value)}
-                                                    placeholder="Enter email"
+                                                    placeholder={accountType === 'Corporate' ? 'officer@company.com' : 'Enter personal email'}
                                                     required
                                                 />
                                             </div>
                                         </div>
                                     </div>
+
                                     <div className="atr-form-row">
-                                        <div className="atr-form-group">
-                                            <label>Address <span className="required">*</span></label>
-                                            <div className="atr-input-with-icon">
-                                                <i className='bx bx-map'></i>
-                                                <input
-                                                    type="text"
-                                                    value={custAddress}
-                                                    onChange={(e) => setCustAddress(e.target.value)}
-                                                    placeholder="Enter address"
-                                                    required
-                                                />
+                                        {accountType === 'Individual' && (
+                                            <div className="atr-form-group">
+                                                <label>Personal Address <span className="required">*</span></label>
+                                                <div className="atr-input-with-icon">
+                                                    <i className='bx bx-map'></i>
+                                                    <input
+                                                        type="text"
+                                                        value={custAddress}
+                                                        onChange={(e) => setCustAddress(e.target.value)}
+                                                        placeholder="Enter your home address"
+                                                        required
+                                                    />
+                                                </div>
                                             </div>
-                                        </div>
+                                        )}
                                         <div className="atr-form-group">
-                                            <label>Phone Number <span className="required">*</span></label>
+                                            <label>{accountType === 'Corporate' ? 'Officer Mobile Number' : 'Phone Number'} <span className="required">*</span></label>
                                             <div className="atr-input-with-icon">
                                                 <i className='bx bx-phone'></i>
                                                 <input
                                                     type="tel"
                                                     value={custPhone}
                                                     onChange={(e) => setCustPhone(e.target.value)}
-                                                    placeholder="Enter phone number"
+                                                    placeholder="e.g. 077 123 4567"
                                                     required
                                                 />
                                             </div>
                                         </div>
                                     </div>
+
                                     <div className="atr-form-row">
                                         <div className="atr-form-group">
                                             <label>Password <span className="required">*</span></label>
@@ -714,7 +1007,7 @@ function App({ onNavigate }) {
                                                     type="password"
                                                     value={custPassword}
                                                     onChange={(e) => setCustPassword(e.target.value)}
-                                                    placeholder="Create a password"
+                                                    placeholder="Create a password (min. 6 characters)"
                                                     required
                                                 />
                                             </div>
@@ -834,20 +1127,61 @@ function App({ onNavigate }) {
                                             </div>
 
                                             {trackingResult && (
-                                                <div className="tracking-result">
-                                                    <div className="tracking-status">
-                                                        <div className="status-indicator"></div>
-                                                        <span>{trackingResult.status}</span>
-                                                    </div>
-                                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-                                                        <strong>ID:</strong> {trackingResult.id}
-                                                    </p>
-                                                    <p style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>
-                                                        <i className='bx bx-map pin' style={{ color: 'var(--accent-color)' }}></i> Currently at {trackingResult.location}
-                                                    </p>
-                                                    <div style={{ marginTop: '1rem', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px' }}>
-                                                        <div style={{ width: `${trackingResult.progress}%`, height: '100%', background: 'var(--success)', borderRadius: '2px' }}></div>
-                                                    </div>
+                                                <div className="tracking-result" style={{ animation: 'slideInUp 0.35s ease', marginTop: '1.25rem' }}>
+                                                    {trackingResult.found ? (
+                                                        <>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--accent-color)', background: 'rgba(59,130,246,0.1)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
+                                                                    {trackingResult.type}
+                                                                </span>
+                                                                <div className="tracking-status" style={{ margin: 0 }}>
+                                                                    <div className="status-indicator" style={{ background: trackingResult.statusColor }}></div>
+                                                                    <span style={{ color: trackingResult.statusColor, fontWeight: 600 }}>{trackingResult.status}</span>
+                                                                </div>
+                                                            </div>
+
+                                                            <p style={{ color: '#fff', fontSize: '1.05rem', fontWeight: 'bold', marginBottom: '0.5rem', fontFamily: 'monospace' }}>
+                                                                #{trackingResult.id}
+                                                            </p>
+
+                                                            <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--card-border)', borderRadius: '10px', padding: '0.75rem', marginBottom: '0.75rem', fontSize: '0.85rem' }}>
+                                                                <p style={{ color: '#e5e7eb', margin: '0 0 0.4rem 0', display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
+                                                                    <i className='bx bx-current-location' style={{ color: 'var(--accent-color)', marginTop: '2px' }}></i>
+                                                                    <span>{trackingResult.location}</span>
+                                                                </p>
+
+                                                                {trackingResult.origin && (
+                                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.25rem', marginTop: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.8rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.5rem' }}>
+                                                                        <div><strong>From:</strong> {trackingResult.origin}</div>
+                                                                        <div><strong>To:</strong> {trackingResult.destination}</div>
+                                                                        {trackingResult.receiver && <div><strong>Receiver:</strong> {trackingResult.receiver}</div>}
+                                                                        {trackingResult.item && <div><strong>Item:</strong> {trackingResult.item}</div>}
+                                                                    </div>
+                                                                )}
+
+                                                                {trackingResult.passenger && (
+                                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.25rem', marginTop: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.8rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.5rem' }}>
+                                                                        <div><strong>Passenger:</strong> {trackingResult.passenger}</div>
+                                                                        <div><strong>Vehicle:</strong> {trackingResult.vehicle}</div>
+                                                                        <div><strong>Purpose:</strong> {trackingResult.purpose}</div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>
+                                                                <span>Progress</span>
+                                                                <span>{trackingResult.progress}%</span>
+                                                            </div>
+                                                            <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                                <div style={{ width: `${trackingResult.progress}%`, height: '100%', background: trackingResult.statusColor, borderRadius: '3px', transition: 'width 0.6s ease' }}></div>
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <div style={{ padding: '0.5rem 0', color: '#f87171', fontSize: '0.88rem', display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
+                                                            <i className='bx bx-error-circle' style={{ fontSize: '1.1rem', marginTop: '1px' }}></i>
+                                                            <span>{trackingResult.message}</span>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
                                         </form>

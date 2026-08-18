@@ -11,6 +11,69 @@ const StaffDashboard = ({ loggedInUser }) => {
     const [loadingPD, setLoadingPD] = useState(false);
     const [acceptingPD, setAcceptingPD] = useState(null);
 
+    // Department & Company Lookup
+    const [deptCompMap, setDeptCompMap] = useState({});
+
+    // Completion Modal State for ATR
+    const [completingAtr, setCompletingAtr] = useState(null);
+    const [actualDistanceInput, setActualDistanceInput] = useState('');
+    const [actualCostInput, setActualCostInput] = useState('');
+    const [submittingComplete, setSubmittingComplete] = useState(false);
+
+    const handleOpenCompleteModal = (ride) => {
+        setCompletingAtr(ride);
+        const defaultDist = ride.estimated_distance ? String(ride.estimated_distance) : '';
+        setActualDistanceInput(defaultDist);
+        const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+        const rate = rateMap[ride.vehicle_type] || 100;
+        const estCost = defaultDist ? (parseFloat(defaultDist) * rate).toFixed(2) : (ride.estimated_cost ? String(ride.estimated_cost) : '');
+        setActualCostInput(estCost);
+    };
+
+    const handleActualDistChange = (val) => {
+        setActualDistanceInput(val);
+        if (completingAtr && val && !isNaN(parseFloat(val))) {
+            const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+            const rate = rateMap[completingAtr.vehicle_type] || 100;
+            setActualCostInput((parseFloat(val) * rate).toFixed(2));
+        }
+    };
+
+    const handleConfirmCompleteAtr = async (e) => {
+        e.preventDefault();
+        if (!completingAtr) return;
+        setSubmittingComplete(true);
+        try {
+            const { error } = await supabase
+                .from('atr')
+                .update({
+                    status: 'Completed',
+                    actual_distance: actualDistanceInput ? parseFloat(actualDistanceInput) : null,
+                    actual_cost: actualCostInput ? parseFloat(actualCostInput) : null
+                })
+                .eq('atr_id', completingAtr.atr_id);
+
+            if (error) throw error;
+
+            if (riderProfile) {
+                await supabase
+                    .from('staff')
+                    .update({ availability_status: 'Available' })
+                    .eq('staff_id', riderProfile.staff_id);
+                setRiderProfile(prev => ({ ...prev, availability_status: 'Available' }));
+            }
+
+            alert('Trip completed successfully with actual distance & cost recorded!');
+            setCompletingAtr(null);
+            loadRiderData();
+        } catch (err) {
+            console.error('Error completing trip:', err);
+            alert('Failed to complete trip: ' + err.message);
+        } finally {
+            setSubmittingComplete(false);
+        }
+    };
+
     const loadRiderData = async () => {
         if (!loggedInUser) return;
         setLoading(true);
@@ -77,6 +140,25 @@ const StaffDashboard = ({ loggedInUser }) => {
                         String(localRider) === String(profile.nic)
                     );
                 });
+
+                // 3. Load departments & companies for corporate lookup
+                try {
+                    const { data: deptData } = await supabase
+                        .from('department')
+                        .select('dep_id, dep_name, comp_id, company(comp_id, comp_name)');
+                    if (deptData) {
+                        const dMap = {};
+                        deptData.forEach(d => {
+                            dMap[d.dep_id] = {
+                                dep_name: d.dep_name,
+                                comp_name: d.company?.comp_name || 'SC Courier Services'
+                            };
+                        });
+                        setDeptCompMap(dMap);
+                    }
+                } catch (e) {
+                    console.warn('Note loading department relations:', e);
+                }
 
                 setAssignedRides(myRides);
             }
@@ -392,11 +474,16 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                 </span>
                                             </div>
                                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                                                <div><strong>Passenger:</strong> {ride.principal_passenger_name} ({ride.principal_passenger_designation})</div>
-                                                <div><strong>Vehicle Type:</strong> {ride.vehicle_type}</div>
-                                                <div><strong>Required Time:</strong> {ride.required_date} @ {ride.required_time}</div>
-                                                <div><strong>Purpose:</strong> {ride.purpose_of_travel}</div>
-                                                <div><strong>Est. Cost:</strong> {ride.estimated_cost} LKR</div>
+                                                <div><strong>🏢 Company:</strong> <span style={{ color: '#fff', fontWeight: 600 }}>{deptCompMap[ride.dep_id]?.comp_name || 'Corporate Client'}</span></div>
+                                                <div><strong>🏛️ Department:</strong> {deptCompMap[ride.dep_id]?.dep_name || 'Operations'}</div>
+                                                <div><strong>👤 Passenger:</strong> {ride.principal_passenger_name} ({ride.principal_passenger_designation})</div>
+                                                <div><strong>🚘 Vehicle:</strong> {ride.vehicle_type}</div>
+                                                <div><strong>📅 Date/Time:</strong> {ride.required_date} @ {ride.required_time}</div>
+                                                <div><strong>📍 Purpose:</strong> {ride.purpose_of_travel}</div>
+                                                <div><strong>💰 Est. Cost:</strong> {ride.estimated_cost} LKR</div>
+                                                {ride.actual_distance && (
+                                                    <div style={{ color: 'var(--success)', fontWeight: 600 }}><strong>✓ Actual:</strong> {ride.actual_distance} km ({ride.actual_cost || 0} LKR)</div>
+                                                )}
                                             </div>
                                         </div>
 
@@ -412,7 +499,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                                             )}
                                             {ride.status === 'In Transit' && (
                                                 <button
-                                                    onClick={() => handleUpdateRideStatus(ride.atr_id, 'Completed')}
+                                                    onClick={() => handleOpenCompleteModal(ride)}
                                                     className="primary-btn"
                                                     style={{ width: 'auto', background: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.35rem', height: '40px', padding: '0 1.25rem', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)' }}
                                                 >
@@ -579,6 +666,123 @@ const StaffDashboard = ({ loggedInUser }) => {
                     )}
                 </div>
             </div>
+
+            {/* ── ATR Trip Completion Modal ── */}
+            {completingAtr && (
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(5px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem'
+                }} onClick={() => setCompletingAtr(null)}>
+                    <div style={{
+                        background: '#18181b', border: '1px solid var(--card-border)', borderRadius: '20px',
+                        padding: '2rem', maxWidth: '480px', width: '100%', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+                        animation: 'scaleUp 0.3s ease'
+                    }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                            <h3 style={{ margin: 0, color: '#fff', fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <i className='bx bx-check-circle' style={{ color: 'var(--success)' }}></i> Complete ATR Trip
+                            </h3>
+                            <button onClick={() => setCompletingAtr(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.4rem' }}>
+                                <i className='bx bx-x'></i>
+                            </button>
+                        </div>
+
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+                            Record the actual trip distance traveled for <strong>{completingAtr.atr_number}</strong> ({completingAtr.principal_passenger_name}). This will be suggested directly to Admin & Staff.
+                        </p>
+
+                        {/* 1st Suggestion Badge */}
+                        {completingAtr.estimated_distance && (
+                            <div style={{
+                                background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.25)',
+                                padding: '0.75rem 1rem', borderRadius: '10px', marginBottom: '1.25rem',
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                            }}>
+                                <div>
+                                    <span style={{ fontSize: '0.75rem', color: '#60a5fa', fontWeight: 600, display: 'block' }}>1ST SUGGESTION (ESTIMATED)</span>
+                                    <strong style={{ color: '#fff', fontSize: '1.05rem' }}>{completingAtr.estimated_distance} km</strong>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => handleActualDistChange(String(completingAtr.estimated_distance))}
+                                    style={{
+                                        background: 'rgba(59, 130, 246, 0.2)', border: 'none', color: '#60a5fa',
+                                        padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600
+                                    }}
+                                >
+                                    Use Suggestion
+                                </button>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleConfirmCompleteAtr} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', textAlign: 'left' }}>
+                                <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600 }}>
+                                    Actual Traveled Distance (km) <span style={{ color: 'var(--danger)' }}>*</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    required
+                                    value={actualDistanceInput}
+                                    onChange={(e) => handleActualDistChange(e.target.value)}
+                                    placeholder="e.g. 26.50"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
+                                        borderRadius: '10px', padding: '0.75rem 1rem', color: '#fff', fontSize: '1rem', outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', textAlign: 'left' }}>
+                                <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600 }}>
+                                    Actual Trip Cost (LKR)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={actualCostInput}
+                                    onChange={(e) => setActualCostInput(e.target.value)}
+                                    placeholder="Auto-calculated from distance"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
+                                        borderRadius: '10px', padding: '0.75rem 1rem', color: '#fff', fontSize: '1rem', outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setCompletingAtr(null)}
+                                    className="secondary-btn"
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--card-border)', background: 'transparent', color: '#fff', cursor: 'pointer' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={submittingComplete || !actualDistanceInput}
+                                    style={{
+                                        flex: 2, padding: '0.75rem', borderRadius: '10px', border: 'none',
+                                        background: 'var(--success)', color: '#fff', fontWeight: 600, fontSize: '0.95rem',
+                                        cursor: submittingComplete ? 'not-allowed' : 'pointer', display: 'flex',
+                                        alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                                        boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)'
+                                    }}
+                                >
+                                    {submittingComplete ? (
+                                        <><i className='bx bx-loader-alt bx-spin'></i> Saving...</>
+                                    ) : (
+                                        <><i className='bx bx-check'></i> Confirm & Complete</>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

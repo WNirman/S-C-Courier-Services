@@ -16,19 +16,13 @@ const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
     // Profile state
     const [profilePic, setProfilePic] = useState(null);
     const [custName, setCustName] = useState('');
+    const [custType, setCustType] = useState('Individual'); // 'Individual' | 'Corporate'
     const [showModal, setShowModal] = useState(false);
     const [atrRequests, setAtrRequests] = useState([]);
     const [loadingAtr, setLoadingAtr] = useState(true);
     const [personalDeliveries, setPersonalDeliveries] = useState([]);
     const [loadingPersonal, setLoadingPersonal] = useState(true);
 
-    // Approver management state
-    const [approvers, setApprovers] = useState([]);
-    const [loadingApprovers, setLoadingApprovers] = useState(true);
-    const [approverForm, setApproverForm] = useState({ name: '', designation: '', email: '' });
-    const [approverFormError, setApproverFormError] = useState('');
-    const [savingApprover, setSavingApprover] = useState(false);
-    const [signatureBase64, setSignatureBase64] = useState('');
 
     // Cropper state
     const [imageSrc, setImageSrc] = useState(null);
@@ -48,19 +42,28 @@ const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
             const saved = localStorage.getItem(`profile_pic_${loggedInUser}`);
             if (saved) setProfilePic(saved);
 
-            // Fetch customer name from Supabase
+            // Fetch customer details from Supabase
             supabase
                 .from('customer')
-                .select('cust_name')
+                .select('cust_name, cust_type, cust_address')
                 .eq('cust_email', loggedInUser)
                 .single()
                 .then(({ data }) => {
-                    if (data && data.cust_name) setCustName(data.cust_name);
+                    if (data) {
+                        if (data.cust_name) setCustName(data.cust_name);
+                        if (data.cust_type) {
+                            setCustType(data.cust_type);
+                        } else if (data.cust_name && data.cust_name.includes('(')) {
+                            setCustType('Corporate');
+                        }
+                    }
                 });
         }
     }, [loggedInUser]);
 
-    // Fetch ATR requests from Supabase
+    // Fetch ATR requests and department/company mappings from Supabase
+    const [deptCompMap, setDeptCompMap] = useState({});
+
     useEffect(() => {
         if (loggedInUser) {
             const fetchAtrRequests = async () => {
@@ -74,6 +77,24 @@ const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
                     
                     if (error) throw error;
                     setAtrRequests(data || []);
+
+                    try {
+                        const { data: deptData } = await supabase
+                            .from('department')
+                            .select('dep_id, dep_name, comp_id, company(comp_id, comp_name)');
+                        if (deptData) {
+                            const dMap = {};
+                            deptData.forEach(d => {
+                                dMap[d.dep_id] = {
+                                    dep_name: d.dep_name,
+                                    comp_name: d.company?.comp_name || 'SC Courier Corporate Client'
+                                };
+                            });
+                            setDeptCompMap(dMap);
+                        }
+                    } catch (dErr) {
+                        console.warn('Note loading dept info:', dErr);
+                    }
                 } catch (err) {
                     console.error('Error fetching ATR requests:', err);
                 } finally {
@@ -112,82 +133,6 @@ const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
         }
     }, [loggedInUser]);
 
-    // Fetch approvers from Supabase
-    useEffect(() => {
-        if (loggedInUser) {
-            const fetchApprovers = async () => {
-                setLoadingApprovers(true);
-                try {
-                    const { data, error } = await supabase
-                        .from('client_approver')
-                        .select('*')
-                        .eq('cust_email', loggedInUser)
-                        .order('approver_id', { ascending: true });
-                    if (error) throw error;
-                    setApprovers(data || []);
-                } catch (err) {
-                    console.error('Error fetching approvers:', err);
-                } finally {
-                    setLoadingApprovers(false);
-                }
-            };
-            fetchApprovers();
-        }
-    }, [loggedInUser]);
-
-    const handleApproverFormChange = (e) => {
-        setApproverForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
-        setApproverFormError('');
-    };
-
-    const handleAddApprover = async (e) => {
-        e.preventDefault();
-        const { name, designation, email } = approverForm;
-        if (!name.trim() || !email.trim()) {
-            setApproverFormError('Name and Email are required.');
-            return;
-        }
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            setApproverFormError('Please enter a valid email address.');
-            return;
-        }
-        setSavingApprover(true);
-        try {
-            const { data, error } = await supabase
-                .from('client_approver')
-                .insert({ 
-                    name: name.trim(), 
-                    designation: designation.trim(), 
-                    email: email.trim(), 
-                    signature_url: signatureBase64 || null, 
-                    cust_email: loggedInUser 
-                })
-                .select();
-            if (error) throw error;
-            setApprovers(prev => [...prev, ...(data || [])]);
-            setApproverForm({ name: '', designation: '', email: '' });
-            setSignatureBase64('');
-        } catch (err) {
-            setApproverFormError('Failed to add approver: ' + err.message);
-        } finally {
-            setSavingApprover(false);
-        }
-    };
-
-    const handleRemoveApprover = async (approverId) => {
-        if (!window.confirm('Remove this approver?')) return;
-        try {
-            const { error } = await supabase
-                .from('client_approver')
-                .delete()
-                .eq('approver_id', approverId);
-            if (error) throw error;
-            setApprovers(prev => prev.filter(a => a.approver_id !== approverId));
-        } catch (err) {
-            alert('Failed to remove approver: ' + err.message);
-        }
-    };
 
     // Reset cropper when new image loaded
     useEffect(() => {
@@ -346,25 +291,51 @@ const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
                 <div className="profile-info">
                     <h2 className="profile-name">{custName || loggedInUser || 'Customer'}</h2>
                     <p className="profile-email"><i className='bx bx-envelope'></i> {loggedInUser || ''}</p>
-                    <span className="profile-badge"><i className='bx bx-check-shield'></i> Verified Account</span>
+                    <span className="profile-badge">
+                        <i className={custType === 'Corporate' ? 'bx bx-buildings' : 'bx bx-user-check'}></i>
+                        {custType === 'Corporate' ? ' Verified Corporate Business Client' : ' Verified Personal Account'}
+                    </span>
                 </div>
 
-                {/* Deliver Now + Personal Delivery buttons */}
+                {/* Single Role-Based Action Button */}
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <button
-                        className="primary-btn"
-                        onClick={onPersonalDeliver}
-                        style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.35)', color: 'var(--accent-color)' }}
-                    >
-                        <i className='bx bx-package'></i> Personal Delivery
-                    </button>
-                    <button
-                        className="primary-btn"
-                        onClick={onDeliver}
-                        style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                    >
-                        <i className='bx bx-truck'></i> Corporate ATR
-                    </button>
+                    {custType === 'Corporate' ? (
+                        <button
+                            className="primary-btn"
+                            onClick={onDeliver}
+                            style={{
+                                width: 'auto',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                background: 'linear-gradient(135deg, #3b82f6 0%, #a855f7 100%)',
+                                boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
+                                padding: '0.65rem 1.35rem',
+                                fontSize: '0.95rem',
+                                fontWeight: '600'
+                            }}
+                        >
+                            <i className='bx bx-car' style={{ fontSize: '1.2rem' }}></i> Request Corporate ATR
+                        </button>
+                    ) : (
+                        <button
+                            className="primary-btn"
+                            onClick={onPersonalDeliver}
+                            style={{
+                                width: 'auto',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                background: 'linear-gradient(135deg, var(--accent-color) 0%, #f97316 100%)',
+                                boxShadow: '0 4px 14px rgba(249, 115, 22, 0.35)',
+                                padding: '0.65rem 1.35rem',
+                                fontSize: '0.95rem',
+                                fontWeight: '600'
+                            }}
+                        >
+                            <i className='bx bx-package' style={{ fontSize: '1.2rem' }}></i> Send Personal Delivery
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -442,361 +413,174 @@ const CustomerDashboard = ({ onDeliver, onPersonalDeliver, loggedInUser }) => {
                     </div>
                 </div>
 
-                {/* ATR Requests */}
-                <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInRight 1s ease backwards 0.3s', margin: 0 }}>
-                    <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
-                            <i className='bx bx-car' style={{ color: 'var(--accent-color)' }}></i> ATR Requests
-                        </h3>
-                        <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>
-                            {atrRequests.length} Total
-                        </span>
-                    </div>
+                {/* ── ATR Requests (Only for Corporate Accounts) ──────────────── */}
+                {custType === 'Corporate' && (
+                    <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInRight 1s ease backwards 0.3s', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                <i className='bx bx-car' style={{ color: 'var(--accent-color)' }}></i> Corporate ATR Requests
+                            </h3>
+                            <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>
+                                {atrRequests.length} Total
+                            </span>
+                        </div>
 
-                    {loadingAtr ? (
-                        <p style={{ color: 'var(--text-secondary)' }}>
-                            <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading ATR requests...
-                        </p>
-                    ) : atrRequests.length === 0 ? (
-                        <p style={{ color: 'var(--text-secondary)' }}>No ATR requests found.</p>
-                    ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '5px' }}>
-                            {atrRequests.map((req, index) => (
-                                <div key={req.atr_id || index} className="delivery-item" style={{
-                                    padding: '1.25rem', background: 'rgba(255,255,255,0.03)', borderRadius: '16px',
-                                    border: '1px solid var(--card-border)', display: 'flex', justifyContent: 'space-between',
-                                    alignItems: 'center', transition: 'all 0.3s ease'
-                                }}
-                                onMouseEnter={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.2)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor='var(--card-border)'; }}
-                                >
-                                    <div>
-                                        <h4 style={{ color: 'var(--text-primary)', marginBottom: '0.25rem', fontSize: '1.1rem' }}>{req.atr_number}</h4>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                            <i className='bx bx-car' style={{ color: 'var(--accent-color)', marginRight: '4px' }}></i>{req.vehicle_type}
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                                            <strong>Required:</strong> {req.required_date} @ {req.required_time}
-                                        </p>
-                                    </div>
-                                    <div style={{ textAlign: 'right' }}>
-                                        <span style={{
-                                            display: 'inline-block', padding: '0.35rem 0.85rem',
-                                            background: req.status === 'Approved' || req.status === 'Completed' ? 'rgba(16,185,129,0.1)' : req.status === 'Pending' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
-                                            color: req.status === 'Approved' || req.status === 'Completed' ? 'var(--success)' : req.status === 'Pending' ? '#f59e0b' : 'var(--danger)',
-                                            borderRadius: '100px', fontSize: '0.85rem', fontWeight: '600',
-                                            border: req.status === 'Approved' || req.status === 'Completed' ? '1px solid rgba(16,185,129,0.2)' : req.status === 'Pending' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
-                                        }}>{req.status}</span>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.5rem' }}>
-                                            {req.estimated_cost} LKR
-                                        </p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* ── Personal Deliveries ────────────────────────────────── */}
-                <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInRight 1s ease backwards 0.45s', margin: 0 }}>
-                    <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
-                            <i className='bx bx-package' style={{ color: 'var(--accent-color)' }}></i> Personal Deliveries
-                        </h3>
-                        <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>
-                            {personalDeliveries.length} Total
-                        </span>
-                    </div>
-
-                    {loadingPersonal ? (
-                        <p style={{ color: 'var(--text-secondary)' }}>
-                            <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading personal deliveries...
-                        </p>
-                    ) : personalDeliveries.length === 0 ? (
-                        <div style={{
-                            padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px',
-                            border: '1px dashed var(--card-border)', textAlign: 'center', color: 'var(--text-secondary)'
-                        }}>
-                            <i className='bx bx-package' style={{ fontSize: '2rem', marginBottom: '0.5rem', display: 'block', opacity: 0.4 }}></i>
-                            No personal deliveries yet. Click <strong style={{ color: 'var(--accent-color)' }}>Personal Delivery</strong> to book one.
-                        </div>
-                    ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '5px' }}>
-                            {personalDeliveries.map((req, index) => (
-                                <div key={req.pd_id || index} className="delivery-item" style={{
-                                    padding: '1.25rem', background: 'rgba(255,255,255,0.03)', borderRadius: '16px',
-                                    border: '1px solid var(--card-border)', display: 'flex', justifyContent: 'space-between',
-                                    alignItems: 'flex-start', transition: 'all 0.3s ease', gap: '1rem'
-                                }}
-                                onMouseEnter={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.2)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor='var(--card-border)'; }}
-                                >
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
-                                            <span style={{
-                                                background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.2)',
-                                                color: 'var(--accent-color)', borderRadius: '8px', padding: '0.15rem 0.6rem',
-                                                fontSize: '0.78rem', fontWeight: 600
-                                            }}>{req.item_type}</span>
-                                        </div>
-                                        <p style={{ color: 'var(--text-primary)', fontSize: '0.9rem', marginBottom: '0.25rem', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
-                                            <i className='bx bx-current-location' style={{ color: 'var(--accent-color)', flexShrink: 0, marginTop: '2px' }}></i>
-                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.pickup_address}</span>
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
-                                            <i className='bx bx-map-pin' style={{ flexShrink: 0, marginTop: '2px' }}></i>
-                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.drop_address}</span>
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.4rem' }}>
-                                            <strong>To:</strong> {req.receiver_name} · {req.receiver_phone}
-                                        </p>
-                                        {req.scheduled_date && (
-                                            <p style={{ color: '#a855f7', fontSize: '0.8rem', marginTop: '0.2rem' }}>
-                                                <strong>📅 Scheduled:</strong> {req.scheduled_date} @ {req.scheduled_time}
-                                            </p>
-                                        )}
-                                    </div>
-                                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                                        {(() => {
-                                            const statusMap = {
-                                                'Pending': { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', border: 'rgba(245,158,11,0.2)' },
-                                                'Accepted': { bg: 'rgba(59,130,246,0.1)', text: '#3b82f6', border: 'rgba(59,130,246,0.2)' },
-                                                'Scheduled': { bg: 'rgba(168,85,247,0.1)', text: '#a855f7', border: 'rgba(168,85,247,0.2)' },
-                                                'Assigned': { bg: 'rgba(16,185,129,0.1)', text: '#10b981', border: 'rgba(16,185,129,0.2)' },
-                                                'In Transit': { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', border: 'rgba(245,158,11,0.2)' },
-                                                'Completed': { bg: 'rgba(16,185,129,0.15)', text: '#059669', border: 'rgba(16,185,129,0.3)' },
-                                                'Delivered': { bg: 'rgba(16,185,129,0.15)', text: '#059669', border: 'rgba(16,185,129,0.3)' }
-                                            };
-                                            const st = statusMap[req.status] || statusMap['Pending'];
-                                            return (
-                                                <span style={{
-                                                    display: 'inline-block', padding: '0.35rem 0.85rem',
-                                                    background: st.bg, color: st.text,
-                                                    borderRadius: '100px', fontSize: '0.85rem', fontWeight: '600',
-                                                    border: `1px solid ${st.border}`
-                                                }}>{req.status}</span>
-                                            );
-                                        })()}
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginTop: '0.4rem' }}>
-                                            {req.requested_date}
-                                        </p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* ── My Approval Authority ─────────────────────────────── */}
-                <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', gridColumn: '1 / -1', animation: 'slideInRight 1s ease backwards 0.5s', margin: 0 }}>
-                    <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left' }}>
-                        <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
-                            <i className='bx bx-user-check' style={{ color: 'var(--accent-color)' }}></i> My Approval Authority
-                        </h3>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.4rem' }}>
-                            Add the authorized persons from your company who will receive and approve ATR requests via email.
-                        </p>
-                    </div>
-
-                    {/* Add Approver Form */}
-                    <form onSubmit={handleAddApprover} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'end' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                            <label style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600 }}>Full Name <span style={{ color: 'var(--danger)' }}>*</span></label>
-                            <input
-                                type="text"
-                                name="name"
-                                value={approverForm.name}
-                                onChange={handleApproverFormChange}
-                                placeholder="e.g. Mr. Perera"
-                                style={{
-                                    background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
-                                    borderRadius: '10px', padding: '0.65rem 1rem', color: 'var(--text-primary)',
-                                    fontSize: '0.9rem', outline: 'none', width: '100%', boxSizing: 'border-box'
-                                }}
-                            />
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                            <label style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600 }}>Designation</label>
-                            <input
-                                type="text"
-                                name="designation"
-                                value={approverForm.designation}
-                                onChange={handleApproverFormChange}
-                                placeholder="e.g. General Manager"
-                                style={{
-                                    background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
-                                    borderRadius: '10px', padding: '0.65rem 1rem', color: 'var(--text-primary)',
-                                    fontSize: '0.9rem', outline: 'none', width: '100%', boxSizing: 'border-box'
-                                }}
-                            />
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                            <label style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600 }}>Email Address <span style={{ color: 'var(--danger)' }}>*</span></label>
-                            <input
-                                type="email"
-                                name="email"
-                                value={approverForm.email}
-                                onChange={handleApproverFormChange}
-                                placeholder="approver@yourcompany.com"
-                                style={{
-                                    background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
-                                    borderRadius: '10px', padding: '0.65rem 1rem', color: 'var(--text-primary)',
-                                    fontSize: '0.9rem', outline: 'none', width: '100%', boxSizing: 'border-box'
-                                }}
-                            />
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                            <label style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600 }}>Digital Signature</label>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <input
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={(e) => {
-                                        const file = e.target.files[0];
-                                        if (file) {
-                                            const reader = new FileReader();
-                                            reader.onload = (ev) => setSignatureBase64(ev.target.result);
-                                            reader.readAsDataURL(file);
-                                        }
-                                    }}
-                                    style={{ display: 'none' }}
-                                    id="signature-upload-input"
-                                />
-                                <label
-                                    htmlFor="signature-upload-input"
-                                    style={{
-                                        background: 'rgba(255,255,255,0.06)', border: '1px dashed var(--card-border)',
-                                        borderRadius: '10px', padding: '0.65rem 1rem', color: 'var(--text-secondary)',
-                                        fontSize: '0.9rem', cursor: 'pointer', textAlign: 'center', flexGrow: 1,
-                                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
-                                    }}
-                                >
-                                    {signatureBase64 ? '✓ Signature Added' : 'Choose PNG/JPG'}
-                                </label>
-                                {signatureBase64 && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setSignatureBase64('')}
-                                        style={{
-                                            background: 'rgba(239,68,68,0.1)', border: 'none', color: 'var(--danger)',
-                                            borderRadius: '6px', width: '32px', height: '32px', cursor: 'pointer',
-                                            display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                        }}
-                                    >
-                                        <i className='bx bx-trash'></i>
-                                    </button>
-                                )}
+                        {loadingAtr ? (
+                            <p style={{ color: 'var(--text-secondary)' }}>
+                                <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading ATR requests...
+                            </p>
+                        ) : atrRequests.length === 0 ? (
+                            <div style={{
+                                padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px',
+                                border: '1px dashed var(--card-border)', textAlign: 'center', color: 'var(--text-secondary)'
+                            }}>
+                                <i className='bx bx-car' style={{ fontSize: '2rem', marginBottom: '0.5rem', display: 'block', opacity: 0.4 }}></i>
+                                No ATR requests yet. Click <strong style={{ color: '#a855f7' }}>Request Corporate ATR</strong> to submit a request.
                             </div>
-                        </div>
-                        <button
-                            type="submit"
-                            disabled={savingApprover}
-                            style={{
-                                background: 'var(--accent-color)', color: '#fff', border: 'none',
-                                borderRadius: '10px', padding: '0.65rem 1.2rem', fontSize: '0.9rem',
-                                fontWeight: 600, cursor: savingApprover ? 'not-allowed' : 'pointer',
-                                display: 'flex', alignItems: 'center', gap: '0.4rem',
-                                opacity: savingApprover ? 0.7 : 1, whiteSpace: 'nowrap',
-                                transition: 'all 0.2s ease'
-                            }}
-                        >
-                            {savingApprover
-                                ? <><i className='bx bx-loader-alt bx-spin'></i> Adding...</>
-                                : <><i className='bx bx-user-plus'></i> Add Approver</>
-                            }
-                        </button>
-                    </form>
-
-                    {approverFormError && (
-                        <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <i className='bx bx-error-circle'></i> {approverFormError}
-                        </p>
-                    )}
-
-                    {/* Approvers List */}
-                    {loadingApprovers ? (
-                        <p style={{ color: 'var(--text-secondary)' }}>
-                            <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i>Loading approvers...
-                        </p>
-                    ) : approvers.length === 0 ? (
-                        <div style={{
-                            padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px',
-                            border: '1px dashed var(--card-border)', textAlign: 'center', color: 'var(--text-secondary)'
-                        }}>
-                            <i className='bx bx-user-x' style={{ fontSize: '2rem', marginBottom: '0.5rem', display: 'block', opacity: 0.5 }}></i>
-                            No approvers added yet. Add your authorized persons above.
-                        </div>
-                    ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.75rem' }}>
-                            {approvers.map((approver) => (
-                                <div key={approver.approver_id} style={{
-                                    padding: '1rem 1.25rem', background: 'rgba(255,255,255,0.04)',
-                                    borderRadius: '12px', border: '1px solid var(--card-border)',
-                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                    gap: '0.75rem', transition: 'all 0.2s ease'
-                                }}
-                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; }}
-                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
-                                >
-                                    <div style={{ overflow: 'hidden' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.25rem' }}>
-                                            <div style={{
-                                                width: 34, height: 34, borderRadius: '50%',
-                                                background: 'linear-gradient(135deg, var(--accent-color), #7c3aed)',
-                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                fontSize: '0.85rem', fontWeight: 700, color: '#fff', flexShrink: 0
-                                            }}>
-                                                {approver.name.charAt(0).toUpperCase()}
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '5px' }}>
+                                {atrRequests.map((req, index) => (
+                                    <div key={req.atr_id || index} className="delivery-item" style={{
+                                        padding: '1.25rem', background: 'rgba(255,255,255,0.03)', borderRadius: '16px',
+                                        border: '1px solid var(--card-border)', display: 'flex', justifyContent: 'space-between',
+                                        alignItems: 'center', transition: 'all 0.3s ease'
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.2)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor='var(--card-border)'; }}
+                                    >
+                                        <div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                                                <h4 style={{ color: 'var(--text-primary)', margin: 0, fontSize: '1.1rem' }}>{req.atr_number}</h4>
+                                                <span style={{ fontSize: '0.78rem', color: '#60a5fa', background: 'rgba(59,130,246,0.1)', padding: '0.15rem 0.5rem', borderRadius: '6px', fontWeight: 600 }}>
+                                                    🏢 {deptCompMap[req.dep_id]?.comp_name || 'Corporate'}
+                                                </span>
                                             </div>
-                                            <div style={{ overflow: 'hidden' }}>
-                                                <p style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.9rem', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{approver.name}</p>
-                                                {approver.designation && (
-                                                    <p style={{ color: 'var(--accent-color)', fontSize: '0.75rem', margin: 0 }}>{approver.designation}</p>
+                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.2rem 0' }}>
+                                                <i className='bx bx-buildings' style={{ color: 'var(--accent-color)', marginRight: '4px' }}></i><strong>Dept:</strong> {deptCompMap[req.dep_id]?.dep_name || 'Operations'} • <i className='bx bx-car' style={{ color: 'var(--accent-color)', margin: '0 4px' }}></i>{req.vehicle_type}
+                                            </p>
+                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.2rem 0' }}>
+                                                <strong>Required:</strong> {req.required_date} @ {req.required_time}
+                                            </p>
+                                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.4rem', fontSize: '0.8rem', flexWrap: 'wrap' }}>
+                                                <span style={{ color: 'var(--text-secondary)' }}>
+                                                    Est: <strong>{req.estimated_distance || 'N/A'} km</strong> ({req.estimated_cost || 0} LKR)
+                                                </span>
+                                                {req.actual_distance && (
+                                                    <span style={{ color: 'var(--success)', fontWeight: 600, background: 'rgba(16,185,129,0.1)', padding: '0.1rem 0.5rem', borderRadius: '6px' }}>
+                                                        ✓ Actual: {req.actual_distance} km ({req.actual_cost || 0} LKR)
+                                                    </span>
                                                 )}
                                             </div>
                                         </div>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.3rem', paddingLeft: '42px' }}>
-                                            <i className='bx bx-envelope'></i>
-                                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{approver.email}</span>
-                                        </p>
-                                        {approver.signature_url && (
-                                            <div style={{ marginTop: '0.5rem', paddingLeft: '42px', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Signature:</span>
-                                                <img 
-                                                    src={approver.signature_url} 
-                                                    alt="Signature" 
-                                                    style={{ 
-                                                        maxHeight: '30px', 
-                                                        maxWidth: '120px', 
-                                                        objectFit: 'contain', 
-                                                        background: 'rgba(255,255,255,0.9)', 
-                                                        padding: '2px 6px', 
-                                                        borderRadius: '6px',
-                                                        border: '1px solid rgba(255,255,255,0.2)' 
-                                                    }} 
-                                                />
-                                            </div>
-                                        )}
+                                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                            <span style={{
+                                                display: 'inline-block', padding: '0.35rem 0.85rem',
+                                                background: req.status === 'Approved' || req.status === 'Completed' ? 'rgba(16,185,129,0.1)' : req.status === 'Pending' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                                color: req.status === 'Approved' || req.status === 'Completed' ? 'var(--success)' : req.status === 'Pending' ? '#f59e0b' : 'var(--danger)',
+                                                borderRadius: '100px', fontSize: '0.85rem', fontWeight: '600',
+                                                border: req.status === 'Approved' || req.status === 'Completed' ? '1px solid rgba(16,185,129,0.2)' : req.status === 'Pending' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                            }}>{req.status}</span>
+                                            <p style={{ color: '#fff', fontSize: '0.95rem', fontWeight: '600', marginTop: '0.5rem' }}>
+                                                {req.actual_cost ? `${req.actual_cost} LKR` : `${req.estimated_cost || 0} LKR`}
+                                            </p>
+                                        </div>
                                     </div>
-                                    <button
-                                        onClick={() => handleRemoveApprover(approver.approver_id)}
-                                        title="Remove approver"
-                                        style={{
-                                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
-                                            color: 'var(--danger)', borderRadius: '8px', padding: '0.4rem 0.5rem',
-                                            cursor: 'pointer', flexShrink: 0, transition: 'all 0.2s ease', fontSize: '1rem',
-                                            display: 'flex', alignItems: 'center'
-                                        }}
-                                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.25)'; }}
-                                        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.1)'; }}
-                                    >
-                                        <i className='bx bx-trash'></i>
-                                    </button>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* ── Personal Deliveries (Only for Individual Accounts) ────────── */}
+                {custType !== 'Corporate' && (
+                    <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInRight 1s ease backwards 0.45s', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                <i className='bx bx-package' style={{ color: 'var(--accent-color)' }}></i> Personal Deliveries
+                            </h3>
+                            <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>
+                                {personalDeliveries.length} Total
+                            </span>
                         </div>
-                    )}
-                </div>
+
+                        {loadingPersonal ? (
+                            <p style={{ color: 'var(--text-secondary)' }}>
+                                <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading personal deliveries...
+                            </p>
+                        ) : personalDeliveries.length === 0 ? (
+                            <div style={{
+                                padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px',
+                                border: '1px dashed var(--card-border)', textAlign: 'center', color: 'var(--text-secondary)'
+                            }}>
+                                <i className='bx bx-package' style={{ fontSize: '2rem', marginBottom: '0.5rem', display: 'block', opacity: 0.4 }}></i>
+                                No personal deliveries yet. Click <strong style={{ color: 'var(--accent-color)' }}>Send Personal Delivery</strong> to book one.
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '5px' }}>
+                                {personalDeliveries.map((req, index) => (
+                                    <div key={req.pd_id || index} className="delivery-item" style={{
+                                        padding: '1.25rem', background: 'rgba(255,255,255,0.03)', borderRadius: '16px',
+                                        border: '1px solid var(--card-border)', display: 'flex', justifyContent: 'space-between',
+                                        alignItems: 'flex-start', transition: 'all 0.3s ease', gap: '1rem'
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.2)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background='rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor='var(--card-border)'; }}
+                                    >
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                                                <span style={{
+                                                    background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.2)',
+                                                    color: 'var(--accent-color)', borderRadius: '8px', padding: '0.15rem 0.6rem',
+                                                    fontSize: '0.78rem', fontWeight: 600
+                                                }}>{req.item_type}</span>
+                                            </div>
+                                            <p style={{ color: 'var(--text-primary)', fontSize: '0.9rem', marginBottom: '0.25rem', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                                                <i className='bx bx-current-location' style={{ color: 'var(--accent-color)', flexShrink: 0, marginTop: '2px' }}></i>
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.pickup_address}</span>
+                                            </p>
+                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                                                <i className='bx bx-map-pin' style={{ flexShrink: 0, marginTop: '2px' }}></i>
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.drop_address}</span>
+                                            </p>
+                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.4rem' }}>
+                                                <strong>To:</strong> {req.receiver_name} · {req.receiver_phone}
+                                            </p>
+                                            {req.scheduled_date && (
+                                                <p style={{ color: '#a855f7', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                                                    <strong>📅 Scheduled:</strong> {req.scheduled_date} @ {req.scheduled_time}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                            {(() => {
+                                                const statusMap = {
+                                                    'Pending': { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', border: 'rgba(245,158,11,0.2)' },
+                                                    'Accepted': { bg: 'rgba(59,130,246,0.1)', text: '#3b82f6', border: 'rgba(59,130,246,0.2)' },
+                                                    'Scheduled': { bg: 'rgba(168,85,247,0.1)', text: '#a855f7', border: 'rgba(168,85,247,0.2)' },
+                                                    'Assigned': { bg: 'rgba(16,185,129,0.1)', text: '#10b981', border: 'rgba(16,185,129,0.2)' },
+                                                    'In Transit': { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', border: 'rgba(245,158,11,0.2)' },
+                                                    'Completed': { bg: 'rgba(16,185,129,0.15)', text: '#059669', border: 'rgba(16,185,129,0.3)' },
+                                                    'Delivered': { bg: 'rgba(16,185,129,0.15)', text: '#059669', border: 'rgba(16,185,129,0.3)' }
+                                                };
+                                                const s = statusMap[req.status] || { bg: 'rgba(255,255,255,0.05)', text: '#fff', border: 'rgba(255,255,255,0.1)' };
+                                                return (
+                                                    <span style={{
+                                                        display: 'inline-block', padding: '0.35rem 0.85rem',
+                                                        background: s.bg, color: s.text, border: `1px solid ${s.border}`,
+                                                        borderRadius: '100px', fontSize: '0.85rem', fontWeight: '600'
+                                                    }}>
+                                                        {req.status}
+                                                    </span>
+                                                );
+                                            })()}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
             </div>
 
             {/* ── Crop Modal ─────────────────────────────────────────────── */}

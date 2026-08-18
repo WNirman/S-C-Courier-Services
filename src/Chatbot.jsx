@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './Chatbot.css';
+import { supabase } from './supabaseClient';
 
 const translations = {
     EN: {
@@ -154,11 +155,11 @@ const Chatbot = () => {
         triggerBotResponse(faqText);
     };
 
-    const triggerBotResponse = (userQuery) => {
+    const triggerBotResponse = async (userQuery) => {
         setIsTyping(true);
 
+        const botReplyText = await generateBotReply(userQuery);
         setTimeout(() => {
-            const botReplyText = generateBotReply(userQuery);
             const botMsg = {
                 id: Date.now() + 1,
                 sender: 'bot',
@@ -167,11 +168,40 @@ const Chatbot = () => {
             };
             setMessages((prev) => [...prev, botMsg]);
             setIsTyping(false);
-        }, 800);
+        }, 500);
     };
 
-    const generateBotReply = (query) => {
+    const generateBotReply = async (query) => {
         const cleanQuery = query.toLowerCase().trim();
+
+        // 1. Check for PD (Personal Delivery) tracking ID
+        const pdMatch = cleanQuery.match(/pd[-\s]?(\d+)/i);
+        if (pdMatch) {
+            const id = parseInt(pdMatch[1], 10);
+            try {
+                const { data } = await supabase.from('personal_delivery').select('*').eq('pd_id', id);
+                if (data && data.length > 0) {
+                    const item = data[0];
+                    return `📦 **Package Tracking: PD-${item.pd_id}**\n\n🟢 **Status**: ${item.status}\n📍 **Route**: ${item.pickup_address} ➔ ${item.drop_address}\n👤 **Recipient**: ${item.receiver_name} (${item.receiver_phone})\n📦 **Item**: ${item.item_type} (${item.item_weight || 'Standard'})\n📅 **Scheduled**: ${item.requested_date} @ ${item.requested_time}`;
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // 2. Check for ATR Reference ID
+        const atrMatch = cleanQuery.match(/atr[-\s]?(\w+)/i);
+        if (atrMatch) {
+            try {
+                const { data } = await supabase.from('atr').select('*').or(`atr_number.ilike.%${query.trim()}%,atr_number.eq.${query.trim()}`);
+                if (data && data.length > 0) {
+                    const item = data[0];
+                    return `✈️ **ATR Travel Request: ${item.atr_number}**\n\n🟢 **Status**: ${item.status}\n👤 **Passenger**: ${item.principal_passenger_name} (${item.principal_passenger_designation || 'Staff'})\n🚘 **Vehicle**: ${item.vehicle_type}\n📅 **Required Date**: ${item.required_date} @ ${item.required_time}\n💰 **Estimated Cost**: ${item.estimated_cost || 0} LKR`;
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
 
         // 1. Check for specific tracking numbers (Independent of language)
         const trackingMatch = cleanQuery.match(/sc\d+/i);

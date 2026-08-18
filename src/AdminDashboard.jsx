@@ -21,6 +21,56 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     const [loadingPD, setLoadingPD] = useState(false);
     const [acceptingPD, setAcceptingPD] = useState(null);
 
+    // Admin ATR Actual Distance Modal State
+    const [adminEditingAtr, setAdminEditingAtr] = useState(null);
+    const [adminActualDist, setAdminActualDist] = useState('');
+    const [adminActualCost, setAdminActualCost] = useState('');
+    const [adminSavingAtr, setAdminSavingAtr] = useState(false);
+
+    const handleOpenAdminAtrModal = (atrItem) => {
+        setAdminEditingAtr(atrItem);
+        const suggested = atrItem.actual_distance || atrItem.estimated_distance || '';
+        setAdminActualDist(suggested ? String(suggested) : '');
+        const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+        const rate = rateMap[atrItem.vehicle_type] || 100;
+        const calculatedCost = suggested ? (parseFloat(suggested) * rate).toFixed(2) : (atrItem.actual_cost || atrItem.estimated_cost || '');
+        setAdminActualCost(calculatedCost ? String(calculatedCost) : '');
+    };
+
+    const handleAdminActualDistChange = (val) => {
+        setAdminActualDist(val);
+        if (adminEditingAtr && val && !isNaN(parseFloat(val))) {
+            const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+            const rate = rateMap[adminEditingAtr.vehicle_type] || 100;
+            setAdminActualCost((parseFloat(val) * rate).toFixed(2));
+        }
+    };
+
+    const handleSaveAdminAtrActuals = async (e) => {
+        e.preventDefault();
+        if (!adminEditingAtr) return;
+        setAdminSavingAtr(true);
+        try {
+            const { error } = await supabase
+                .from('atr')
+                .update({
+                    actual_distance: adminActualDist ? parseFloat(adminActualDist) : null,
+                    actual_cost: adminActualCost ? parseFloat(adminActualCost) : null
+                })
+                .eq('atr_id', adminEditingAtr.atr_id);
+
+            if (error) throw error;
+            alert('Actual distance & cost updated successfully!');
+            setAdminEditingAtr(null);
+            loadAtrRequests();
+        } catch (err) {
+            console.error('Error saving actuals:', err);
+            alert('Failed to update actuals: ' + err.message);
+        } finally {
+            setAdminSavingAtr(false);
+        }
+    };
+
     const loadRiders = async () => {
         setLoadingRiders(true);
         try {
@@ -52,6 +102,10 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         }
     };
 
+    // State for Department & Company Lookup
+    const [deptCompMap, setDeptCompMap] = useState({});
+    const [customerCompMap, setCustomerCompMap] = useState({});
+
     const loadAtrRequests = async () => {
         setLoadingAtr(true);
         try {
@@ -61,6 +115,36 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 .order('atr_id', { ascending: false });
             if (error) throw error;
             setAtrRequests(data || []);
+
+            // Load departments & companies for corporate lookup
+            try {
+                const { data: deptData } = await supabase
+                    .from('department')
+                    .select('dep_id, dep_name, comp_id, company(comp_id, comp_name)');
+                if (deptData) {
+                    const dMap = {};
+                    deptData.forEach(d => {
+                        dMap[d.dep_id] = {
+                            dep_name: d.dep_name,
+                            comp_name: d.company?.comp_name || 'SC Courier Services'
+                        };
+                    });
+                    setDeptCompMap(dMap);
+                }
+
+                const { data: custData } = await supabase
+                    .from('customer')
+                    .select('cust_email, cust_name, cust_type');
+                if (custData) {
+                    const cMap = {};
+                    custData.forEach(c => {
+                        cMap[c.cust_email] = c.cust_name || (c.cust_type === 'Corporate' ? 'Corporate Client' : null);
+                    });
+                    setCustomerCompMap(cMap);
+                }
+            } catch (e) {
+                console.warn('Note loading department/company relations:', e);
+            }
         } catch (err) {
             console.error('Error loading ATR requests:', err);
         } finally {
@@ -169,7 +253,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 await supabase
                     .from('personal_delivery')
                     .update({
-                        status: riderId ? 'Assigned' : 'Accepted',
+                        status: riderId ? 'Assigned' : 'Approved',
                         accepted_by: selectedRiderObj ? selectedRiderObj.staff_email : null,
                         assigned_rider_nic: riderNic
                     })
@@ -181,18 +265,121 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
             const updatedLocal = localData.map(pd => pd.pd_id === pdId ? {
                 ...pd,
-                status: riderId ? 'Assigned' : 'Accepted',
+                status: riderId ? 'Assigned' : 'Approved',
                 accepted_by: selectedRiderObj ? selectedRiderObj.staff_email : null,
                 assigned_rider_nic: riderNic
             } : pd);
             localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
 
-            alert(`Rider (${riderName}) assigned to delivery order successfully!`);
+            alert(riderId ? `Rider (${riderName}) assigned to delivery order successfully!` : 'Rider unassigned from delivery.');
             loadPersonalDeliveries();
             loadRiders();
         } catch (err) {
             console.error('Error assigning rider to delivery:', err);
             alert('Failed to assign rider: ' + err.message);
+        }
+    };
+
+    const handleApproveAtr = async (atrId) => {
+        try {
+            const { error } = await supabase
+                .from('atr')
+                .update({
+                    status: 'Approved',
+                    approval_date: new Date().toISOString()
+                })
+                .eq('atr_id', atrId);
+
+            if (error) throw error;
+            alert('ATR Request Approved successfully! You can now match a rider to it.');
+            loadAtrRequests();
+        } catch (err) {
+            console.error('Error approving ATR:', err);
+            alert('Failed to approve ATR: ' + err.message);
+        }
+    };
+
+    const handleRejectAtr = async (atrId) => {
+        if (!window.confirm('Are you sure you want to reject this ATR request?')) return;
+        try {
+            const { error } = await supabase
+                .from('atr')
+                .update({
+                    status: 'Rejected',
+                    approval_date: new Date().toISOString()
+                })
+                .eq('atr_id', atrId);
+
+            if (error) throw error;
+            alert('ATR Request Rejected.');
+            loadAtrRequests();
+        } catch (err) {
+            console.error('Error rejecting ATR:', err);
+            alert('Failed to reject ATR: ' + err.message);
+        }
+    };
+
+    const handleApprovePD = async (pdId) => {
+        try {
+            const acceptedByEmail = loggedInUser || 'admin@sccourier.com';
+            try {
+                await supabase
+                    .from('personal_delivery')
+                    .update({
+                        status: 'Approved',
+                        accepted_by: acceptedByEmail,
+                        accepted_at: new Date().toISOString()
+                    })
+                    .eq('pd_id', pdId);
+            } catch (sbErr) {
+                console.warn('Supabase update note:', sbErr);
+            }
+
+            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? {
+                ...pd,
+                status: 'Approved',
+                accepted_by: acceptedByEmail,
+                accepted_at: new Date().toISOString()
+            } : pd);
+            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
+
+            try {
+                await fetch('http://localhost:5000/api/delivery/accept', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail })
+                });
+            } catch (e) { /* ignore backend offline */ }
+
+            alert('Personal Delivery Approved successfully! You can now match a rider to it.');
+            loadPersonalDeliveries();
+        } catch (err) {
+            console.error('Error approving PD:', err);
+            alert('Failed to approve delivery: ' + err.message);
+        }
+    };
+
+    const handleRejectPD = async (pdId) => {
+        if (!window.confirm('Are you sure you want to reject this delivery request?')) return;
+        try {
+            try {
+                await supabase
+                    .from('personal_delivery')
+                    .update({ status: 'Rejected' })
+                    .eq('pd_id', pdId);
+            } catch (sbErr) {
+                console.warn('Supabase note:', sbErr);
+            }
+            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? { ...pd, status: 'Rejected' } : pd);
+            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
+
+            alert('Delivery request rejected.');
+            loadPersonalDeliveries();
+        } catch (err) {
+            console.error('Error rejecting PD:', err);
+            alert('Failed to reject delivery: ' + err.message);
         }
     };
 
@@ -1630,9 +1817,11 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                     style={{ padding: '0.35rem 0.85rem', borderRadius: '8px', background: 'rgba(20,20,20,0.95)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
                                 >
                                     <option value="all">All Statuses</option>
-                                    <option value="unassigned">Unassigned / Pending</option>
-                                    <option value="assigned">Assigned</option>
-                                    <option value="completed">Completed</option>
+                                    <option value="pending">⏳ Pending Approval</option>
+                                    <option value="approved">✅ Approved (Ready for Rider)</option>
+                                    <option value="assigned">🏍️ Rider Assigned</option>
+                                    <option value="completed">🏁 Completed</option>
+                                    <option value="rejected">❌ Rejected</option>
                                 </select>
                             </div>
                         </div>
@@ -1642,22 +1831,34 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         ) : (() => {
                             // Build combined list
                             const localAtrMap = JSON.parse(localStorage.getItem('local_atr_assignments') || '{}');
-                            const formattedAtrList = atrRequests.map(req => ({
-                                id: `atr-${req.atr_id}`,
-                                type: 'atr',
-                                refNumber: req.atr_number || `ATR-${req.atr_id}`,
-                                status: req.status,
-                                title: `ATR Passenger Travel: ${req.principal_passenger_name}`,
-                                subtitle: `${req.vehicle_type || 'Vehicle'} • ${req.required_date} @ ${req.required_time}`,
-                                details: [
-                                    { label: '👤 Passenger', val: `${req.principal_passenger_name} (${req.principal_passenger_designation || 'Staff'})` },
-                                    { label: '🚘 Vehicle Type', val: req.vehicle_type || 'Standard' },
-                                    { label: '📅 Date & Time', val: `${req.required_date} @ ${req.required_time}` },
-                                    { label: '💰 Est. Cost', val: `${req.estimated_cost || 0} LKR` }
-                                ],
-                                assignedRiderId: localAtrMap[req.atr_id] || req.approved_by,
-                                rawItem: req
-                            }));
+                            const formattedAtrList = atrRequests.map(req => {
+                                const deptInfo = deptCompMap[req.dep_id];
+                                const custCompName = customerCompMap[req.cust_email];
+                                const companyDisplayName = deptInfo?.comp_name || custCompName || 'SC Courier Corporate Client';
+                                const deptDisplayName = deptInfo?.dep_name || 'Operations';
+
+                                return {
+                                    id: `atr-${req.atr_id}`,
+                                    type: 'atr',
+                                    refNumber: req.atr_number || `ATR-${req.atr_id}`,
+                                    status: req.status,
+                                    title: `🏢 ${companyDisplayName} (${deptDisplayName})`,
+                                    subtitle: `Passenger: ${req.principal_passenger_name} • ${req.vehicle_type || 'Vehicle'} • ${req.required_date} @ ${req.required_time}`,
+                                    details: [
+                                        { label: '🏢 Corporate Client', val: companyDisplayName },
+                                        { label: '🏛️ Department', val: deptDisplayName },
+                                        { label: '👤 Passenger', val: `${req.principal_passenger_name} (${req.principal_passenger_designation || 'Staff'})` },
+                                        { label: '🚘 Vehicle Type', val: req.vehicle_type || 'Standard' },
+                                        { label: '📅 Date & Time', val: `${req.required_date} @ ${req.required_time}` },
+                                        { label: '📏 Est. Distance', val: `${req.estimated_distance || 0} km` },
+                                        { label: '💰 Est. Cost', val: `${req.estimated_cost || 0} LKR` },
+                                        ...(req.actual_distance ? [{ label: '📍 Actual Distance', val: `${req.actual_distance} km (Rider Trip)` }] : []),
+                                        ...(req.actual_cost ? [{ label: '💵 Actual Cost', val: `${req.actual_cost} LKR` }] : [])
+                                    ],
+                                    assignedRiderId: localAtrMap[req.atr_id] || req.approved_by,
+                                    rawItem: req
+                                };
+                            });
 
                             const formattedPDList = personalDeliveries.map(pd => ({
                                 id: `pd-${pd.pd_id}`,
@@ -1683,12 +1884,16 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                             else if (assignmentCategory === 'atr') combined = formattedAtrList;
                             else if (assignmentCategory === 'pd') combined = formattedPDList;
 
-                            if (assignmentStatus === 'unassigned') {
-                                combined = combined.filter(item => !item.assignedRiderId && item.status !== 'Completed' && item.status !== 'Assigned');
+                            if (assignmentStatus === 'pending') {
+                                combined = combined.filter(item => item.status === 'Pending');
+                            } else if (assignmentStatus === 'approved') {
+                                combined = combined.filter(item => (item.status === 'Approved' || item.status === 'Accepted') && !item.assignedRiderId);
                             } else if (assignmentStatus === 'assigned') {
-                                combined = combined.filter(item => item.assignedRiderId || item.status === 'Assigned');
+                                combined = combined.filter(item => item.assignedRiderId || item.status === 'Assigned' || item.status === 'In Transit');
                             } else if (assignmentStatus === 'completed') {
                                 combined = combined.filter(item => item.status === 'Completed');
+                            } else if (assignmentStatus === 'rejected') {
+                                combined = combined.filter(item => item.status === 'Rejected');
                             }
 
                             if (combined.length === 0) {
@@ -1709,6 +1914,9 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                         );
 
                                         const riderDisplayName = assignedRiderObj ? assignedRiderObj.staff_name : (item.assignedRiderName || (typeof item.assignedRiderId === 'string' ? item.assignedRiderId : null));
+                                        const isPending = item.status === 'Pending';
+                                        const isRejected = item.status === 'Rejected';
+                                        const isApprovedOrAssigned = item.status === 'Approved' || item.status === 'Accepted' || item.status === 'Assigned' || item.status === 'In Transit' || item.status === 'Completed';
 
                                         return (
                                             <div key={item.id} style={{
@@ -1758,7 +1966,77 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                 </div>
 
                                                 <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-                                                    {riderDisplayName ? (
+                                                    {isAtr && (item.status === 'Approved' || item.status === 'Assigned' || item.status === 'Completed') && (
+                                                        <button
+                                                            onClick={() => handleOpenAdminAtrModal(item.rawItem)}
+                                                            className="secondary-btn"
+                                                            style={{
+                                                                padding: '0.45rem 0.85rem', height: 'auto', fontSize: '0.8rem',
+                                                                background: item.rawItem.actual_distance ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
+                                                                color: item.rawItem.actual_distance ? 'var(--success)' : '#60a5fa',
+                                                                border: item.rawItem.actual_distance ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(59,130,246,0.25)',
+                                                                cursor: 'pointer', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '0.3rem'
+                                                            }}
+                                                        >
+                                                            <i className='bx bx-edit-alt'></i>
+                                                            {item.rawItem.actual_distance ? `Actual: ${item.rawItem.actual_distance} km` : 'Record Actuals'}
+                                                        </button>
+                                                    )}
+
+                                                    {/* Step 1: When Pending, show Approve / Reject */}
+                                                    {isPending ? (
+                                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                                                <button
+                                                                    onClick={() => isAtr ? handleApproveAtr(item.rawItem.atr_id) : handleApprovePD(item.rawItem.pd_id)}
+                                                                    className="primary-btn pulse-effect"
+                                                                    style={{
+                                                                        width: 'auto',
+                                                                        padding: '0.55rem 1.15rem',
+                                                                        height: '38px',
+                                                                        fontSize: '0.85rem',
+                                                                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.35rem',
+                                                                        boxShadow: '0 4px 14px rgba(16, 185, 129, 0.3)',
+                                                                        cursor: 'pointer'
+                                                                    }}
+                                                                    title="Approve this request so it can be assigned to a rider"
+                                                                >
+                                                                    <i className='bx bx-check-circle'></i> Approve Request
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => isAtr ? handleRejectAtr(item.rawItem.atr_id) : handleRejectPD(item.rawItem.pd_id)}
+                                                                    className="secondary-btn"
+                                                                    style={{
+                                                                        padding: '0.55rem 0.9rem',
+                                                                        height: '38px',
+                                                                        fontSize: '0.85rem',
+                                                                        background: 'rgba(239, 68, 68, 0.1)',
+                                                                        color: 'var(--danger)',
+                                                                        border: '1px solid rgba(239, 68, 68, 0.25)',
+                                                                        cursor: 'pointer',
+                                                                        borderRadius: '8px',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.3rem'
+                                                                    }}
+                                                                    title="Reject this request"
+                                                                >
+                                                                    <i className='bx bx-x-circle'></i> Reject
+                                                                </button>
+                                                            </div>
+                                                            <span style={{ color: '#f59e0b', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                                                <i className='bx bx-lock-alt'></i> Approve first to match rider
+                                                            </span>
+                                                        </div>
+                                                    ) : isRejected ? (
+                                                        <div style={{ padding: '0.4rem 0.8rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', color: 'var(--danger)', fontSize: '0.82rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                                            <i className='bx bx-x-circle'></i> Request Rejected
+                                                        </div>
+                                                    ) : riderDisplayName ? (
+                                                        /* Step 2b: Rider is already assigned */
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '0.5rem 1rem', borderRadius: '12px' }}>
                                                             <div style={{ textAlign: 'left' }}>
                                                                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: 0 }}>Assigned Rider</p>
@@ -1776,14 +2054,15 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                             </button>
                                                         </div>
                                                     ) : (
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                        /* Step 2a: Request is Approved -> Match Rider Now */
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                                                             <div className="input-wrapper" style={{ position: 'relative', width: '220px', margin: 0 }}>
                                                                 <select
                                                                     id={`select-rider-${item.id}`}
                                                                     defaultValue=""
-                                                                    style={{ width: '100%', padding: '0.6rem 2rem 0.6rem 0.85rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                                                    style={{ width: '100%', padding: '0.6rem 2rem 0.6rem 0.85rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(16, 185, 129, 0.4)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
                                                                 >
-                                                                    <option value="" disabled>Select Rider to Assign...</option>
+                                                                    <option value="" disabled>Select Rider to Match...</option>
                                                                     {ridersList.map(r => (
                                                                         <option key={r.staff_id} value={r.staff_id}>
                                                                             {r.staff_name} ({r.availability_status || 'Available'})
@@ -1805,7 +2084,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                                 className="primary-btn"
                                                                 style={{ width: 'auto', padding: '0.6rem 1.25rem', height: '38px', fontSize: '0.85rem', background: isAtr ? 'var(--accent-color)' : '#a855f7' }}
                                                             >
-                                                                Assign Rider
+                                                                Match Rider
                                                             </button>
                                                         </div>
                                                     )}
@@ -1954,8 +2233,128 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     </div>
                 </div>
             )}
+
+            {/* ── Admin ATR Actuals Modal ── */}
+            {adminEditingAtr && (
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(5px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem'
+                }} onClick={() => setAdminEditingAtr(null)}>
+                    <div style={{
+                        background: '#18181b', border: '1px solid var(--card-border)', borderRadius: '20px',
+                        padding: '2rem', maxWidth: '480px', width: '100%', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+                        animation: 'scaleUp 0.3s ease'
+                    }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                            <h3 style={{ margin: 0, color: '#fff', fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <i className='bx bx-calculator' style={{ color: 'var(--accent-color)' }}></i> Verify Actual Distance & Cost
+                            </h3>
+                            <button onClick={() => setAdminEditingAtr(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.4rem' }}>
+                                <i className='bx bx-x'></i>
+                            </button>
+                        </div>
+
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+                            Record or adjust the actual trip distance traveled for <strong>{adminEditingAtr.atr_number}</strong> ({adminEditingAtr.principal_passenger_name}).
+                        </p>
+
+                        {/* 1st Suggestion Badge */}
+                        <div style={{
+                            background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.25)',
+                            padding: '0.75rem 1rem', borderRadius: '10px', marginBottom: '1.25rem',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                        }}>
+                            <div>
+                                <span style={{ fontSize: '0.75rem', color: '#60a5fa', fontWeight: 600, display: 'block' }}>
+                                    1ST SUGGESTION {adminEditingAtr.actual_distance ? '(FROM RIDER TRIP LOG)' : '(ESTIMATED)'}
+                                </span>
+                                <strong style={{ color: '#fff', fontSize: '1.05rem' }}>
+                                    {adminEditingAtr.actual_distance || adminEditingAtr.estimated_distance || 0} km
+                                </strong>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => handleAdminActualDistChange(String(adminEditingAtr.actual_distance || adminEditingAtr.estimated_distance || ''))}
+                                style={{
+                                    background: 'rgba(59, 130, 246, 0.2)', border: 'none', color: '#60a5fa',
+                                    padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600
+                                }}
+                            >
+                                Use Suggestion
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSaveAdminAtrActuals} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', textAlign: 'left' }}>
+                                <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600 }}>
+                                    Actual Traveled Distance (km) <span style={{ color: 'var(--danger)' }}>*</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    required
+                                    value={adminActualDist}
+                                    onChange={(e) => handleAdminActualDistChange(e.target.value)}
+                                    placeholder="e.g. 26.50"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
+                                        borderRadius: '10px', padding: '0.75rem 1rem', color: '#fff', fontSize: '1rem', outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', textAlign: 'left' }}>
+                                <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600 }}>
+                                    Actual Trip Cost (LKR)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={adminActualCost}
+                                    onChange={(e) => setAdminActualCost(e.target.value)}
+                                    placeholder="Auto-calculated from distance"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
+                                        borderRadius: '10px', padding: '0.75rem 1rem', color: '#fff', fontSize: '1rem', outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setAdminEditingAtr(null)}
+                                    className="secondary-btn"
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--card-border)', background: 'transparent', color: '#fff', cursor: 'pointer' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={adminSavingAtr || !adminActualDist}
+                                    style={{
+                                        flex: 2, padding: '0.75rem', borderRadius: '10px', border: 'none',
+                                        background: 'var(--accent-color)', color: '#fff', fontWeight: 600, fontSize: '0.95rem',
+                                        cursor: adminSavingAtr ? 'not-allowed' : 'pointer', display: 'flex',
+                                        alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                                        boxShadow: '0 4px 15px rgba(59, 130, 246, 0.3)'
+                                    }}
+                                >
+                                    {adminSavingAtr ? (
+                                        <><i className='bx bx-loader-alt bx-spin'></i> Saving...</>
+                                    ) : (
+                                        <><i className='bx bx-save'></i> Save Actuals</>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 
 export default AdminDashboard;
+
