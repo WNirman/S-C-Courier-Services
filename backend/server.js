@@ -13,8 +13,10 @@ app.use(cors());
 app.use(express.json());
 
 // PostgreSQL Connection Pool
+const isLocal = !process.env.DATABASE_URL || process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: isLocal ? false : { rejectUnauthorized: false }
 });
 
 pool.connect((err) => {
@@ -267,6 +269,83 @@ app.delete('/api/admin/staff/:email', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error during deletion' });
+  }
+});
+
+// ============================================================
+// TRIP + DELIVERY CREATION (triggered on rider assignment)
+// ============================================================
+
+app.post('/api/trip-delivery/create', async (req, res) => {
+  const {
+    rider_nic,
+    trip_date,
+    branch_id,
+    created_by,
+    pick_location,
+    drop_location,
+    book_id,
+    source_type,
+    source_id
+  } = req.body;
+
+  if (!rider_nic) {
+    return res.status(400).json({ error: 'rider_nic is required' });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // 1. Create the trip
+    const tripResult = await client.query(
+      `INSERT INTO trip (rider_nic, trip_date, trip_status, branch_id, created_by)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING trip_id`,
+      [
+        rider_nic,
+        trip_date || new Date().toISOString().split('T')[0],
+        'scheduled',
+        branch_id || null,
+        created_by || null
+      ]
+    );
+
+    const tripId = tripResult.rows[0].trip_id;
+
+    // 2. Create the delivery (book_id is nullable for personal deliveries)
+    const deliveryResult = await client.query(
+      `INSERT INTO delivery (book_id, trip_id, pick_location, drop_location, delivery_status)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING del_id`,
+      [
+        book_id || null,
+        tripId,
+        pick_location || '',
+        drop_location || '',
+        'pending'
+      ]
+    );
+
+    const delId = deliveryResult.rows[0].del_id;
+
+    await client.query('COMMIT');
+
+    console.log(`[trip-delivery] Created trip_id=${tripId}, del_id=${delId} for ${source_type}:${source_id} (rider: ${rider_nic})`);
+
+    res.json({
+      success: true,
+      trip_id: tripId,
+      del_id: delId,
+      message: `Trip and delivery created for ${source_type} #${source_id}`
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[trip-delivery] Transaction error:', err);
+    res.status(500).json({ error: 'Failed to create trip and delivery', details: err.message });
+  } finally {
+    client.release();
   }
 });
 

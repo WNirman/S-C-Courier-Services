@@ -271,6 +271,32 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             } : pd);
             localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
 
+            // Create trip + delivery entry when a rider is assigned
+            if (riderId) {
+                const pdObj = personalDeliveries.find(p => p.pd_id === pdId);
+                try {
+                    const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            rider_nic: riderNic,
+                            trip_date: pdObj?.requested_date || pdObj?.scheduled_date || new Date().toISOString().split('T')[0],
+                            pick_location: pdObj?.pickup_address || '',
+                            drop_location: pdObj?.drop_address || '',
+                            book_id: null,
+                            source_type: 'personal',
+                            source_id: pdId
+                        })
+                    });
+                    if (tdRes.ok) {
+                        const tdData = await tdRes.json();
+                        console.log(`Trip #${tdData.trip_id} + Delivery #${tdData.del_id} created for PD #${pdId}`);
+                    }
+                } catch (tdErr) {
+                    console.warn('Trip/delivery creation note (backend may be offline):', tdErr);
+                }
+            }
+
             alert(riderId ? `Rider (${riderName}) assigned to delivery order successfully!` : 'Rider unassigned from delivery.');
             loadPersonalDeliveries();
             loadRiders();
@@ -431,6 +457,30 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     });
                 } catch (emailErr) {
                     console.error('Failed to trigger assignment email:', emailErr);
+                }
+
+                // Create trip + delivery entry for this ATR
+                const atrObj = atrRequests.find(a => a.atr_id === atrId);
+                try {
+                    const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            rider_nic: String(riderId),
+                            trip_date: atrObj?.required_date || new Date().toISOString().split('T')[0],
+                            pick_location: '',
+                            drop_location: '',
+                            book_id: null,
+                            source_type: 'atr',
+                            source_id: atrId
+                        })
+                    });
+                    if (tdRes.ok) {
+                        const tdData = await tdRes.json();
+                        console.log(`Trip #${tdData.trip_id} + Delivery #${tdData.del_id} created for ATR #${atrId}`);
+                    }
+                } catch (tdErr) {
+                    console.warn('Trip/delivery creation note (backend may be offline):', tdErr);
                 }
             }
 
