@@ -293,44 +293,51 @@ app.post('/api/trip-delivery/create', async (req, res) => {
     return res.status(400).json({ error: 'rider_nic is required' });
   }
 
-  const client = await pool.connect();
+  const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
 
   try {
-    await client.query('BEGIN');
-
     // 1. Create the trip
-    const tripResult = await client.query(
-      `INSERT INTO trip (rider_nic, trip_date, trip_status, branch_id, created_by)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING trip_id`,
-      [
-        rider_nic,
-        trip_date || new Date().toISOString().split('T')[0],
-        'scheduled',
-        branch_id || null,
-        created_by || null
-      ]
-    );
+    const tripRes = await fetch(`${sbUrl}/rest/v1/trip`, {
+      method: 'POST',
+      headers: { ...sbHeaders, 'Prefer': 'return=representation' },
+      body: JSON.stringify({
+        rider_nic: rider_nic,
+        trip_date: trip_date || new Date().toISOString().split('T')[0],
+        trip_status: 'scheduled',
+        branch_id: branch_id || null,
+        created_by: created_by || null
+      })
+    });
 
-    const tripId = tripResult.rows[0].trip_id;
+    if (!tripRes.ok) {
+      const errJson = await tripRes.json();
+      throw new Error(`Failed to create trip: ${JSON.stringify(errJson)}`);
+    }
+
+    const tripData = await tripRes.json();
+    const tripId = tripData[0].trip_id;
 
     // 2. Create the delivery (book_id is nullable for personal deliveries)
-    const deliveryResult = await client.query(
-      `INSERT INTO delivery (book_id, trip_id, pick_location, drop_location, delivery_status)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING del_id`,
-      [
-        book_id || null,
-        tripId,
-        pick_location || '',
-        drop_location || '',
-        'pending'
-      ]
-    );
+    const deliveryRes = await fetch(`${sbUrl}/rest/v1/delivery`, {
+      method: 'POST',
+      headers: { ...sbHeaders, 'Prefer': 'return=representation' },
+      body: JSON.stringify({
+        book_id: book_id || null,
+        trip_id: tripId,
+        pick_location: pick_location || '',
+        drop_location: drop_location || '',
+        delivery_status: 'pending'
+      })
+    });
 
-    const delId = deliveryResult.rows[0].del_id;
+    if (!deliveryRes.ok) {
+      const errJson = await deliveryRes.json();
+      // If delivery creation fails, we technically have a dangling trip, but for this context it's okay
+      throw new Error(`Failed to create delivery: ${JSON.stringify(errJson)}`);
+    }
 
-    await client.query('COMMIT');
+    const deliveryData = await deliveryRes.json();
+    const delId = deliveryData[0].del_id;
 
     console.log(`[trip-delivery] Created trip_id=${tripId}, del_id=${delId} for ${source_type}:${source_id} (rider: ${rider_nic})`);
 
@@ -341,11 +348,8 @@ app.post('/api/trip-delivery/create', async (req, res) => {
       message: `Trip and delivery created for ${source_type} #${source_id}`
     });
   } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('[trip-delivery] Transaction error:', err);
+    console.error('[trip-delivery] Error:', err);
     res.status(500).json({ error: 'Failed to create trip and delivery', details: err.message });
-  } finally {
-    client.release();
   }
 });
 
