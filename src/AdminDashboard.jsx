@@ -120,13 +120,14 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             try {
                 const { data: deptData } = await supabase
                     .from('department')
-                    .select('dep_id, dep_name, comp_id, company(comp_id, comp_name)');
+                    .select('dep_id, dep_name, comp_id, company(comp_id, comp_name, comp_address)');
                 if (deptData) {
                     const dMap = {};
                     deptData.forEach(d => {
                         dMap[d.dep_id] = {
                             dep_name: d.dep_name,
-                            comp_name: d.company?.comp_name || 'SC Courier Services'
+                            comp_name: d.company?.comp_name || 'SC Courier Services',
+                            comp_address: d.company?.comp_address || ''
                         };
                     });
                     setDeptCompMap(dMap);
@@ -472,7 +473,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
                 // Create trip + delivery entry for this ATR
                 const atrObj = atrRequests.find(a => a.atr_id === atrId);
-                const startingOffice = deptCompMap[atrObj?.dep_id]?.comp_name || deptCompMap[atrObj?.dep_id]?.dep_name || 'Corporate Office';
+                const deptInfo = deptCompMap[atrObj?.dep_id];
+                const startingOffice = deptInfo?.comp_address || deptInfo?.comp_name || deptInfo?.dep_name || 'Corporate Office';
                 try {
                     const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
                         method: 'POST',
