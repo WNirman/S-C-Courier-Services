@@ -16,5 +16,8 @@ ALTER TABLE delivery ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow anon all on delivery" ON delivery FOR ALL USING (true);
 
 -- 3. Add tracking columns to delivery table so we can delete them if unassigned
-ALTER TABLE delivery ADD COLUMN source_type VARCHAR(50);
-ALTER TABLE delivery ADD COLUMN source_id INT;
+ALTER TABLE delivery ADD COLUMN IF NOT EXISTS source_type VARCHAR(50);
+ALTER TABLE delivery ADD COLUMN IF NOT EXISTS source_id INT;
+
+-- 4. CRITICAL: Reload the Supabase API schema cache so it sees the new columns
+NOTIFY pgrst, 'reload schema';
