@@ -326,7 +326,9 @@ app.post('/api/trip-delivery/create', async (req, res) => {
         trip_id: tripId,
         pick_location: pick_location || '',
         drop_location: drop_location || '',
-        delivery_status: 'pending'
+        delivery_status: 'pending',
+        source_type: source_type,
+        source_id: source_id
       })
     });
 
@@ -350,6 +352,57 @@ app.post('/api/trip-delivery/create', async (req, res) => {
   } catch (err) {
     console.error('[trip-delivery] Error:', err);
     res.status(500).json({ error: 'Failed to create trip and delivery', details: err.message });
+  }
+});
+
+// ============================================================
+// CANCEL TRIP + DELIVERY (triggered on rider unassignment)
+// ============================================================
+app.post('/api/trip-delivery/cancel', async (req, res) => {
+  const { source_type, source_id } = req.body;
+
+  if (!source_type || !source_id) {
+    return res.status(400).json({ error: 'source_type and source_id are required' });
+  }
+
+  const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
+
+  try {
+    // 1. Find the delivery record(s) matching the source
+    const getDelRes = await fetch(`${sbUrl}/rest/v1/delivery?source_type=eq.${source_type}&source_id=eq.${source_id}&select=del_id,trip_id`, {
+      method: 'GET',
+      headers: sbHeaders
+    });
+
+    if (!getDelRes.ok) throw new Error('Failed to fetch delivery for cancellation');
+    const delRecords = await getDelRes.json();
+
+    if (delRecords.length === 0) {
+      return res.json({ success: true, message: 'No auto-generated delivery found to cancel.' });
+    }
+
+    const tripIds = delRecords.map(r => r.trip_id).filter(id => id != null);
+
+    // 2. Delete the delivery record(s)
+    await fetch(`${sbUrl}/rest/v1/delivery?source_type=eq.${source_type}&source_id=eq.${source_id}`, {
+      method: 'DELETE',
+      headers: sbHeaders
+    });
+
+    // 3. Delete the associated trip record(s)
+    if (tripIds.length > 0) {
+      const tripIdList = tripIds.join(',');
+      await fetch(`${sbUrl}/rest/v1/trip?trip_id=in.(${tripIdList})`, {
+        method: 'DELETE',
+        headers: sbHeaders
+      });
+    }
+
+    console.log(`[trip-delivery] Cancelled delivery and trip(s) [${tripIds.join(',')}] for ${source_type}:${source_id}`);
+    res.json({ success: true, message: `Cancelled trip/delivery for ${source_type} #${source_id}` });
+  } catch (err) {
+    console.error('[trip-delivery-cancel] Error:', err);
+    res.status(500).json({ error: 'Failed to cancel trip/delivery', details: err.message });
   }
 });
 

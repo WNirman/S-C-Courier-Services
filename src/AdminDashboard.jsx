@@ -295,6 +295,17 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 } catch (tdErr) {
                     console.warn('Trip/delivery creation note (backend may be offline):', tdErr);
                 }
+            } else {
+                // Cancel/Delete the trip + delivery when rider is unassigned
+                try {
+                    await fetch('http://localhost:5000/api/trip-delivery/cancel', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ source_type: 'personal', source_id: pdId })
+                    });
+                } catch (cancelErr) {
+                    console.warn('Trip/delivery cancellation note:', cancelErr);
+                }
             }
 
             alert(riderId ? `Rider (${riderName}) assigned to delivery order successfully!` : 'Rider unassigned from delivery.');
@@ -461,6 +472,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
                 // Create trip + delivery entry for this ATR
                 const atrObj = atrRequests.find(a => a.atr_id === atrId);
+                const startingOffice = deptCompMap[atrObj?.dep_id]?.comp_name || deptCompMap[atrObj?.dep_id]?.dep_name || 'Corporate Office';
                 try {
                     const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
                         method: 'POST',
@@ -468,8 +480,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         body: JSON.stringify({
                             rider_nic: String(riderId),
                             trip_date: atrObj?.required_date || new Date().toISOString().split('T')[0],
-                            pick_location: '',
-                            drop_location: '',
+                            pick_location: startingOffice,
+                            drop_location: atrObj?.purpose_of_travel || '',
                             book_id: null,
                             source_type: 'atr',
                             source_id: atrId
@@ -481,6 +493,17 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     }
                 } catch (tdErr) {
                     console.warn('Trip/delivery creation note (backend may be offline):', tdErr);
+                }
+            } else {
+                // Cancel/Delete the trip + delivery when rider is unassigned
+                try {
+                    await fetch('http://localhost:5000/api/trip-delivery/cancel', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ source_type: 'atr', source_id: atrId })
+                    });
+                } catch (cancelErr) {
+                    console.warn('Trip/delivery cancellation note:', cancelErr);
                 }
             }
 
