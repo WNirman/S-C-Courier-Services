@@ -1743,96 +1743,17 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
             {activeTab === 'rides' && (
                 <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+                    display: 'flex',
+                    flexDirection: 'column',
                     gap: '2rem',
-                    alignItems: 'start',
-                    animation: 'fadeIn 0.4s ease'
+                    animation: 'fadeIn 0.4s ease',
+                    width: '100%',
+                    maxWidth: '100%',
+                    boxSizing: 'border-box'
                 }}>
-
-                    {/* Rider Management Card */}
-                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', margin: 0 }}>
-                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
-                                    <i className='bx bx-run' style={{ color: 'var(--accent-color)' }}></i> Rider Availability Management
-                                </h3>
-                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>View real-time availability of registered riders (updated automatically by rider app).</p>
-                            </div>
-                            <button onClick={loadRiders} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
-                                <i className='bx bx-refresh'></i> Refresh Riders
-                            </button>
-                        </div>
-
-                        {loadingRiders ? (
-                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading riders from database...</p>
-                        ) : ridersList.length === 0 ? (
-                            <p style={{ color: 'var(--text-secondary)' }}>No registered riders found in the rider table.</p>
-                        ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
-                                {ridersList.map((rider) => {
-                                    const statusColors = {
-                                        'Available': { bg: 'rgba(16, 185, 129, 0.1)', text: 'var(--success)', border: '1px solid rgba(16, 185, 129, 0.2)', icon: '🟢' },
-                                        'Busy': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)', icon: '🟡' },
-                                        'On Break': { bg: 'rgba(239, 68, 68, 0.1)', text: 'var(--danger)', border: '1px solid rgba(239, 68, 68, 0.2)', icon: '🔴' }
-                                    };
-                                    const statusStyle = statusColors[rider.availability_status || 'Available'] || statusColors['Available'];
-
-                                    return (
-                                        <div key={rider.staff_id || rider.nic} style={{
-                                            padding: '1.25rem',
-                                            background: 'rgba(255, 255, 255, 0.02)',
-                                            borderRadius: '16px',
-                                            border: '1px solid var(--card-border)',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            gap: '1rem',
-                                            transition: 'all 0.3s ease'
-                                        }}
-                                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; }}
-                                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
-                                        >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                                <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.1rem' }}>
-                                                    {rider.staff_name ? rider.staff_name.charAt(0).toUpperCase() : 'R'}
-                                                </div>
-                                                <div style={{ textAlign: 'left' }}>
-                                                    <h4 style={{ color: '#fff', margin: 0, fontSize: '1.05rem' }}>{rider.staff_name}</h4>
-                                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.15rem 0 0 0' }}>{rider.staff_email || rider.staff_phone}</p>
-                                                    {rider.nic && (
-                                                        <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>NIC: {rider.nic}</span>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.75rem' }}>
-                                                <span style={{
-                                                    display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
-                                                    padding: '0.3rem 0.75rem',
-                                                    background: statusStyle.bg,
-                                                    color: statusStyle.text,
-                                                    borderRadius: '100px',
-                                                    fontSize: '0.8rem',
-                                                    fontWeight: '600',
-                                                    border: statusStyle.border
-                                                }}>
-                                                    {statusStyle.icon} {rider.availability_status || 'Available'}
-                                                </span>
-
-                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                                    🏍️ {rider.vehicle_type || 'Vehicle'}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-
                     {/* Unified Ride & Order Delivery Assignment Card */}
-                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', margin: 0 }}>
-                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', width: '100%' }}>
                             <div>
                                 <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
                                     <i className='bx bx-map-pin' style={{ color: 'var(--accent-color)' }}></i> Rider & Delivery Assignment Panel
@@ -1840,14 +1761,14 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Assign passenger travel requests and package delivery orders to available riders.</p>
                             </div>
                             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                                <button onClick={() => { loadAtrRequests(); loadPersonalDeliveries(); loadRiders(); }} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                                <button onClick={() => { loadAtrRequests(); loadPersonalDeliveries(); loadRiders(); }} className="secondary-btn" style={{ width: 'auto', padding: '0.5rem 1rem', height: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
                                     <i className='bx bx-refresh'></i> Refresh All
                                 </button>
                             </div>
                         </div>
 
                         {/* Filter Bar */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', background: 'rgba(0,0,0,0.2)', padding: '1rem 1.25rem', borderRadius: '12px', marginBottom: '1.5rem', border: '1px solid var(--card-border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', background: 'rgba(0,0,0,0.2)', padding: '1rem 1.25rem', borderRadius: '12px', marginBottom: '1.5rem', border: '1px solid var(--card-border)', width: '100%', boxSizing: 'border-box' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: '600', marginRight: '0.5rem' }}>Filter Category:</span>
                                 <button
@@ -1915,17 +1836,17 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                     type: 'atr',
                                     refNumber: req.atr_number || `ATR-${req.atr_id}`,
                                     status: req.status,
-                                    title: `🏢 ${companyDisplayName} (${deptDisplayName})`,
+                                    title: `${companyDisplayName} (${deptDisplayName})`,
                                     subtitle: `Passenger: ${req.principal_passenger_name} • ${req.vehicle_type || 'Vehicle'} • ${req.required_date} @ ${req.required_time}`,
                                     details: [
-                                        { label: '🏢 Corporate Client', val: companyDisplayName },
-                                        { label: '🏛️ Department', val: deptDisplayName },
+                                        { label: '🏢 Client', val: companyDisplayName },
+                                        { label: '🏛️ Dept', val: deptDisplayName },
                                         { label: '👤 Passenger', val: `${req.principal_passenger_name} (${req.principal_passenger_designation || 'Staff'})` },
-                                        { label: '🚘 Vehicle Type', val: req.vehicle_type || 'Standard' },
+                                        { label: '🚘 Vehicle', val: req.vehicle_type || 'Standard' },
                                         { label: '📅 Date & Time', val: `${req.required_date} @ ${req.required_time}` },
                                         { label: '📏 Est. Distance', val: `${req.estimated_distance || 0} km` },
                                         { label: '💰 Est. Cost', val: `${req.estimated_cost || 0} LKR` },
-                                        ...(req.actual_distance ? [{ label: '📍 Actual Distance', val: `${req.actual_distance} km (Rider Trip)` }] : []),
+                                        ...(req.actual_distance ? [{ label: '📍 Actual Distance', val: `${req.actual_distance} km` }] : []),
                                         ...(req.actual_cost ? [{ label: '💵 Actual Cost', val: `${req.actual_cost} LKR` }] : [])
                                     ],
                                     assignedRiderId: localAtrMap[req.atr_id] || req.approved_by,
@@ -1938,10 +1859,10 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 type: 'pd',
                                 refNumber: `PD-${pd.pd_id}`,
                                 status: pd.status,
-                                title: `Package Delivery: ${pd.item_type || 'Parcel'}`,
+                                title: `Package: ${pd.item_type || 'Parcel'}`,
                                 subtitle: `From: ${pd.pickup_address} ➔ To: ${pd.drop_address}`,
                                 details: [
-                                    { label: '📦 Item / Weight', val: `${pd.item_type || 'Parcel'} (${pd.item_weight || 'N/A'})` },
+                                    { label: '📦 Item', val: `${pd.item_type || 'Parcel'} (${pd.item_weight || 'N/A'})` },
                                     { label: '📍 Pickup', val: pd.pickup_address },
                                     { label: '🏁 Dropoff', val: pd.drop_address },
                                     { label: '👤 Sender/Receiver', val: `${pd.sender_name} (${pd.sender_phone}) ➔ ${pd.receiver_name}` },
@@ -1974,7 +1895,32 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                             }
 
                             return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
+                                    {/* Horizontal Bar Header */}
+                                    <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: '130px 1.4fr 140px 110px 100px auto',
+                                        alignItems: 'center',
+                                        gap: '1rem',
+                                        padding: '0.6rem 1.25rem',
+                                        background: 'rgba(255, 255, 255, 0.04)',
+                                        borderRadius: '8px',
+                                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                                        color: 'var(--text-secondary)',
+                                        fontSize: '0.78rem',
+                                        fontWeight: '700',
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.05em'
+                                    }}>
+                                        <div>REF / TYPE</div>
+                                        <div>DETAILS & ROUTE</div>
+                                        <div>SCHEDULE</div>
+                                        <div>ESTIMATE</div>
+                                        <div>STATUS</div>
+                                        <div style={{ textAlign: 'right' }}>ACTIONS</div>
+                                    </div>
+
+                                    {/* Horizontal Bar Items */}
                                     {combined.map((item) => {
                                         const isAtr = item.type === 'atr';
                                         const assignedRiderObj = ridersList.find(r => 
@@ -1989,161 +1935,179 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                         const riderDisplayName = assignedRiderObj ? assignedRiderObj.staff_name : (item.assignedRiderName || (typeof item.assignedRiderId === 'string' ? item.assignedRiderId : null));
                                         const isPending = item.status === 'Pending';
                                         const isRejected = item.status === 'Rejected';
-                                        const isApprovedOrAssigned = item.status === 'Approved' || item.status === 'Accepted' || item.status === 'Assigned' || item.status === 'In Transit' || item.status === 'Completed';
+
+                                        const scheduleInfo = isAtr 
+                                            ? `${item.rawItem.required_date || 'N/A'} ${item.rawItem.required_time || ''}`
+                                            : `${item.rawItem.requested_date || item.rawItem.scheduled_date || 'N/A'} ${item.rawItem.requested_time || item.rawItem.scheduled_time || ''}`;
+
+                                        const costDistInfo = isAtr
+                                            ? `${item.rawItem.estimated_cost || 0} LKR (${item.rawItem.estimated_distance || 0} km)`
+                                            : (item.rawItem.item_weight ? `Weight: ${item.rawItem.item_weight}` : 'Standard');
 
                                         return (
                                             <div key={item.id} style={{
-                                                padding: '1.5rem',
-                                                background: isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)',
-                                                borderRadius: '16px',
-                                                border: isAtr ? '1px solid rgba(59, 130, 246, 0.15)' : '1px solid rgba(168, 85, 247, 0.15)',
-                                                display: 'flex',
-                                                flexWrap: 'wrap',
-                                                justifyContent: 'space-between',
+                                                display: 'grid',
+                                                gridTemplateColumns: '130px 1.4fr 140px 110px 100px auto',
                                                 alignItems: 'center',
-                                                gap: '1.5rem',
-                                                transition: 'all 0.3s ease',
-                                                textAlign: 'left'
+                                                gap: '1rem',
+                                                padding: '0.9rem 1.25rem',
+                                                background: isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)',
+                                                borderRadius: '10px',
+                                                border: isAtr ? '1px solid rgba(59, 130, 246, 0.15)' : '1px solid rgba(168, 85, 247, 0.15)',
+                                                borderLeft: isAtr ? '4px solid #3b82f6' : '4px solid #a855f7',
+                                                transition: 'all 0.2s ease',
+                                                textAlign: 'left',
+                                                width: '100%'
                                             }}
-                                                onMouseEnter={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.07)' : 'rgba(168, 85, 247, 0.07)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)'; }}
+                                                onMouseEnter={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.08)' : 'rgba(168, 85, 247, 0.08)'; e.currentTarget.style.borderColor = isAtr ? 'rgba(59, 130, 246, 0.35)' : 'rgba(168, 85, 247, 0.35)'; }}
+                                                onMouseLeave={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)'; e.currentTarget.style.borderColor = isAtr ? 'rgba(59, 130, 246, 0.15)' : 'rgba(168, 85, 247, 0.15)'; }}
                                             >
-                                                <div style={{ flex: '1 1 350px' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
-                                                        <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fff', fontFamily: 'monospace', background: 'rgba(255,255,255,0.08)', padding: '0.2rem 0.6rem', borderRadius: '6px' }}>
-                                                            {item.refNumber}
-                                                        </span>
-                                                        <span style={{
-                                                            display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
-                                                            padding: '0.2rem 0.65rem', borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
-                                                            background: isAtr ? 'rgba(59, 130, 246, 0.15)' : 'rgba(168, 85, 247, 0.15)',
-                                                            color: isAtr ? '#60a5fa' : '#c084fc',
-                                                            border: isAtr ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(168, 85, 247, 0.3)'
-                                                        }}>
-                                                            {isAtr ? '✈️ ATR Travel Request' : '📦 Personal Package Delivery'}
-                                                        </span>
-                                                        <span style={{
-                                                            display: 'inline-block', padding: '0.2rem 0.65rem',
-                                                            background: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'rgba(16,185,129,0.1)' : item.status === 'Pending' || item.status === 'Accepted' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
-                                                            color: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'var(--success)' : item.status === 'Pending' || item.status === 'Accepted' ? '#f59e0b' : 'var(--danger)',
-                                                            borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
-                                                            border: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'Pending' || item.status === 'Accepted' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
-                                                        }}>{item.status}</span>
-                                                    </div>
-
-                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                                                        {item.details.map((d, idx) => (
-                                                            <div key={idx}><strong>{d.label}:</strong> <span style={{ color: '#e5e7eb' }}>{d.val}</span></div>
-                                                        ))}
-                                                    </div>
+                                                {/* Col 1: Ref & Badge */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                                    <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#fff', fontFamily: 'monospace' }}>
+                                                        {item.refNumber}
+                                                    </span>
+                                                    <span style={{
+                                                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                                                        padding: '0.15rem 0.45rem', borderRadius: '100px', fontSize: '0.7rem', fontWeight: '600', width: 'fit-content',
+                                                        background: isAtr ? 'rgba(59, 130, 246, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                                                        color: isAtr ? '#60a5fa' : '#c084fc',
+                                                        border: isAtr ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(168, 85, 247, 0.3)'
+                                                    }}>
+                                                        {isAtr ? '✈️ ATR' : '📦 Delivery'}
+                                                    </span>
                                                 </div>
 
-                                                <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                                                {/* Col 2: Details / Title / Subtitle */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', minWidth: 0 }}>
+                                                    <span style={{ color: '#fff', fontWeight: '600', fontSize: '0.92rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.title}>
+                                                        {item.title}
+                                                    </span>
+                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.subtitle}>
+                                                        {item.subtitle}
+                                                    </span>
+                                                </div>
+
+                                                {/* Col 3: Schedule */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                    <span style={{ color: '#e5e7eb', fontWeight: '500' }}>📅 {scheduleInfo.split(' ')[0]}</span>
+                                                    <span>⏰ {scheduleInfo.split(' ').slice(1).join(' ') || 'Standard'}</span>
+                                                </div>
+
+                                                {/* Col 4: Cost / Distance */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                    <span style={{ color: '#10b981', fontWeight: '600' }}>{costDistInfo}</span>
+                                                    {isAtr && item.rawItem.actual_distance && (
+                                                        <span style={{ color: '#60a5fa', fontSize: '0.72rem' }}>Act: {item.rawItem.actual_distance}km</span>
+                                                    )}
+                                                </div>
+
+                                                {/* Col 5: Status Badge */}
+                                                <div>
+                                                    <span style={{
+                                                        display: 'inline-block', padding: '0.25rem 0.55rem',
+                                                        background: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'rgba(16,185,129,0.1)' : item.status === 'Pending' || item.status === 'Accepted' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                                        color: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'var(--success)' : item.status === 'Pending' || item.status === 'Accepted' ? '#f59e0b' : 'var(--danger)',
+                                                        borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                        border: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'Pending' || item.status === 'Accepted' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                                    }}>{item.status}</span>
+                                                </div>
+
+                                                {/* Col 6: Actions Bar */}
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
                                                     {isAtr && (item.status === 'Approved' || item.status === 'Assigned' || item.status === 'Completed') && (
                                                         <button
                                                             onClick={() => handleOpenAdminAtrModal(item.rawItem)}
                                                             className="secondary-btn"
                                                             style={{
-                                                                padding: '0.45rem 0.85rem', height: 'auto', fontSize: '0.8rem',
+                                                                padding: '0.35rem 0.65rem', height: 'auto', fontSize: '0.75rem',
                                                                 background: item.rawItem.actual_distance ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
                                                                 color: item.rawItem.actual_distance ? 'var(--success)' : '#60a5fa',
                                                                 border: item.rawItem.actual_distance ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(59,130,246,0.25)',
-                                                                cursor: 'pointer', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '0.3rem'
+                                                                cursor: 'pointer', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.25rem'
                                                             }}
                                                         >
-                                                            <i className='bx bx-edit-alt'></i>
-                                                            {item.rawItem.actual_distance ? `Actual: ${item.rawItem.actual_distance} km` : 'Record Actuals'}
+                                                            <i className='bx bx-edit-alt'></i> Actuals
                                                         </button>
                                                     )}
 
                                                     {/* Step 1: When Pending, show Approve / Reject */}
                                                     {isPending ? (
-                                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                                                <button
-                                                                    onClick={() => isAtr ? handleApproveAtr(item.rawItem.atr_id) : handleApprovePD(item.rawItem.pd_id)}
-                                                                    className="primary-btn pulse-effect"
-                                                                    style={{
-                                                                        width: 'auto',
-                                                                        padding: '0.55rem 1.15rem',
-                                                                        height: '38px',
-                                                                        fontSize: '0.85rem',
-                                                                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        gap: '0.35rem',
-                                                                        boxShadow: '0 4px 14px rgba(16, 185, 129, 0.3)',
-                                                                        cursor: 'pointer'
-                                                                    }}
-                                                                    title="Approve this request so it can be assigned to a rider"
-                                                                >
-                                                                    <i className='bx bx-check-circle'></i> Approve Request
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => isAtr ? handleRejectAtr(item.rawItem.atr_id) : handleRejectPD(item.rawItem.pd_id)}
-                                                                    className="secondary-btn"
-                                                                    style={{
-                                                                        padding: '0.55rem 0.9rem',
-                                                                        height: '38px',
-                                                                        fontSize: '0.85rem',
-                                                                        background: 'rgba(239, 68, 68, 0.1)',
-                                                                        color: 'var(--danger)',
-                                                                        border: '1px solid rgba(239, 68, 68, 0.25)',
-                                                                        cursor: 'pointer',
-                                                                        borderRadius: '8px',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        gap: '0.3rem'
-                                                                    }}
-                                                                    title="Reject this request"
-                                                                >
-                                                                    <i className='bx bx-x-circle'></i> Reject
-                                                                </button>
-                                                            </div>
-                                                            <span style={{ color: '#f59e0b', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                                                <i className='bx bx-lock-alt'></i> Approve first to match rider
-                                                            </span>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                            <button
+                                                                onClick={() => isAtr ? handleApproveAtr(item.rawItem.atr_id) : handleApprovePD(item.rawItem.pd_id)}
+                                                                className="primary-btn pulse-effect"
+                                                                style={{
+                                                                    width: 'auto',
+                                                                    padding: '0.4rem 0.8rem',
+                                                                    height: '32px',
+                                                                    fontSize: '0.78rem',
+                                                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '0.25rem',
+                                                                    cursor: 'pointer',
+                                                                    borderRadius: '6px'
+                                                                }}
+                                                                title="Approve request"
+                                                            >
+                                                                <i className='bx bx-check'></i> Approve
+                                                            </button>
+                                                            <button
+                                                                onClick={() => isAtr ? handleRejectAtr(item.rawItem.atr_id) : handleRejectPD(item.rawItem.pd_id)}
+                                                                className="secondary-btn"
+                                                                style={{
+                                                                    padding: '0.4rem 0.65rem',
+                                                                    height: '32px',
+                                                                    fontSize: '0.78rem',
+                                                                    background: 'rgba(239, 68, 68, 0.1)',
+                                                                    color: 'var(--danger)',
+                                                                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                                                                    cursor: 'pointer',
+                                                                    borderRadius: '6px',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '0.2rem'
+                                                                }}
+                                                                title="Reject request"
+                                                            >
+                                                                <i className='bx bx-x'></i> Reject
+                                                            </button>
                                                         </div>
                                                     ) : isRejected ? (
-                                                        <div style={{ padding: '0.4rem 0.8rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', color: 'var(--danger)', fontSize: '0.82rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                                                            <i className='bx bx-x-circle'></i> Request Rejected
-                                                        </div>
+                                                        <span style={{ padding: '0.3rem 0.6rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.75rem', fontWeight: 600 }}>
+                                                            Rejected
+                                                        </span>
                                                     ) : riderDisplayName ? (
                                                         /* Step 2b: Rider is already assigned */
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '0.5rem 1rem', borderRadius: '12px' }}>
-                                                            <div style={{ textAlign: 'left' }}>
-                                                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: 0 }}>Assigned Rider</p>
-                                                                <p style={{ color: '#fff', fontSize: '0.9rem', fontWeight: '600', margin: 0 }}>👤 {riderDisplayName}</p>
-                                                            </div>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '0.35rem 0.65rem', borderRadius: '8px' }}>
+                                                            <span style={{ color: '#fff', fontSize: '0.8rem', fontWeight: '600' }}>👤 {riderDisplayName}</span>
                                                             <button
                                                                 onClick={() => {
                                                                     if (isAtr) handleAssignRider(item.rawItem.atr_id, null);
                                                                     else handleAssignRiderToPD(item.rawItem.pd_id, null);
                                                                 }}
                                                                 className="secondary-btn"
-                                                                style={{ padding: '0.35rem 0.6rem', height: 'auto', fontSize: '0.8rem', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.15)', cursor: 'pointer', borderRadius: '8px' }}
+                                                                style={{ padding: '0.2rem 0.45rem', height: 'auto', fontSize: '0.72rem', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.15)', cursor: 'pointer', borderRadius: '4px' }}
                                                             >
                                                                 Unassign
                                                             </button>
                                                         </div>
                                                     ) : (
                                                         /* Step 2a: Request is Approved -> Match Rider Now */
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                                            <div className="input-wrapper" style={{ position: 'relative', width: '220px', margin: 0 }}>
-                                                                <select
-                                                                    id={`select-rider-${item.id}`}
-                                                                    defaultValue=""
-                                                                    style={{ width: '100%', padding: '0.6rem 2rem 0.6rem 0.85rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(16, 185, 129, 0.4)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
-                                                                >
-                                                                    <option value="" disabled>Select Rider to Match...</option>
-                                                                    {ridersList.map(r => (
-                                                                        <option key={r.staff_id} value={r.staff_id}>
-                                                                            {r.staff_name} ({r.availability_status || 'Available'})
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                                <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }}></i>
-                                                            </div>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                            <select
+                                                                id={`select-rider-${item.id}`}
+                                                                defaultValue=""
+                                                                style={{ maxWidth: '160px', padding: '0.4rem 0.6rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(16, 185, 129, 0.4)', borderRadius: '6px', color: '#fff', fontSize: '0.78rem', outline: 'none', cursor: 'pointer' }}
+                                                            >
+                                                                <option value="" disabled>Select Rider...</option>
+                                                                {ridersList.map(r => (
+                                                                    <option key={r.staff_id} value={r.staff_id}>
+                                                                        {r.staff_name} ({r.availability_status || 'Available'})
+                                                                    </option>
+                                                                ))}
+                                                            </select>
                                                             <button
                                                                 onClick={() => {
                                                                     const sel = document.getElementById(`select-rider-${item.id}`);
@@ -2155,9 +2119,9 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                                     }
                                                                 }}
                                                                 className="primary-btn"
-                                                                style={{ width: 'auto', padding: '0.6rem 1.25rem', height: '38px', fontSize: '0.85rem', background: isAtr ? 'var(--accent-color)' : '#a855f7' }}
+                                                                style={{ width: 'auto', padding: '0.4rem 0.8rem', height: '32px', fontSize: '0.78rem', background: isAtr ? 'var(--accent-color)' : '#a855f7', borderRadius: '6px' }}
                                                             >
-                                                                Match Rider
+                                                                Match
                                                             </button>
                                                         </div>
                                                     )}
@@ -2173,8 +2137,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             )}
 
             {activeTab === 'deliveries' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem', animation: 'fadeIn 0.4s ease' }}>
-                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', margin: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem', animation: 'fadeIn 0.4s ease', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: 0 }}>
                         <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
                                 <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
@@ -2182,7 +2146,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 </h3>
                                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Accept delivery requests and send scheduling emails to customers.</p>
                             </div>
-                            <button onClick={loadPersonalDeliveries} className="secondary-btn" style={{ padding: '0.5rem 1rem', height: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                            <button onClick={loadPersonalDeliveries} className="secondary-btn" style={{ width: 'auto', padding: '0.5rem 1rem', height: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
                                 <i className='bx bx-refresh'></i> Refresh
                             </button>
                         </div>
