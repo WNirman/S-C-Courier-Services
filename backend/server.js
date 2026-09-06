@@ -123,7 +123,7 @@ app.post('/api/auth/register', async (req, res) => {
 // Admin Route: Get all assigned staff
 app.get('/api/admin/staff', async (req, res) => {
   try {
-    const result = await pool.query("SELECT staff_email FROM Staff WHERE staff_role = 'staff'");
+    const result = await pool.query("SELECT staff_email FROM Staff");
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -189,10 +189,10 @@ app.post('/api/admin/staff', async (req, res) => {
     // Insert staff
     const result = await pool.query(
       `INSERT INTO Staff (
-        staff_name, staff_phone, branch_id, staff_role, staff_active_status, 
+        staff_name, staff_phone, branch_id, staff_active_status, 
         staff_email, staff_password
-      ) VALUES ($1, $2, $3, $4, true, $5, $6) RETURNING *`,
-      [name, phoneTrimmed, branchId, role, generatedUsername, hashedPassword]
+      ) VALUES ($1, $2, $3, true, $4, $5) RETURNING *`,
+      [name, phoneTrimmed, branchId, generatedUsername, hashedPassword]
     );
 
     res.json({
@@ -456,8 +456,8 @@ app.put('/api/admin/profile', async (req, res) => {
 
       // Insert new profile row into Staff for the hardcoded admin
       await pool.query(
-        `INSERT INTO Staff (staff_name, staff_email, staff_phone, branch_id, staff_role, staff_active_status, staff_password, staff_avatar_url) 
-         VALUES ($1, $2, $3, $4, 'admin', true, 'admin123', $5)`,
+        `INSERT INTO Staff (staff_name, staff_email, staff_phone, branch_id, staff_active_status, staff_password, staff_avatar_url) 
+         VALUES ($1, $2, $3, $4, true, 'admin123', $5)`,
         [name, email, phone, dbBranchId, avatarUrl]
       );
     } else {
@@ -995,19 +995,12 @@ app.post('/api/atr/send-assignment-email', async (req, res) => {
       return res.status(400).json({ error: 'No customer email found for this ATR' });
     }
 
-    // Fetch rider details (from public.rider or public.staff)
+    // Fetch rider details from public.rider table
     let riderRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/rider?nic=eq.${encodeURIComponent(riderId)}&select=*`,
+      `${SUPABASE_URL}/rest/v1/rider?or=(NIC.eq.${encodeURIComponent(riderId)},email.eq.${encodeURIComponent(riderId)})&select=*`,
       { headers }
     );
     let riderRows = await riderRes.json();
-    if (!Array.isArray(riderRows) || riderRows.length === 0) {
-      riderRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/staff?staff_id=eq.${encodeURIComponent(riderId)}&select=*`,
-        { headers }
-      );
-      riderRows = await riderRes.json();
-    }
     if (!Array.isArray(riderRows) || riderRows.length === 0) {
       return res.status(404).json({ error: 'Assigned rider not found' });
     }

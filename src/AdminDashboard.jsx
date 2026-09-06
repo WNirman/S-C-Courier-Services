@@ -155,6 +155,22 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
     const loadPersonalDeliveries = async () => {
         setLoadingPD(true);
+        try {
+            // 1. Fetch directly from Supabase cloud (visible across ALL PCs)
+            const { data, error } = await supabase
+                .from('personal_delivery')
+                .select('*')
+                .order('pd_id', { ascending: false });
+
+            if (!error && data) {
+                setPersonalDeliveries(data);
+                setLoadingPD(false);
+                return;
+            }
+        } catch (sbErr) {
+            console.warn('Supabase PD fetch note:', sbErr);
+        }
+
         let fetchedData = [];
         try {
             const res = await fetch('http://localhost:5000/api/personal-deliveries');
@@ -163,7 +179,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 if (Array.isArray(data)) fetchedData = data;
             }
         } catch (err) {
-            console.error('Error loading personal deliveries:', err);
+            console.error('Error loading personal deliveries from backend:', err);
         }
         const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
         const combined = [...localData, ...fetchedData];
@@ -231,13 +247,36 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     };
 
     useEffect(() => {
-        if (activeTab === 'rides') {
+        if (activeTab === 'rides' || activeTab === 'deliveries') {
             loadRiders();
             loadAtrRequests();
             loadPersonalDeliveries();
-        }
-        if (activeTab === 'deliveries') {
-            loadPersonalDeliveries();
+
+            // 1. Background sync interval (ensures multi-PC sync even if websockets are delayed)
+            const syncInterval = setInterval(() => {
+                loadAtrRequests();
+                loadPersonalDeliveries();
+                loadRiders();
+            }, 5000);
+
+            // 2. Supabase Realtime channel for instant push updates across all PCs
+            const liveChannel = supabase
+                .channel('admin-multi-pc-sync')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'atr' }, () => {
+                    loadAtrRequests();
+                })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'personal_delivery' }, () => {
+                    loadPersonalDeliveries();
+                })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'rider' }, () => {
+                    loadRiders();
+                })
+                .subscribe();
+
+            return () => {
+                clearInterval(syncInterval);
+                supabase.removeChannel(liveChannel);
+            };
         }
     }, [activeTab]);
 
@@ -248,33 +287,28 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         try {
             const selectedRiderObj = ridersList.find(r => r.staff_id === riderId || r.nic === riderId);
             const riderName = selectedRiderObj ? selectedRiderObj.staff_name : riderId;
-            const riderNic = selectedRiderObj ? (selectedRiderObj.nic || selectedRiderObj.staff_phone) : riderId;
+            const riderNic = selectedRiderObj ? (selectedRiderObj.nic || selectedRiderObj.staff_phone) : (riderId || null);
 
-            try {
-                await supabase
-                    .from('personal_delivery')
-                    .update({
-                        status: riderId ? 'Assigned' : 'Approved',
-                        accepted_by: selectedRiderObj ? selectedRiderObj.staff_email : null,
-                        assigned_rider_nic: riderNic
-                    })
-                    .eq('pd_id', pdId);
-            } catch (sbErr) {
-                console.warn('Supabase status update note:', sbErr);
+            // 1. Directly update Supabase cloud database
+            const { error: sbErr } = await supabase
+                .from('personal_delivery')
+                .update({
+                    status: riderNic ? 'Assigned' : 'Approved',
+                    accepted_by: selectedRiderObj ? selectedRiderObj.staff_email : null,
+                    assigned_rider_nic: riderNic
+                })
+                .eq('pd_id', pdId);
+
+            if (sbErr) {
+                console.error('Supabase PD assign error:', sbErr);
+                alert('Database update error: ' + sbErr.message);
+                return;
             }
 
-            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
-            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? {
-                ...pd,
-                status: riderId ? 'Assigned' : 'Approved',
-                accepted_by: selectedRiderObj ? selectedRiderObj.staff_email : null,
-                assigned_rider_nic: riderNic
-            } : pd);
-            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
-
             // Create trip + delivery entry when a rider is assigned
-            if (riderId) {
+            if (riderNic) {
                 const pdObj = personalDeliveries.find(p => p.pd_id === pdId);
+                let backendOk = false;
                 try {
                     const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
                         method: 'POST',
@@ -289,15 +323,37 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                             source_id: pdId
                         })
                     });
-                    if (tdRes.ok) {
-                        const tdData = await tdRes.json();
-                        console.log(`Trip #${tdData.trip_id} + Delivery #${tdData.del_id} created for PD #${pdId}`);
-                    }
+                    if (tdRes.ok) backendOk = true;
                 } catch (tdErr) {
-                    console.warn('Trip/delivery creation note (backend may be offline):', tdErr);
+                    console.warn('Backend server offline, writing directly to Supabase cloud...');
+                }
+
+                if (!backendOk) {
+                    try {
+                        const { data: tripData } = await supabase
+                            .from('trip')
+                            .insert({
+                                rider_nic: riderNic,
+                                trip_date: pdObj?.requested_date || pdObj?.scheduled_date || new Date().toISOString().split('T')[0],
+                                trip_status: 'scheduled'
+                            })
+                            .select('trip_id')
+                            .single();
+                        if (tripData) {
+                            await supabase.from('delivery').insert({
+                                trip_id: tripData.trip_id,
+                                pick_location: pdObj?.pickup_address || '',
+                                drop_location: pdObj?.drop_address || '',
+                                delivery_status: 'assigned',
+                                source_type: 'personal',
+                                source_id: pdId
+                            });
+                        }
+                    } catch (directErr) {
+                        console.warn('Direct trip/delivery create note:', directErr);
+                    }
                 }
             } else {
-                // Cancel/Delete the trip + delivery when rider is unassigned
                 try {
                     await fetch('http://localhost:5000/api/trip-delivery/cancel', {
                         method: 'POST',
@@ -305,7 +361,22 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         body: JSON.stringify({ source_type: 'personal', source_id: pdId })
                     });
                 } catch (cancelErr) {
-                    console.warn('Trip/delivery cancellation note:', cancelErr);
+                    try {
+                        const { data: delRows } = await supabase
+                            .from('delivery')
+                            .select('del_id, trip_id')
+                            .eq('source_type', 'personal')
+                            .eq('source_id', pdId);
+                        if (delRows && delRows.length > 0) {
+                            const tripIds = delRows.map(r => r.trip_id).filter(Boolean);
+                            await supabase.from('delivery').delete().eq('source_type', 'personal').eq('source_id', pdId);
+                            if (tripIds.length > 0) {
+                                await supabase.from('trip').delete().in('trip_id', tripIds);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Direct cancel note:', e);
+                    }
                 }
             }
 
@@ -423,64 +494,47 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
     const handleAssignRider = async (atrId, riderId) => {
         try {
-            let updatePayload = { approved_by: riderId ? String(riderId) : null };
-            let { error } = await supabase
+            const targetRider = ridersList.find(r => r.staff_id === riderId || r.nic === riderId);
+            const riderNic = targetRider?.nic || (riderId ? String(riderId) : null);
+
+            // 1. Update in Supabase cloud database directly (visible across ALL PCs!)
+            const { error } = await supabase
                 .from('atr')
-                .update(updatePayload)
+                .update({ 
+                    assigned_rider_nic: riderNic,
+                    status: riderNic ? 'Assigned' : 'Approved'
+                })
                 .eq('atr_id', atrId);
 
             if (error) {
-                console.warn('Direct string assignment note:', error.message);
-                if (error.message && (error.message.includes('out of range') || error.message.includes('integer') || error.message.includes('invalid input syntax'))) {
-                    const digits = String(riderId).replace(/\D/g, '');
-                    const safeIntId = riderId ? (parseInt(digits.slice(-8)) || 1) : null;
-                    const fallbackRes = await supabase
-                        .from('atr')
-                        .update({ approved_by: safeIntId })
-                        .eq('atr_id', atrId);
-                    if (fallbackRes.error) {
-                        console.warn('Fallback integer update note:', fallbackRes.error.message);
-                    }
-                } else if (error.message && (error.message.includes('foreign key constraint') || error.message.includes('violates foreign key') || error.message.includes('fkey'))) {
-                    console.warn('Foreign key constraint on approved_by, saving local assignment mapping.');
-                } else {
-                    throw error;
-                }
+                console.error('Error updating atr in Supabase:', error);
+                alert('Failed to assign rider in database: ' + error.message);
+                return;
             }
 
-            // Record full NIC assignment locally as fallback
-            const localMap = JSON.parse(localStorage.getItem('local_atr_assignments') || '{}');
-            if (riderId) {
-                localMap[atrId] = riderId;
-            } else {
-                delete localMap[atrId];
-            }
-            localStorage.setItem('local_atr_assignments', JSON.stringify(localMap));
-
-            if (riderId) {
-                // Trigger assignment email
+            if (riderNic) {
+                // Trigger assignment email via backend if online
                 try {
                     await fetch('http://localhost:5000/api/atr/send-assignment-email', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ atrId, riderId }),
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ atrId, riderId: riderNic }),
                     });
                 } catch (emailErr) {
-                    console.error('Failed to trigger assignment email:', emailErr);
+                    console.warn('Assignment email notice:', emailErr);
                 }
 
                 // Create trip + delivery entry for this ATR
                 const atrObj = atrRequests.find(a => a.atr_id === atrId);
                 const deptInfo = deptCompMap[atrObj?.dep_id];
                 const startingOffice = deptInfo?.comp_address || deptInfo?.comp_name || deptInfo?.dep_name || 'Corporate Office';
+                let tripCreated = false;
                 try {
                     const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            rider_nic: String(riderId),
+                            rider_nic: riderNic,
                             trip_date: atrObj?.required_date || new Date().toISOString().split('T')[0],
                             pick_location: startingOffice,
                             drop_location: atrObj?.purpose_of_travel || '',
@@ -489,12 +543,37 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                             source_id: atrId
                         })
                     });
-                    if (tdRes.ok) {
-                        const tdData = await tdRes.json();
-                        console.log(`Trip #${tdData.trip_id} + Delivery #${tdData.del_id} created for ATR #${atrId}`);
-                    }
+                    if (tdRes.ok) tripCreated = true;
                 } catch (tdErr) {
-                    console.warn('Trip/delivery creation note (backend may be offline):', tdErr);
+                    console.warn('Trip-delivery backend offline, creating trip/delivery directly in Supabase...');
+                }
+
+                if (!tripCreated) {
+                    try {
+                        const { data: tripRow } = await supabase
+                            .from('trip')
+                            .insert({
+                                rider_nic: riderNic,
+                                trip_date: atrObj?.required_date || new Date().toISOString().split('T')[0],
+                                trip_status: 'scheduled'
+                            })
+                            .select('trip_id')
+                            .single();
+                        if (tripRow) {
+                            await supabase
+                                .from('delivery')
+                                .insert({
+                                    trip_id: tripRow.trip_id,
+                                    pick_location: startingOffice,
+                                    drop_location: atrObj?.purpose_of_travel || '',
+                                    delivery_status: 'assigned',
+                                    source_type: 'atr',
+                                    source_id: atrId
+                                });
+                        }
+                    } catch (directTripErr) {
+                        console.warn('Direct trip create note:', directTripErr);
+                    }
                 }
             } else {
                 // Cancel/Delete the trip + delivery when rider is unassigned
@@ -505,11 +584,26 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         body: JSON.stringify({ source_type: 'atr', source_id: atrId })
                     });
                 } catch (cancelErr) {
-                    console.warn('Trip/delivery cancellation note:', cancelErr);
+                    try {
+                        const { data: delRows } = await supabase
+                            .from('delivery')
+                            .select('del_id, trip_id')
+                            .eq('source_type', 'atr')
+                            .eq('source_id', atrId);
+                        if (delRows && delRows.length > 0) {
+                            const tripIds = delRows.map(r => r.trip_id).filter(Boolean);
+                            await supabase.from('delivery').delete().eq('source_type', 'atr').eq('source_id', atrId);
+                            if (tripIds.length > 0) {
+                                await supabase.from('trip').delete().in('trip_id', tripIds);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Direct cancel error:', e);
+                    }
                 }
             }
 
-            alert('Rider assigned successfully!');
+            alert(riderNic ? 'Rider assigned successfully!' : 'Rider unassigned.');
             loadAtrRequests();
             loadRiders();
         } catch (err) {
@@ -518,15 +612,17 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         }
     };
 
-    const handleUpdateRiderStatus = async (staffId, newStatus) => {
-        setRidersList(prev => prev.map(r => r.staff_id === staffId ? { ...r, availability_status: newStatus } : r));
+    const handleUpdateRiderStatus = async (riderId, newStatus) => {
+        setRidersList(prev => prev.map(r => (r.staff_id === riderId || r.nic === riderId) ? { ...r, availability_status: newStatus } : r));
         try {
+            const targetRider = ridersList.find(r => r.staff_id === riderId || r.nic === riderId);
+            const riderNic = targetRider?.nic || riderId;
             const { error } = await supabase
-                .from('staff')
+                .from('rider')
                 .update({ availability_status: newStatus })
-                .eq('staff_id', staffId);
+                .eq('NIC', riderNic);
             if (error) {
-                console.warn('Supabase status update note:', error.message);
+                console.warn('Supabase rider status update note:', error.message);
             }
         } catch (err) {
             console.warn('Error updating rider status in Supabase:', err);
@@ -570,8 +666,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         const loadStaff = async () => {
             const { data, error } = await supabase
                 .from('staff')
-                .select('staff_email')
-                .eq('staff_role', 'staff');
+                .select('staff_email');
             if (data && !error) {
                 data.forEach(s => {
                     if (s.staff_email && onAssignStaff) onAssignStaff(s.staff_email);
@@ -648,7 +743,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         e.preventDefault();
 
         // 1. Validate all required fields
-        if (!regFullName.trim() || !regPhone.trim() || !regRole || !regBranchId) {
+        if (!regFullName.trim() || !regPhone.trim() || !regBranchId) {
             alert('All fields are required');
             return;
         }
@@ -719,7 +814,6 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     staff_name: regFullName.trim(),
                     staff_phone: phoneTrimmed,
                     branch_id: parseInt(regBranchId),
-                    staff_role: regRole,
                     staff_active_status: true,
                     staff_email: generatedUsername,
                     staff_password: hashedPassword
@@ -755,7 +849,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         try {
             const { data, error } = await supabase
                 .from('staff')
-                .select('staff_id, staff_name, staff_email, staff_phone, staff_role, staff_active_status, branch_id')
+                .select('staff_id, staff_name, staff_email, staff_phone, staff_active_status, branch_id')
                 .eq('staff_email', email)
                 .single();
 
@@ -775,6 +869,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         try {
             const [
                 staffRes,
+                riderRes,
                 atrRes,
                 courierRes,
                 customerRes,
@@ -782,6 +877,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 paymentRes
             ] = await Promise.all([
                 supabase.from('staff').select('*'),
+                supabase.from('rider').select('*'),
                 supabase.from('atr').select('*'),
                 supabase.from('courier_req').select('*'),
                 supabase.from('customer').select('*'),
@@ -790,17 +886,18 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             ]);
 
             const staffData = staffRes.status === 'fulfilled' && !staffRes.value.error ? staffRes.value.data : [];
+            const riderData = riderRes.status === 'fulfilled' && !riderRes.value.error ? riderRes.value.data : [];
             const atrData = atrRes.status === 'fulfilled' && !atrRes.value.error ? atrRes.value.data : [];
             const courierData = courierRes.status === 'fulfilled' && !courierRes.value.error ? courierRes.value.data : [];
             const customerData = customerRes.status === 'fulfilled' && !customerRes.value.error ? customerRes.value.data : [];
             const invoiceData = invoiceRes.status === 'fulfilled' && !invoiceRes.value.error ? invoiceRes.value.data : [];
             const paymentData = paymentRes.status === 'fulfilled' && !paymentRes.value.error ? paymentRes.value.data : [];
 
-            // Calculate overview stats
+            // Calculate overview stats (Staff and Riders strictly separated)
             const totalStaff = staffData.length;
-            const totalRiders = staffData.filter(s => s.staff_role === 'staff').length;
-            const activeRiders = staffData.filter(s => s.staff_role === 'staff' && s.staff_active_status).length;
-            const busyRiders = staffData.filter(s => s.staff_role === 'staff' && s.availability_status === 'Busy').length;
+            const totalRiders = riderData.length;
+            const activeRiders = riderData.filter(r => (r.availability_status || 'Available') === 'Available').length;
+            const busyRiders = riderData.filter(r => r.availability_status === 'Busy').length;
 
             const totalCustomers = customerData.length;
             const individualCustomers = customerData.filter(c => c.cust_type?.toLowerCase() === 'individual').length;
@@ -845,10 +942,10 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             // 2. Summary Statistics Section
             appendLine('=== SUMMARY STATISTICS ===');
             appendLine('Category,Metric,Value');
-            appendLine(`Staff,Total Registered Staff,${totalStaff}`);
-            appendLine(`Staff,Total Courier Riders,${totalRiders}`);
-            appendLine(`Staff,Active Riders,${activeRiders}`);
-            appendLine(`Staff,Busy Riders,${busyRiders}`);
+            appendLine(`Staff,Total Registered Office Staff,${totalStaff}`);
+            appendLine(`Riders,Total Courier Riders,${totalRiders}`);
+            appendLine(`Riders,Active Available Riders,${activeRiders}`);
+            appendLine(`Riders,Busy Riders,${busyRiders}`);
             appendLine(`Customer,Total Registered Customers,${totalCustomers}`);
             appendLine(`Customer,Individual Customers,${individualCustomers}`);
             appendLine(`Customer,Corporate Customers,${corporateCustomers}`);
@@ -865,18 +962,35 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             appendLine(`Finance,Total Payments Received (LKR),${totalPaid.toFixed(2)}`);
             appendEmptyRow();
 
-            // 3. Staff List
+            // 3. Staff List (Strictly administrative/office staff)
             appendLine('=== REGISTERED STAFF MEMBERS ===');
-            appendLine('Staff ID,Name,Email,Phone,Role,Status,Availability Status');
+            appendLine('Staff ID,Name,Email,Phone,Role,Status');
             staffData.forEach(s => {
                 appendLine([
                     esc(s.staff_id),
                     esc(s.staff_name),
                     esc(s.staff_email),
                     esc(s.staff_phone),
-                    esc(s.staff_role),
-                    esc(s.staff_active_status ? 'Active' : 'Inactive'),
-                    esc(s.availability_status || 'Available')
+                    esc(s.staff_role || 'Staff'),
+                    esc(s.staff_active_status ? 'Active' : 'Inactive')
+                ].join(','));
+            });
+            appendEmptyRow();
+
+            // 3b. Courier Riders List (Dedicated rider fleet)
+            appendLine('=== COURIER RIDERS ===');
+            appendLine('NIC,Name,Email,Phone,Vehicle Type,Vehicle Number,Licence No,Branch,Availability Status');
+            riderData.forEach(r => {
+                appendLine([
+                    esc(r.NIC),
+                    esc(r.Name),
+                    esc(r.email),
+                    esc(r.Phone_Number),
+                    esc(r.Vehicle_Type),
+                    esc(r.Vehicle_Number),
+                    esc(r.Driver_Licence_No),
+                    esc(r.Branch),
+                    esc(r.availability_status || 'Available')
                 ].join(','));
             });
             appendEmptyRow();
@@ -1272,22 +1386,6 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                     </div>
 
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
-                                        <div className="form-control" style={{ marginBottom: 0 }}>
-                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Staff Role</label>
-                                            <div className="input-wrapper" style={{ position: 'relative' }}>
-                                                <i className='bx bx-briefcase input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
-                                                <select
-                                                    value={regRole}
-                                                    onChange={(e) => setRegRole(e.target.value)}
-                                                    disabled={assignStatus === 'assigning'}
-                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
-                                                >
-                                                    <option value="staff">Staff</option>
-                                                    <option value="admin">Admin</option>
-                                                </select>
-                                                <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
-                                            </div>
-                                        </div>
                                         <div className="form-control" style={{ marginBottom: 0 }}>
                                             <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Branch</label>
                                             <div className="input-wrapper" style={{ position: 'relative' }}>
@@ -1825,8 +1923,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         {loadingAtr || loadingPD ? (
                             <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading requests and deliveries...</p>
                         ) : (() => {
-                            // Build combined list
-                            const localAtrMap = JSON.parse(localStorage.getItem('local_atr_assignments') || '{}');
+                            // Build combined list directly from Supabase data
                             const formattedAtrList = atrRequests.map(req => {
                                 const deptInfo = deptCompMap[req.dep_id];
                                 const custCompName = customerCompMap[req.cust_email];
@@ -1851,7 +1948,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                         ...(req.actual_distance ? [{ label: '📍 Actual Distance', val: `${req.actual_distance} km` }] : []),
                                         ...(req.actual_cost ? [{ label: '💵 Actual Cost', val: `${req.actual_cost} LKR` }] : [])
                                     ],
-                                    assignedRiderId: localAtrMap[req.atr_id] || req.approved_by,
+                                    assignedRiderId: req.assigned_rider_nic || req.approved_by,
                                     rawItem: req
                                 };
                             });
@@ -1861,8 +1958,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 type: 'pd',
                                 refNumber: `PD-${pd.pd_id}`,
                                 status: pd.status,
-                                title: `Package: ${pd.item_type || 'Parcel'}`,
-                                subtitle: `From: ${pd.pickup_address} ➔ To: ${pd.drop_address}`,
+                                title: `${pd.item_type || 'Personal Delivery'} • To: ${pd.receiver_name}`,
+                                subtitle: `${pd.pickup_address} ➔ ${pd.drop_address}`,
                                 details: [
                                     { label: '📦 Item', val: `${pd.item_type || 'Parcel'} (${pd.item_weight || 'N/A'})` },
                                     { label: '📍 Pickup', val: pd.pickup_address },
@@ -1870,7 +1967,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                     { label: '👤 Sender/Receiver', val: `${pd.sender_name} (${pd.sender_phone}) ➔ ${pd.receiver_name}` },
                                     { label: '📅 Scheduled', val: `${pd.requested_date || pd.scheduled_date || 'N/A'} @ ${pd.requested_time || pd.scheduled_time || 'N/A'}` }
                                 ],
-                                assignedRiderId: ridersList.find(r => r.staff_phone === pd.assigned_rider_nic || r.staff_email === pd.accepted_by)?.staff_id || (pd.assigned_rider_nic ? pd.assigned_rider_nic : null),
+                                assignedRiderId: pd.assigned_rider_nic || null,
                                 assignedRiderName: pd.assigned_rider_nic || pd.accepted_by || null,
                                 rawItem: pd
                             }));

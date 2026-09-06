@@ -121,7 +121,7 @@ function App({ onNavigate }) {
 
             const { data: staffData } = await supabase
                 .from('staff')
-                .select('staff_name, staff_email, staff_phone, staff_role')
+                .select('staff_name, staff_email, staff_phone')
                 .eq('staff_email', loggedInUser)
                 .single();
 
@@ -129,7 +129,7 @@ function App({ onNavigate }) {
                 setProfileDetails({
                     name: staffData.staff_name || 'Staff Member',
                     email: staffData.staff_email || loggedInUser,
-                    role: staffData.staff_role || 'Staff',
+                    role: 'Staff',
                     phone: staffData.staff_phone || 'N/A',
                 });
                 return;
