@@ -1,0 +1,2576 @@
+import React, { useState, useEffect } from 'react';
+import { supabase } from './supabaseClient';
+import ReportAnalyticsView from './ReportAnalyticsView';
+
+const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, loggedInUser }) => {
+    const [showAssignForm, setShowAssignForm] = useState(false);
+    const [assignStatus, setAssignStatus] = useState('');
+    const [selectedStaff, setSelectedStaff] = useState(null);
+    const [staffDetailsLoading, setStaffDetailsLoading] = useState(false);
+    const [selectedStat, setSelectedStat] = useState(null);
+    const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+    // Ride Assignment and Rider Availability State
+    const [activeTab, setActiveTab] = useState('overview');
+    const [ridersList, setRidersList] = useState([]);
+    const [atrRequests, setAtrRequests] = useState([]);
+    const [loadingRiders, setLoadingRiders] = useState(false);
+    const [loadingAtr, setLoadingAtr] = useState(false);
+
+    // Analytics & Graphical Report State
+    const [analyticsData, setAnalyticsData] = useState({
+        staff: [],
+        rider: [],
+        atr: [],
+        courier: [],
+        customer: [],
+        invoice: [],
+        payment: []
+    });
+    const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+
+    const loadAnalyticsData = async () => {
+        setLoadingAnalytics(true);
+        try {
+            const [
+                staffRes,
+                riderRes,
+                atrRes,
+                courierRes,
+                customerRes,
+                invoiceRes,
+                paymentRes
+            ] = await Promise.all([
+                supabase.from('staff').select('*'),
+                supabase.from('rider').select('*'),
+                supabase.from('atr').select('*'),
+                supabase.from('courier_req').select('*'),
+                supabase.from('customer').select('*'),
+                supabase.from('invoice').select('*'),
+                supabase.from('payment').select('*')
+            ]);
+
+            setAnalyticsData({
+                staff: staffRes.data || [],
+                rider: riderRes.data || [],
+                atr: atrRes.data || [],
+                courier: courierRes.data || [],
+                customer: customerRes.data || [],
+                invoice: invoiceRes.data || [],
+                payment: paymentRes.data || []
+            });
+        } catch (err) {
+            console.error('Error fetching analytics data:', err);
+        } finally {
+            setLoadingAnalytics(false);
+        }
+    };
+
+    // Personal Deliveries State
+    const [personalDeliveries, setPersonalDeliveries] = useState([]);
+    const [loadingPD, setLoadingPD] = useState(false);
+    const [acceptingPD, setAcceptingPD] = useState(null);
+
+    // Admin ATR Actual Distance Modal State
+    const [adminEditingAtr, setAdminEditingAtr] = useState(null);
+    const [adminActualDist, setAdminActualDist] = useState('');
+    const [adminActualCost, setAdminActualCost] = useState('');
+    const [adminSavingAtr, setAdminSavingAtr] = useState(false);
+
+    const handleOpenAdminAtrModal = (atrItem) => {
+        setAdminEditingAtr(atrItem);
+        const suggested = atrItem.actual_distance || atrItem.estimated_distance || '';
+        setAdminActualDist(suggested ? String(suggested) : '');
+        const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+        const rate = rateMap[atrItem.vehicle_type] || 100;
+        const calculatedCost = suggested ? (parseFloat(suggested) * rate).toFixed(2) : (atrItem.actual_cost || atrItem.estimated_cost || '');
+        setAdminActualCost(calculatedCost ? String(calculatedCost) : '');
+    };
+
+    const handleAdminActualDistChange = (val) => {
+        setAdminActualDist(val);
+        if (adminEditingAtr && val && !isNaN(parseFloat(val))) {
+            const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+            const rate = rateMap[adminEditingAtr.vehicle_type] || 100;
+            setAdminActualCost((parseFloat(val) * rate).toFixed(2));
+        }
+    };
+
+    const handleSaveAdminAtrActuals = async (e) => {
+        e.preventDefault();
+        if (!adminEditingAtr) return;
+        setAdminSavingAtr(true);
+        try {
+            const { error } = await supabase
+                .from('atr')
+                .update({
+                    actual_distance: adminActualDist ? parseFloat(adminActualDist) : null,
+                    actual_cost: adminActualCost ? parseFloat(adminActualCost) : null
+                })
+                .eq('atr_id', adminEditingAtr.atr_id);
+
+            if (error) throw error;
+            alert('Actual distance & cost updated successfully!');
+            setAdminEditingAtr(null);
+            loadAtrRequests();
+        } catch (err) {
+            console.error('Error saving actuals:', err);
+            alert('Failed to update actuals: ' + err.message);
+        } finally {
+            setAdminSavingAtr(false);
+        }
+    };
+
+    const loadRiders = async () => {
+        setLoadingRiders(true);
+        try {
+            // Fetch riders exclusively from public.rider table
+            const { data, error } = await supabase
+                .from('rider')
+                .select('*');
+            
+            if (error) throw error;
+            
+            const formattedRiders = (data || []).map((r, idx) => ({
+                staff_id: r.NIC || `rider-${idx}`,
+                nic: r.NIC,
+                staff_name: r.Name || 'Rider',
+                staff_email: r.email || `${r.NIC}@sccourier.com`,
+                staff_phone: r.Phone_Number || 'N/A',
+                vehicle_type: r.Vehicle_Type || 'N/A',
+                vehicle_number: r.Vehicle_Number || 'N/A',
+                licence_no: r.Driver_Licence_No || 'N/A',
+                branch: r.Branch || 'Main Branch',
+                availability_status: r.availability_status || 'Available'
+            }));
+
+            setRidersList(formattedRiders);
+        } catch (err) {
+            console.error('Error loading riders from rider table:', err);
+        } finally {
+            setLoadingRiders(false);
+        }
+    };
+
+    // State for Department & Company Lookup
+    const [deptCompMap, setDeptCompMap] = useState({});
+    const [customerCompMap, setCustomerCompMap] = useState({});
+
+    const loadAtrRequests = async () => {
+        setLoadingAtr(true);
+        try {
+            const { data, error } = await supabase
+                .from('atr')
+                .select('*')
+                .order('atr_id', { ascending: false });
+            if (error) throw error;
+            setAtrRequests(data || []);
+
+            // Load departments & companies for corporate lookup
+            try {
+                const { data: deptData } = await supabase
+                    .from('department')
+                    .select('dep_id, dep_name, comp_id, company(comp_id, comp_name, comp_address)');
+                if (deptData) {
+                    const dMap = {};
+                    deptData.forEach(d => {
+                        dMap[d.dep_id] = {
+                            dep_name: d.dep_name,
+                            comp_name: d.company?.comp_name || 'SC Courier Services',
+                            comp_address: d.company?.comp_address || ''
+                        };
+                    });
+                    setDeptCompMap(dMap);
+                }
+
+                const { data: custData } = await supabase
+                    .from('customer')
+                    .select('cust_email, cust_name, cust_type');
+                if (custData) {
+                    const cMap = {};
+                    custData.forEach(c => {
+                        cMap[c.cust_email] = c.cust_name || (c.cust_type === 'Corporate' ? 'Corporate Client' : null);
+                    });
+                    setCustomerCompMap(cMap);
+                }
+            } catch (e) {
+                console.warn('Note loading department/company relations:', e);
+            }
+        } catch (err) {
+            console.error('Error loading ATR requests:', err);
+        } finally {
+            setLoadingAtr(false);
+        }
+    };
+
+    const loadPersonalDeliveries = async () => {
+        setLoadingPD(true);
+        try {
+            // 1. Fetch directly from Supabase cloud (visible across ALL PCs)
+            const { data, error } = await supabase
+                .from('personal_delivery')
+                .select('*')
+                .order('pd_id', { ascending: false });
+
+            if (!error && data) {
+                setPersonalDeliveries(data);
+                setLoadingPD(false);
+                return;
+            }
+        } catch (sbErr) {
+            console.warn('Supabase PD fetch note:', sbErr);
+        }
+
+        let fetchedData = [];
+        try {
+            const res = await fetch('http://localhost:5000/api/personal-deliveries');
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) fetchedData = data;
+            }
+        } catch (err) {
+            console.error('Error loading personal deliveries from backend:', err);
+        }
+        const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+        const combined = [...localData, ...fetchedData];
+        const unique = Array.from(new Map(combined.map(item => [item.pd_id, item])).values());
+        setPersonalDeliveries(unique);
+        setLoadingPD(false);
+    };
+
+    const handleAcceptDelivery = async (pdId) => {
+        setAcceptingPD(pdId);
+        try {
+            const acceptedByEmail = loggedInUser || 'admin@sccourier.com';
+
+            // 1. Update status via Supabase (if table exists)
+            try {
+                await supabase
+                    .from('personal_delivery')
+                    .update({
+                        status: 'Accepted',
+                        accepted_by: acceptedByEmail,
+                        accepted_at: new Date().toISOString()
+                    })
+                    .eq('pd_id', pdId);
+            } catch (sbErr) {
+                console.warn('Supabase status update note:', sbErr);
+            }
+
+            // 2. Update status in local storage fallback
+            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? {
+                ...pd,
+                status: 'Accepted',
+                accepted_by: acceptedByEmail,
+                accepted_at: new Date().toISOString()
+            } : pd);
+            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
+
+            // 3. Try sending acceptance & scheduling email via Express backend (if running)
+            let emailMsg = '';
+            try {
+                const res = await fetch('http://localhost:5000/api/delivery/accept', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    emailMsg = ' Scheduling email sent to customer.';
+                    if (data.previewUrl) {
+                        console.log('Ethereal Email Preview:', data.previewUrl);
+                    }
+                }
+            } catch (err) {
+                console.log('Backend notification server off — acceptance saved locally.');
+            }
+
+            alert('Delivery accepted successfully!' + emailMsg);
+            loadPersonalDeliveries();
+        } catch (err) {
+            console.error('Error accepting delivery:', err);
+            alert('Failed to accept delivery: ' + err.message);
+        } finally {
+            setAcceptingPD(null);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'analytics') {
+            loadAnalyticsData();
+        }
+        if (activeTab === 'rides' || activeTab === 'deliveries') {
+            loadRiders();
+            loadAtrRequests();
+            loadPersonalDeliveries();
+
+            // 1. Background sync interval (ensures multi-PC sync even if websockets are delayed)
+            const syncInterval = setInterval(() => {
+                loadAtrRequests();
+                loadPersonalDeliveries();
+                loadRiders();
+            }, 5000);
+
+            // 2. Supabase Realtime channel for instant push updates across all PCs
+            const liveChannel = supabase
+                .channel('admin-multi-pc-sync')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'atr' }, () => {
+                    loadAtrRequests();
+                })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'personal_delivery' }, () => {
+                    loadPersonalDeliveries();
+                })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'rider' }, () => {
+                    loadRiders();
+                })
+                .subscribe();
+
+            return () => {
+                clearInterval(syncInterval);
+                supabase.removeChannel(liveChannel);
+            };
+        }
+    }, [activeTab]);
+
+    const [assignmentCategory, setAssignmentCategory] = useState('all');
+    const [assignmentStatus, setAssignmentStatus] = useState('all');
+
+    const handleAssignRiderToPD = async (pdId, riderId) => {
+        try {
+            const selectedRiderObj = ridersList.find(r => r.staff_id === riderId || r.nic === riderId);
+            const riderName = selectedRiderObj ? selectedRiderObj.staff_name : riderId;
+            const riderNic = selectedRiderObj ? (selectedRiderObj.nic || selectedRiderObj.staff_phone) : (riderId || null);
+
+            // 1. Directly update Supabase cloud database
+            const { error: sbErr } = await supabase
+                .from('personal_delivery')
+                .update({
+                    status: riderNic ? 'Assigned' : 'Approved',
+                    accepted_by: selectedRiderObj ? selectedRiderObj.staff_email : null,
+                    assigned_rider_nic: riderNic
+                })
+                .eq('pd_id', pdId);
+
+            if (sbErr) {
+                console.error('Supabase PD assign error:', sbErr);
+                alert('Database update error: ' + sbErr.message);
+                return;
+            }
+
+            // Create trip + delivery entry when a rider is assigned
+            if (riderNic) {
+                const pdObj = personalDeliveries.find(p => p.pd_id === pdId);
+                let backendOk = false;
+                try {
+                    const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            rider_nic: riderNic,
+                            trip_date: pdObj?.requested_date || pdObj?.scheduled_date || new Date().toISOString().split('T')[0],
+                            pick_location: pdObj?.pickup_address || '',
+                            drop_location: pdObj?.drop_address || '',
+                            book_id: null,
+                            source_type: 'personal',
+                            source_id: pdId
+                        })
+                    });
+                    if (tdRes.ok) backendOk = true;
+                } catch (tdErr) {
+                    console.warn('Backend server offline, writing directly to Supabase cloud...');
+                }
+
+                if (!backendOk) {
+                    try {
+                        const { data: tripData } = await supabase
+                            .from('trip')
+                            .insert({
+                                rider_nic: riderNic,
+                                trip_date: pdObj?.requested_date || pdObj?.scheduled_date || new Date().toISOString().split('T')[0],
+                                trip_status: 'scheduled'
+                            })
+                            .select('trip_id')
+                            .single();
+                        if (tripData) {
+                            await supabase.from('delivery').insert({
+                                trip_id: tripData.trip_id,
+                                pick_location: pdObj?.pickup_address || '',
+                                drop_location: pdObj?.drop_address || '',
+                                delivery_status: 'assigned',
+                                source_type: 'personal',
+                                source_id: pdId
+                            });
+                        }
+                    } catch (directErr) {
+                        console.warn('Direct trip/delivery create note:', directErr);
+                    }
+                }
+            } else {
+                try {
+                    await fetch('http://localhost:5000/api/trip-delivery/cancel', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ source_type: 'personal', source_id: pdId })
+                    });
+                } catch (cancelErr) {
+                    try {
+                        const { data: delRows } = await supabase
+                            .from('delivery')
+                            .select('del_id, trip_id')
+                            .eq('source_type', 'personal')
+                            .eq('source_id', pdId);
+                        if (delRows && delRows.length > 0) {
+                            const tripIds = delRows.map(r => r.trip_id).filter(Boolean);
+                            await supabase.from('delivery').delete().eq('source_type', 'personal').eq('source_id', pdId);
+                            if (tripIds.length > 0) {
+                                await supabase.from('trip').delete().in('trip_id', tripIds);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Direct cancel note:', e);
+                    }
+                }
+            }
+
+            alert(riderId ? `Rider (${riderName}) assigned to delivery order successfully!` : 'Rider unassigned from delivery.');
+            loadPersonalDeliveries();
+            loadRiders();
+        } catch (err) {
+            console.error('Error assigning rider to delivery:', err);
+            alert('Failed to assign rider: ' + err.message);
+        }
+    };
+
+    const handleApproveAtr = async (atrId) => {
+        try {
+            const { error } = await supabase
+                .from('atr')
+                .update({
+                    status: 'Approved',
+                    approval_date: new Date().toISOString()
+                })
+                .eq('atr_id', atrId);
+
+            if (error) throw error;
+            alert('ATR Request Approved successfully! You can now match a rider to it.');
+            loadAtrRequests();
+        } catch (err) {
+            console.error('Error approving ATR:', err);
+            alert('Failed to approve ATR: ' + err.message);
+        }
+    };
+
+    const handleRejectAtr = async (atrId) => {
+        if (!window.confirm('Are you sure you want to reject this ATR request?')) return;
+        try {
+            const { error } = await supabase
+                .from('atr')
+                .update({
+                    status: 'Rejected',
+                    approval_date: new Date().toISOString()
+                })
+                .eq('atr_id', atrId);
+
+            if (error) throw error;
+            alert('ATR Request Rejected.');
+            loadAtrRequests();
+        } catch (err) {
+            console.error('Error rejecting ATR:', err);
+            alert('Failed to reject ATR: ' + err.message);
+        }
+    };
+
+    const handleApprovePD = async (pdId) => {
+        try {
+            const acceptedByEmail = loggedInUser || 'admin@sccourier.com';
+            try {
+                await supabase
+                    .from('personal_delivery')
+                    .update({
+                        status: 'Approved',
+                        accepted_by: acceptedByEmail,
+                        accepted_at: new Date().toISOString()
+                    })
+                    .eq('pd_id', pdId);
+            } catch (sbErr) {
+                console.warn('Supabase update note:', sbErr);
+            }
+
+            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? {
+                ...pd,
+                status: 'Approved',
+                accepted_by: acceptedByEmail,
+                accepted_at: new Date().toISOString()
+            } : pd);
+            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
+
+            try {
+                await fetch('http://localhost:5000/api/delivery/accept', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail })
+                });
+            } catch (e) { /* ignore backend offline */ }
+
+            alert('Personal Delivery Approved successfully! You can now match a rider to it.');
+            loadPersonalDeliveries();
+        } catch (err) {
+            console.error('Error approving PD:', err);
+            alert('Failed to approve delivery: ' + err.message);
+        }
+    };
+
+    const handleRejectPD = async (pdId) => {
+        if (!window.confirm('Are you sure you want to reject this delivery request?')) return;
+        try {
+            try {
+                await supabase
+                    .from('personal_delivery')
+                    .update({ status: 'Rejected' })
+                    .eq('pd_id', pdId);
+            } catch (sbErr) {
+                console.warn('Supabase note:', sbErr);
+            }
+            const localData = JSON.parse(localStorage.getItem('local_personal_deliveries') || '[]');
+            const updatedLocal = localData.map(pd => pd.pd_id === pdId ? { ...pd, status: 'Rejected' } : pd);
+            localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
+
+            alert('Delivery request rejected.');
+            loadPersonalDeliveries();
+        } catch (err) {
+            console.error('Error rejecting PD:', err);
+            alert('Failed to reject delivery: ' + err.message);
+        }
+    };
+
+    const handleAssignRider = async (atrId, riderId) => {
+        try {
+            const targetRider = ridersList.find(r => r.staff_id === riderId || r.nic === riderId);
+            const riderNic = targetRider?.nic || (riderId ? String(riderId) : null);
+
+            // 1. Update in Supabase cloud database directly (visible across ALL PCs!)
+            const { error } = await supabase
+                .from('atr')
+                .update({ 
+                    assigned_rider_nic: riderNic,
+                    status: riderNic ? 'Assigned' : 'Approved'
+                })
+                .eq('atr_id', atrId);
+
+            if (error) {
+                console.error('Error updating atr in Supabase:', error);
+                alert('Failed to assign rider in database: ' + error.message);
+                return;
+            }
+
+            if (riderNic) {
+                // Trigger assignment email via backend if online
+                try {
+                    await fetch('http://localhost:5000/api/atr/send-assignment-email', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ atrId, riderId: riderNic }),
+                    });
+                } catch (emailErr) {
+                    console.warn('Assignment email notice:', emailErr);
+                }
+
+                // Create trip + delivery entry for this ATR
+                const atrObj = atrRequests.find(a => a.atr_id === atrId);
+                const deptInfo = deptCompMap[atrObj?.dep_id];
+                const startingOffice = deptInfo?.comp_address || deptInfo?.comp_name || deptInfo?.dep_name || 'Corporate Office';
+                let tripCreated = false;
+                try {
+                    const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            rider_nic: riderNic,
+                            trip_date: atrObj?.required_date || new Date().toISOString().split('T')[0],
+                            pick_location: startingOffice,
+                            drop_location: atrObj?.purpose_of_travel || '',
+                            book_id: null,
+                            source_type: 'atr',
+                            source_id: atrId
+                        })
+                    });
+                    if (tdRes.ok) tripCreated = true;
+                } catch (tdErr) {
+                    console.warn('Trip-delivery backend offline, creating trip/delivery directly in Supabase...');
+                }
+
+                if (!tripCreated) {
+                    try {
+                        const { data: tripRow } = await supabase
+                            .from('trip')
+                            .insert({
+                                rider_nic: riderNic,
+                                trip_date: atrObj?.required_date || new Date().toISOString().split('T')[0],
+                                trip_status: 'scheduled'
+                            })
+                            .select('trip_id')
+                            .single();
+                        if (tripRow) {
+                            await supabase
+                                .from('delivery')
+                                .insert({
+                                    trip_id: tripRow.trip_id,
+                                    pick_location: startingOffice,
+                                    drop_location: atrObj?.purpose_of_travel || '',
+                                    delivery_status: 'assigned',
+                                    source_type: 'atr',
+                                    source_id: atrId
+                                });
+                        }
+                    } catch (directTripErr) {
+                        console.warn('Direct trip create note:', directTripErr);
+                    }
+                }
+            } else {
+                // Cancel/Delete the trip + delivery when rider is unassigned
+                try {
+                    await fetch('http://localhost:5000/api/trip-delivery/cancel', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ source_type: 'atr', source_id: atrId })
+                    });
+                } catch (cancelErr) {
+                    try {
+                        const { data: delRows } = await supabase
+                            .from('delivery')
+                            .select('del_id, trip_id')
+                            .eq('source_type', 'atr')
+                            .eq('source_id', atrId);
+                        if (delRows && delRows.length > 0) {
+                            const tripIds = delRows.map(r => r.trip_id).filter(Boolean);
+                            await supabase.from('delivery').delete().eq('source_type', 'atr').eq('source_id', atrId);
+                            if (tripIds.length > 0) {
+                                await supabase.from('trip').delete().in('trip_id', tripIds);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Direct cancel error:', e);
+                    }
+                }
+            }
+
+            alert(riderNic ? 'Rider assigned successfully!' : 'Rider unassigned.');
+            loadAtrRequests();
+            loadRiders();
+        } catch (err) {
+            console.error('Error assigning rider:', err);
+            alert('Failed to assign rider: ' + err.message);
+        }
+    };
+
+    const handleUpdateRiderStatus = async (riderId, newStatus) => {
+        setRidersList(prev => prev.map(r => (r.staff_id === riderId || r.nic === riderId) ? { ...r, availability_status: newStatus } : r));
+        try {
+            const targetRider = ridersList.find(r => r.staff_id === riderId || r.nic === riderId);
+            const riderNic = targetRider?.nic || riderId;
+            const { error } = await supabase
+                .from('rider')
+                .update({ availability_status: newStatus })
+                .eq('NIC', riderNic);
+            if (error) {
+                console.warn('Supabase rider status update note:', error.message);
+            }
+        } catch (err) {
+            console.warn('Error updating rider status in Supabase:', err);
+        }
+    };
+
+    // Registration Form Fields State
+    const [regFullName, setRegFullName] = useState('');
+    const [regPhone, setRegPhone] = useState('');
+    const [regRole, setRegRole] = useState('staff');
+    const [regBranchId, setRegBranchId] = useState('');
+
+    // Success Screen State
+    const [registeredCredentials, setRegisteredCredentials] = useState(null);
+    const [sendEmailAddress, setSendEmailAddress] = useState('');
+    const [copiedField, setCopiedField] = useState(null);
+    const [sendingEmail, setSendingEmail] = useState(false);
+
+    // Branches state
+    const [branches, setBranches] = useState([]);
+
+    // Fetch branches from Supabase on mount
+    useEffect(() => {
+        const fetchBranches = async () => {
+            try {
+                const { data, error } = await supabase.from('branch').select('*');
+                if (error) throw error;
+                setBranches(data || []);
+                if (data && data.length > 0) {
+                    setRegBranchId(data[0].branch_id);
+                }
+            } catch (err) {
+                console.error('Failed to load branches:', err);
+            }
+        };
+        fetchBranches();
+    }, []);
+
+    // Load staff from Supabase on mount
+    useEffect(() => {
+        const loadStaff = async () => {
+            const { data, error } = await supabase
+                .from('staff')
+                .select('staff_email');
+            if (data && !error) {
+                data.forEach(s => {
+                    if (s.staff_email && onAssignStaff) onAssignStaff(s.staff_email);
+                });
+            }
+        };
+        loadStaff();
+    }, []);
+
+    // SHA-256 client-side hashing helper
+    const hashPasswordClient = async (password) => {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(password);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    };
+
+    // Credentials Clipboard Copy Actions
+    const handleCopy = (text, field) => {
+        navigator.clipboard.writeText(text);
+        setCopiedField(field);
+        setTimeout(() => setCopiedField(null), 2000);
+    };
+
+    const handleCopyAll = () => {
+        if (!registeredCredentials) return;
+        const text = `Staff Assigned Successfully\n\nUsername: ${registeredCredentials.username}\nTemporary Password: ${registeredCredentials.tempPassword}`;
+        navigator.clipboard.writeText(text);
+        setCopiedField('all');
+        setTimeout(() => setCopiedField(null), 2000);
+    };
+
+    // Send Credentials via Express Backend Nodemailer
+    const handleSendEmail = async () => {
+        if (!registeredCredentials || !sendEmailAddress.trim()) {
+            alert('Please enter a destination email address.');
+            return;
+        }
+        setSendingEmail(true);
+        try {
+            const res = await fetch('http://localhost:5000/api/admin/send-staff-credentials', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    personalEmail: sendEmailAddress.trim(),
+                    username: registeredCredentials.username,
+                    password: registeredCredentials.tempPassword,
+                    staffName: registeredCredentials.staffName
+                }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                let msg = 'Credentials email sent successfully!';
+                if (data.previewUrl) {
+                    msg += `\n\n(Local Dev Ethereal Mail link: ${data.previewUrl})`;
+                }
+                alert(msg);
+            } else {
+                alert('Failed to send email: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            console.error('Email dispatch error:', err);
+            alert('Failed to send email. Please ensure the backend server is running on http://localhost:5000.');
+        } finally {
+            setSendingEmail(false);
+        }
+    };
+
+    // Full Staff Registration submission
+    const handleAssignStaff = async (e) => {
+        e.preventDefault();
+
+        // 1. Validate all required fields
+        if (!regFullName.trim() || !regPhone.trim() || !regBranchId) {
+            alert('All fields are required');
+            return;
+        }
+
+        const phoneTrimmed = regPhone.trim();
+        if (phoneTrimmed.length < 9 || phoneTrimmed.length > 15 || !/^\+?[0-9]+$/.test(phoneTrimmed)) {
+            alert('Invalid contact number format (9 to 15 digits expected)');
+            return;
+        }
+
+        setAssignStatus('assigning');
+
+        try {
+            // 2. Ensure Contact Number is unique
+            const { data: dupPhone } = await supabase
+                .from('staff')
+                .select('staff_id')
+                .eq('staff_phone', phoneTrimmed);
+
+            if (dupPhone && dupPhone.length > 0) {
+                alert('Contact Number is already in use by another staff member');
+                setAssignStatus('');
+                return;
+            }
+
+            // 3. Generate a unique username in the format: username@sccourier.com
+            const baseName = regFullName.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+            const base = baseName || 'staff';
+            const domain = '@sccourier.com';
+            let generatedUsername = `${base}${domain}`;
+
+            // Fetch existing matching usernames to append sequential numbers if duplicate
+            const { data: matches, error: matchErr } = await supabase
+                .from('staff')
+                .select('staff_email')
+                .like('staff_email', `${base}%${domain}`);
+
+            if (matchErr) throw matchErr;
+
+            const existingUsernames = matches ? matches.map(m => m.staff_email) : [];
+            let counter = 1;
+            while (existingUsernames.includes(generatedUsername)) {
+                generatedUsername = `${base}${counter}${domain}`;
+                counter++;
+            }
+
+            // 4. Automatically generate a secure temporary password
+            const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+            const lowercase = 'abcdefghijkmnopqrstuvwxyz';
+            const numbers = '23456789';
+            const symbols = '@#$%&*!';
+            const getRandom = (set, count) => {
+                let r = '';
+                for (let i = 0; i < count; i++) {
+                    r += set.charAt(Math.floor(Math.random() * set.length));
+                }
+                return r;
+            };
+            let rawPassword = getRandom(uppercase, 2) + getRandom(lowercase, 2) + getRandom(numbers, 2) + getRandom(symbols, 2);
+            const tempPassword = rawPassword.split('').sort(() => Math.random() - 0.5).join('');
+
+            // 5. Store generated username and encrypted (hashed) password along with staff details
+            const hashedPassword = await hashPasswordClient(tempPassword);
+
+            const { error: insertErr } = await supabase
+                .from('staff')
+                .insert({
+                    staff_name: regFullName.trim(),
+                    staff_phone: phoneTrimmed,
+                    branch_id: parseInt(regBranchId),
+                    staff_active_status: true,
+                    staff_email: generatedUsername,
+                    staff_password: hashedPassword
+                });
+
+            if (insertErr) throw insertErr;
+
+            setAssignStatus('success');
+            if (onAssignStaff) onAssignStaff(generatedUsername);
+
+            // Set credentials to trigger Success message view
+            setRegisteredCredentials({
+                username: generatedUsername,
+                tempPassword,
+                staffName: regFullName.trim()
+            });
+
+            // Reset inputs
+            setRegFullName('');
+            setRegPhone('');
+            setRegRole('staff');
+        } catch (err) {
+            console.error('Assign staff error:', err);
+            alert('Failed to assign staff: ' + (err.message || err));
+            setAssignStatus('');
+        }
+    };
+
+    const handleStaffClick = async (email) => {
+        setStaffDetailsLoading(true);
+        setSelectedStaff(null);
+
+        try {
+            const { data, error } = await supabase
+                .from('staff')
+                .select('staff_id, staff_name, staff_email, staff_phone, staff_active_status, branch_id')
+                .eq('staff_email', email)
+                .single();
+
+            if (error) throw error;
+
+            setSelectedStaff(data);
+        } catch (err) {
+            console.error('Load staff details error:', err);
+            alert('Could not load staff details.');
+        } finally {
+            setStaffDetailsLoading(false);
+        }
+    };
+
+    const handleGenerateReport = async () => {
+        setIsGeneratingReport(true);
+        try {
+            const [
+                staffRes,
+                riderRes,
+                atrRes,
+                courierRes,
+                customerRes,
+                invoiceRes,
+                paymentRes
+            ] = await Promise.all([
+                supabase.from('staff').select('*'),
+                supabase.from('rider').select('*'),
+                supabase.from('atr').select('*'),
+                supabase.from('courier_req').select('*'),
+                supabase.from('customer').select('*'),
+                supabase.from('invoice').select('*'),
+                supabase.from('payment').select('*')
+            ]);
+
+            const staffData = staffRes.status === 'fulfilled' && !staffRes.value.error ? staffRes.value.data : [];
+            const riderData = riderRes.status === 'fulfilled' && !riderRes.value.error ? riderRes.value.data : [];
+            const atrData = atrRes.status === 'fulfilled' && !atrRes.value.error ? atrRes.value.data : [];
+            const courierData = courierRes.status === 'fulfilled' && !courierRes.value.error ? courierRes.value.data : [];
+            const customerData = customerRes.status === 'fulfilled' && !customerRes.value.error ? customerRes.value.data : [];
+            const invoiceData = invoiceRes.status === 'fulfilled' && !invoiceRes.value.error ? invoiceRes.value.data : [];
+            const paymentData = paymentRes.status === 'fulfilled' && !paymentRes.value.error ? paymentRes.value.data : [];
+
+            // Update analytics state and switch to analytics graphical view
+            setAnalyticsData({
+                staff: staffData,
+                rider: riderData,
+                atr: atrData,
+                courier: courierData,
+                customer: customerData,
+                invoice: invoiceData,
+                payment: paymentData
+            });
+            setActiveTab('analytics');
+
+            // Calculate overview stats (Staff and Riders strictly separated)
+            const totalStaff = staffData.length;
+            const totalRiders = riderData.length;
+            const activeRiders = riderData.filter(r => (r.availability_status || 'Available') === 'Available').length;
+            const busyRiders = riderData.filter(r => r.availability_status === 'Busy').length;
+
+            const totalCustomers = customerData.length;
+            const individualCustomers = customerData.filter(c => c.cust_type?.toLowerCase() === 'individual').length;
+            const corporateCustomers = customerData.filter(c => c.cust_type?.toLowerCase() === 'corporate').length;
+
+            const totalATRs = atrData.length;
+            const approvedATRs = atrData.filter(a => a.status === 'Approved').length;
+            const pendingATRs = atrData.filter(a => a.status === 'Pending').length;
+            const completedATRs = atrData.filter(a => a.status === 'Completed').length;
+            const totalEstCost = atrData.reduce((acc, a) => acc + Number(a.estimated_cost || 0), 0);
+            const totalActCost = atrData.reduce((acc, a) => acc + Number(a.actual_cost || 0), 0);
+
+            const totalCouriers = courierData.length;
+            const pendingCouriers = courierData.filter(c => c.status === 'Pending').length;
+            const deliveredCouriers = courierData.filter(c => c.status === 'Delivered').length;
+
+            const totalInvoiced = invoiceData.reduce((acc, i) => acc + Number(i.total_amount || 0), 0);
+            const totalPaid = paymentData.filter(p => p.status === 'Success' || p.status === 'success' || p.status === 'Paid' || p.status === 'paid').reduce((acc, p) => acc + Number(p.amount || 0), 0);
+
+            // Construct CSV
+            let csvContent = '';
+            const appendLine = (line) => { csvContent += line + '\n'; };
+            const appendEmptyRow = () => { csvContent += '\n'; };
+
+            // Helper to escape CSV values
+            const esc = (val) => {
+                if (val === null || val === undefined) return '';
+                let str = String(val);
+                if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+                    return `"${str.replace(/"/g, '""')}"`;
+                }
+                return str;
+            };
+
+            // 1. Report Header
+            appendLine('=== SC COURIER SERVICES - SYSTEM REPORT ===');
+            appendLine(`Report Type,Full System Summary Report`);
+            appendLine(`Generated At,${new Date().toLocaleString()}`);
+            appendLine(`Generated By,${loggedInUser?.email || loggedInUser?.staff_email || 'Admin'}`);
+            appendEmptyRow();
+
+            // 2. Summary Statistics Section
+            appendLine('=== SUMMARY STATISTICS ===');
+            appendLine('Category,Metric,Value');
+            appendLine(`Staff,Total Registered Office Staff,${totalStaff}`);
+            appendLine(`Riders,Total Courier Riders,${totalRiders}`);
+            appendLine(`Riders,Active Available Riders,${activeRiders}`);
+            appendLine(`Riders,Busy Riders,${busyRiders}`);
+            appendLine(`Customer,Total Registered Customers,${totalCustomers}`);
+            appendLine(`Customer,Individual Customers,${individualCustomers}`);
+            appendLine(`Customer,Corporate Customers,${corporateCustomers}`);
+            appendLine(`ATR Requests,Total ATR Requests,${totalATRs}`);
+            appendLine(`ATR Requests,Approved ATRs,${approvedATRs}`);
+            appendLine(`ATR Requests,Pending ATRs,${pendingATRs}`);
+            appendLine(`ATR Requests,Completed ATRs,${completedATRs}`);
+            appendLine(`ATR Requests,Total Estimated Cost (LKR),${totalEstCost.toFixed(2)}`);
+            appendLine(`ATR Requests,Total Actual Cost (LKR),${totalActCost.toFixed(2)}`);
+            appendLine(`Courier Bookings,Total Bookings,${totalCouriers}`);
+            appendLine(`Courier Bookings,Pending Bookings,${pendingCouriers}`);
+            appendLine(`Courier Bookings,Delivered Bookings,${deliveredCouriers}`);
+            appendLine(`Finance,Total Invoiced Amount (LKR),${totalInvoiced.toFixed(2)}`);
+            appendLine(`Finance,Total Payments Received (LKR),${totalPaid.toFixed(2)}`);
+            appendEmptyRow();
+
+            // 3. Staff List (Strictly administrative/office staff)
+            appendLine('=== REGISTERED STAFF MEMBERS ===');
+            appendLine('Staff ID,Name,Email,Phone,Role,Status');
+            staffData.forEach(s => {
+                appendLine([
+                    esc(s.staff_id),
+                    esc(s.staff_name),
+                    esc(s.staff_email),
+                    esc(s.staff_phone),
+                    esc(s.staff_role || 'Staff'),
+                    esc(s.staff_active_status ? 'Active' : 'Inactive')
+                ].join(','));
+            });
+            appendEmptyRow();
+
+            // 3b. Courier Riders List (Dedicated rider fleet)
+            appendLine('=== COURIER RIDERS ===');
+            appendLine('NIC,Name,Email,Phone,Vehicle Type,Vehicle Number,Licence No,Branch,Availability Status');
+            riderData.forEach(r => {
+                appendLine([
+                    esc(r.NIC),
+                    esc(r.Name),
+                    esc(r.email),
+                    esc(r.Phone_Number),
+                    esc(r.Vehicle_Type),
+                    esc(r.Vehicle_Number),
+                    esc(r.Driver_Licence_No),
+                    esc(r.Branch),
+                    esc(r.availability_status || 'Available')
+                ].join(','));
+            });
+            appendEmptyRow();
+
+            // 4. Customers List
+            appendLine('=== REGISTERED CUSTOMERS ===');
+            appendLine('Customer ID,Name,Email,Address,Phone,Type,Joined Date');
+            customerData.forEach(c => {
+                appendLine([
+                    esc(c.customer_id),
+                    esc(c.cust_name),
+                    esc(c.cust_email),
+                    esc(c.cust_address),
+                    esc(c.cust_phoneno),
+                    esc(c.cust_type),
+                    esc(c.created_at ? new Date(c.created_at).toLocaleDateString() : 'N/A')
+                ].join(','));
+            });
+            appendEmptyRow();
+
+            // 5. ATR Requests List
+            appendLine('=== ATR TRAVEL REQUESTS ===');
+            appendLine('ATR ID,ATR Number,Required Date,Required Time,Passenger Name,Passenger Designation,Vehicle Type,Purpose of Travel,Est. Distance,Est. Cost (LKR),Actual Distance,Actual Cost (LKR),Status');
+            atrData.forEach(a => {
+                appendLine([
+                    esc(a.atr_id),
+                    esc(a.atr_number),
+                    esc(a.required_date),
+                    esc(a.required_time),
+                    esc(a.principal_passenger_name),
+                    esc(a.principal_passenger_designation),
+                    esc(a.vehicle_type),
+                    esc(a.purpose_of_travel),
+                    esc(a.estimated_distance),
+                    esc(a.estimated_cost),
+                    esc(a.actual_distance),
+                    esc(a.actual_cost),
+                    esc(a.status)
+                ].join(','));
+            });
+            appendEmptyRow();
+
+            // 6. Courier Requests List
+            appendLine('=== COURIER BOOKINGS ===');
+            appendLine('Book ID,Customer ID,ATR ID,Receiver NIC,Courier Date,Weight,Status,Created At');
+            courierData.forEach(c => {
+                appendLine([
+                    esc(c.book_id),
+                    esc(c.customer_id),
+                    esc(c.atr_id),
+                    esc(c.rec_nic),
+                    esc(c.courier_date),
+                    esc(c.courier_weight),
+                    esc(c.status),
+                    esc(c.created_at ? new Date(c.created_at).toLocaleDateString() : 'N/A')
+                ].join(','));
+            });
+            appendEmptyRow();
+
+            // 7. Invoice & Payments List
+            appendLine('=== INVOICES ===');
+            appendLine('Invoice ID,Invoice Type,Customer ID,Rider ID,Issue Date,Total Amount (LKR),Payment Status');
+            invoiceData.forEach(i => {
+                appendLine([
+                    esc(i.invoice_id),
+                    esc(i.invoice_type),
+                    esc(i.customer_id),
+                    esc(i.rider_id),
+                    esc(i.issue_date),
+                    esc(i.total_amount),
+                    esc(i.payment_status)
+                ].join(','));
+            });
+
+            // Trigger file download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', `SC_Courier_Full_Report_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            alert('Report generated and downloaded successfully!');
+        } catch (error) {
+            console.error('Error generating report:', error);
+            alert('Failed to generate report: ' + error.message);
+        } finally {
+            setIsGeneratingReport(false);
+        }
+    };
+
+    // Sample dummy data for admin view
+    const stats = [
+        {
+            id: 'deliveries',
+            title: 'Total Deliveries',
+            value: '1,284',
+            icon: 'bx-package',
+            color: 'var(--success)',
+        },
+        {
+            id: 'couriers',
+            title: 'Active Couriers',
+            value: '42',
+            icon: 'bx-run',
+            color: 'var(--accent-color)',
+        },
+        {
+            id: 'routes',
+            title: 'Pending Routes',
+            value: '15',
+            icon: 'bx-map-alt',
+            color: '#f59e0b',
+        },
+    ];
+
+    const statDetails = {
+        deliveries: {
+            title: 'Total Deliveries',
+            icon: 'bx-package',
+            description: 'All deliveries recorded in the system.',
+            rows: [
+                { label: 'Delivered', value: '986' },
+                { label: 'In Transit', value: '214' },
+                { label: 'Pending', value: '84' },
+            ],
+        },
+        couriers: {
+            title: 'Active Couriers',
+            icon: 'bx-run',
+            description: 'Courier staff currently active and available.',
+            rows: [
+                { label: 'Available Couriers', value: '28' },
+                { label: 'On Delivery', value: '12' },
+                { label: 'On Break', value: '2' },
+            ],
+        },
+        routes: {
+            title: 'Pending Routes',
+            icon: 'bx-map-alt',
+            description: 'Routes waiting to be assigned or completed.',
+            rows: [
+                { label: 'Awaiting Assignment', value: '7' },
+                { label: 'Delayed Routes', value: '3' },
+                { label: 'Scheduled Today', value: '5' },
+            ],
+        },
+    };
+
+    const recentOrders = [
+        { id: 'SC101000', customer: 'John Doe', destination: 'Seattle, WA', status: 'In Transit' },
+        { id: 'SC101015', customer: 'Jane Smith', destination: 'Denver, CO', status: 'Pending' },
+        { id: 'SC101018', customer: 'Bob Johnson', destination: 'Miami, FL', status: 'Delivered' },
+    ];
+
+    return (
+        <div className="dashboard-container" style={{ animation: 'fadeIn 0.5s ease', padding: '2rem', width: '100%', maxWidth: '1200px', margin: '0 auto', zIndex: 10 }}>
+            {/* Header */}
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3rem' }}>
+                <div>
+                    <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '2rem', fontWeight: '600', color: '#fff', marginBottom: '0.5rem' }}>
+                        <i className='bx bx-shield-quarter'></i> Admin Dashboard
+                    </h2>
+                    <p style={{ textAlign: 'left', color: 'var(--text-secondary)' }}>System overview and management</p>
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <button className="secondary-btn" onClick={() => setShowAssignForm(!showAssignForm)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', height: '44px', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                        <i className='bx bx-user-plus'></i> Assign Staff
+                    </button>
+                </div>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--card-border)', marginBottom: '2rem', paddingBottom: '0.5rem' }}>
+                <button
+                    onClick={() => setActiveTab('overview')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'overview' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'overview' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-grid-alt'></i> Overview & Staff
+                </button>
+                <button
+                    onClick={() => setActiveTab('rides')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'rides' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'rides' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-navigation'></i> Ride Assignment
+                </button>
+                <button
+                    onClick={() => setActiveTab('deliveries')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'deliveries' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'deliveries' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-package'></i> Personal Deliveries
+                </button>
+                <button
+                    onClick={() => {
+                        setActiveTab('analytics');
+                        loadAnalyticsData();
+                    }}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'analytics' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'analytics' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-pie-chart-alt-2'></i> Analytics & Reports
+                </button>
+            </div>
+
+            {activeTab === 'overview' && (
+                <>
+                    {/* Assign Staff Form (conditional) */}
+                    {showAssignForm && (
+                        <div className="action-card" style={{ marginBottom: '2rem', animation: 'slideInDown 0.4s ease', padding: '2rem', border: '1px solid var(--card-border)', maxWidth: '100%', width: '100%' }}>
+                            {registeredCredentials ? (
+                                <div style={{ textAlign: 'left' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--card-border)', paddingBottom: '1rem' }}>
+                                        <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>
+                                            <i className='bx bx-check-shield'></i>
+                                        </div>
+                                        <div>
+                                            <h3 style={{ fontSize: '1.3rem', color: '#fff', margin: 0 }}>Staff Assigned Successfully</h3>
+                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.2rem 0 0 0' }}>Credentials generated and saved securely.</p>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--card-border)', borderRadius: '12px', padding: '1.5rem', marginBottom: '1.5rem' }}>
+                                        <div style={{ marginBottom: '1.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div>
+                                                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>Generated Username</label>
+                                                <span style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', fontFamily: 'monospace' }}>{registeredCredentials.username}</span>
+                                            </div>
+                                            <button
+                                                onClick={() => handleCopy(registeredCredentials.username, 'username')}
+                                                className="secondary-btn"
+                                                style={{ padding: '0.5rem 0.8rem', height: 'auto', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}
+                                            >
+                                                <i className={`bx ${copiedField === 'username' ? 'bx-check text-success' : 'bx-copy'}`}></i>
+                                                {copiedField === 'username' ? 'Copied!' : 'Copy'}
+                                            </button>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div>
+                                                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>Temporary Password</label>
+                                                <span style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '600', fontFamily: 'monospace' }}>{registeredCredentials.tempPassword}</span>
+                                            </div>
+                                            <button
+                                                onClick={() => handleCopy(registeredCredentials.tempPassword, 'password')}
+                                                className="secondary-btn"
+                                                style={{ padding: '0.5rem 0.8rem', height: 'auto', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}
+                                            >
+                                                <i className={`bx ${copiedField === 'password' ? 'bx-check text-success' : 'bx-copy'}`}></i>
+                                                {copiedField === 'password' ? 'Copied!' : 'Copy'}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '2rem', flexWrap: 'wrap', borderBottom: '1px solid var(--card-border)', paddingBottom: '1.5rem' }}>
+                                        <div className="form-control" style={{ flex: 1, minWidth: '220px', marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Staff Contact/Personal Email</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-envelope input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                                <input
+                                                    type="email"
+                                                    placeholder="e.g. staff@gmail.com"
+                                                    value={sendEmailAddress}
+                                                    onChange={(e) => setSendEmailAddress(e.target.value)}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                                />
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={handleSendEmail}
+                                            disabled={sendingEmail || !sendEmailAddress.trim()}
+                                            className="primary-btn"
+                                            style={{ width: 'auto', height: '46px', padding: '0 1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--accent-color)', boxShadow: '0 4px 14px 0 var(--accent-glow)' }}
+                                        >
+                                            {sendingEmail ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Sending...</>
+                                            ) : (
+                                                <><i className='bx bx-envelope'></i> Send Credentials via Email</>
+                                            )}
+                                        </button>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                        <button
+                                            onClick={handleCopyAll}
+                                            className="primary-btn"
+                                            style={{ width: 'auto', height: '44px', padding: '0 1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#3b82f6', boxShadow: '0 4px 14px 0 rgba(59, 130, 246, 0.4)' }}
+                                        >
+                                            <i className={`bx ${copiedField === 'all' ? 'bx-check' : 'bx-copy'}`}></i>
+                                            {copiedField === 'all' ? 'Credentials Copied!' : 'Copy All Credentials'}
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setRegisteredCredentials(null);
+                                                setSendEmailAddress('');
+                                            }}
+                                            className="secondary-btn"
+                                            style={{ width: 'auto', height: '44px', padding: '0 1.2rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                        >
+                                            Assign Another Staff
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <form onSubmit={handleAssignStaff} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'left' }}>
+                                    <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                        <i className='bx bx-user-check' style={{ color: 'var(--accent-color)' }}></i> Register & Assign New Staff
+                                    </h3>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
+                                        <div className="form-control" style={{ marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Full Name</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-user input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g. John Doe"
+                                                    required
+                                                    value={regFullName}
+                                                    onChange={(e) => setRegFullName(e.target.value)}
+                                                    disabled={assignStatus === 'assigning'}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="form-control" style={{ marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Contact Number</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-phone input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g. 0771234567"
+                                                    required
+                                                    value={regPhone}
+                                                    onChange={(e) => setRegPhone(e.target.value)}
+                                                    disabled={assignStatus === 'assigning'}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none' }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
+                                        <div className="form-control" style={{ marginBottom: 0 }}>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Branch</label>
+                                            <div className="input-wrapper" style={{ position: 'relative' }}>
+                                                <i className='bx bx-buildings input-icon' style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 10 }}></i>
+                                                <select
+                                                    value={regBranchId}
+                                                    onChange={(e) => setRegBranchId(e.target.value)}
+                                                    disabled={assignStatus === 'assigning'}
+                                                    style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.8rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', fontSize: '1rem', outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none' }}
+                                                >
+                                                    {branches.map((b) => (
+                                                        <option key={b.branch_id} value={b.branch_id}>{b.branch_location}</option>
+                                                    ))}
+                                                </select>
+                                                <i className='bx bx-chevron-down' style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none', zIndex: 10 }}></i>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                                        <button
+                                            type="submit"
+                                            className="primary-btn"
+                                            disabled={assignStatus === 'assigning'}
+                                            style={{ width: 'auto', height: '46px', padding: '0 2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                        >
+                                            {assignStatus === 'assigning' ? (
+                                                <><i className='bx bx-loader-alt bx-spin'></i> Generating Credentials...</>
+                                            ) : (
+                                                <>Register & Assign Staff <i className='bx bx-right-arrow-alt'></i></>
+                                            )}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowAssignForm(false);
+                                                setRegisteredCredentials(null);
+                                            }}
+                                            className="secondary-btn"
+                                            style={{ width: 'auto', height: '46px', padding: '0 1.5rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </form>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Assigned Staff List */}
+                    {assignedStaff.length > 0 && (
+                        <div className="action-card" style={{ marginBottom: '2rem', padding: '2rem', border: '1px solid var(--card-border)', maxWidth: '100%', width: '100%', animation: 'fadeIn 0.5s ease' }}>
+                            <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h3 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                    <i className='bx bx-group' style={{ color: 'var(--accent-color)' }}></i> Assigned Staff Members
+                                </h3>
+                                <span style={{ background: 'rgba(255,255,255,0.1)', padding: '0.2rem 0.8rem', borderRadius: '100px', fontSize: '0.85rem' }}>{assignedStaff.length} Total</span>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+                                {assignedStaff.map((staff, index) => (
+                                    <div
+                                        key={index}
+                                        className="delivery-item"
+                                        onClick={() => handleStaffClick(staff)}
+                                        style={{
+                                            padding: '1rem 1.25rem',
+                                            background: 'rgba(255, 255, 255, 0.03)',
+                                            borderRadius: '12px',
+                                            border: '1px solid var(--card-border)',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            transition: 'all 0.3s ease',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 0 0 rgba(249, 115, 22, 0)',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = 'rgba(249, 115, 22, 0.08)';
+                                            e.currentTarget.style.borderColor = 'rgba(238, 234, 231, 0.45)';
+                                            e.currentTarget.style.boxShadow = '0 0 18px rgba(249, 115, 22, 0.22)';
+                                            e.currentTarget.style.transform = 'translateY(-2px)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                                            e.currentTarget.style.borderColor = 'var(--card-border)';
+                                            e.currentTarget.style.boxShadow = '0 0 0 rgba(249, 115, 22, 0)';
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                                            <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <i className='bx bx-user'></i>
+                                            </div>
+                                            <div>
+                                                <p style={{ color: '#fff', fontSize: '0.95rem', fontWeight: '500', marginBottom: '0.2rem' }}>{staff}</p>
+                                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Staff Role</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onRemoveStaff && onRemoveStaff(staff);
+                                            }}
+                                            style={{
+                                                background: 'rgba(239, 68, 68, 0.1)',
+                                                color: '#ef4444',
+                                                border: '1px solid rgba(239, 68, 68, 0.2)',
+                                                padding: '0.5rem',
+                                                borderRadius: '8px',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                transition: 'all 0.2s',
+                                            }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
+                                            title="Remove Staff"
+                                        >
+                                            <i className='bx bx-trash' style={{ fontSize: '1.2rem' }}></i>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {staffDetailsLoading && (
+                        <div
+                            className="action-card"
+                            style={{
+                                marginBottom: '2rem',
+                                padding: '1.5rem',
+                                border: '1px solid var(--card-border)',
+                                maxWidth: '100%',
+                                width: '100%',
+                            }}
+                        >
+                            <p style={{ color: 'var(--text-secondary)' }}>
+                                <i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i>
+                                Loading staff details...
+                            </p>
+                        </div>
+                    )}
+
+                    {selectedStaff && (
+                        <div
+                            className="action-card"
+                            style={{
+                                marginBottom: '2rem',
+                                padding: '2rem',
+                                border: '1px solid var(--card-border)',
+                                maxWidth: '100%',
+                                width: '100%',
+                                animation: 'fadeIn 0.3s ease',
+                            }}
+                        >
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'flex-start',
+                                    gap: '1rem',
+                                    marginBottom: '1.5rem',
+                                }}
+                            >
+                                <div>
+                                    <h3
+                                        style={{
+                                            color: '#fff',
+                                            fontSize: '1.3rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            marginBottom: '0.4rem',
+                                        }}
+                                    >
+                                        <i className="bx bx-id-card" style={{ color: 'var(--accent-color)' }}></i>
+                                        Staff Details
+                                    </h3>
+                                    <p style={{ color: 'var(--text-secondary)' }}>
+                                        Details for {selectedStaff.staff_email}
+                                    </p>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedStaff(null)}
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)',
+                                        border: '1px solid var(--card-border)',
+                                        color: '#fff',
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '10px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
+                                    title="Close details"
+                                >
+                                    <i className="bx bx-x" style={{ fontSize: '1.3rem' }}></i>
+                                </button>
+                            </div>
+
+                            <div
+                                style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                                    gap: '1rem',
+                                }}
+                            >
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Name</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.staff_name || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Email</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.staff_email || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Phone</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.staff_phone || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Role</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.staff_role || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Branch ID</p>
+                                    <h4 style={{ color: '#fff' }}>{selectedStaff.branch_id || selectedStaff.branch_ID || 'N/A'}</h4>
+                                </div>
+
+                                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.4rem' }}>Status</p>
+                                    <h4 style={{ color: selectedStaff.staff_active_status ? 'var(--success)' : 'var(--danger)' }}>
+                                        {selectedStaff.staff_active_status ? 'Active' : 'Inactive'}
+                                    </h4>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Stats Grid */}
+                    <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+                        {stats.map((stat, index) => (
+                            <div key={stat.id} className="stat-card" onClick={() => setSelectedStat(stat.id)} style={{
+                                padding: '1.5rem',
+                                background: 'rgba(255, 255, 255, 0.03)',
+                                borderRadius: '16px',
+                                border: '1px solid var(--card-border)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '1.5rem',
+                                transition: 'all 0.3s ease',
+                                cursor: 'pointer',
+                                animation: `slideInRight 0.8s ease backwards ${(index + 1) * 0.2}s`
+                            }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                                    e.currentTarget.style.borderColor = 'var(--card-border)';
+                                }}>
+                                <div style={{
+                                    width: '60px',
+                                    height: '60px',
+                                    borderRadius: '50%',
+                                    background: `rgba(${stat.color === 'var(--success)' ? '16, 185, 129' : stat.color === 'var(--accent-color)' ? '59, 130, 246' : '245, 158, 11'}, 0.1)`,
+                                    color: stat.color,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '2rem'
+                                }}>
+                                    <i className={`bx ${stat.icon}`}></i>
+                                </div>
+                                <div>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.25rem' }}>{stat.title}</p>
+                                    <h3 style={{ color: '#fff', fontSize: '1.8rem', fontWeight: '700' }}>{stat.value}</h3>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {selectedStat && (
+                        <div
+                            className="action-card"
+                            style={{
+                                width: '100%',
+                                maxWidth: '100%',
+                                padding: '2rem',
+                                marginBottom: '2rem',
+                                animation: 'fadeIn 0.3s ease',
+                                border: '1px solid var(--card-border)',
+                            }}
+                        >
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'flex-start',
+                                    gap: '1rem',
+                                    marginBottom: '1.5rem',
+                                }}
+                            >
+                                <div>
+                                    <h3
+                                        style={{
+                                            color: '#fff',
+                                            fontSize: '1.35rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            marginBottom: '0.4rem',
+                                        }}
+                                    >
+                                        <i
+                                            className={`bx ${statDetails[selectedStat].icon}`}
+                                            style={{ color: 'var(--accent-color)' }}
+                                        ></i>
+                                        {statDetails[selectedStat].title}
+                                    </h3>
+                                    <p style={{ color: 'var(--text-secondary)' }}>
+                                        {statDetails[selectedStat].description}
+                                    </p>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedStat(null)}
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)',
+                                        border: '1px solid var(--card-border)',
+                                        color: '#fff',
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '10px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
+                                    title="Close details"
+                                >
+                                    <i className="bx bx-x" style={{ fontSize: '1.3rem' }}></i>
+                                </button>
+                            </div>
+
+                            <div
+                                style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                                    gap: '1rem',
+                                }}
+                            >
+                                {statDetails[selectedStat].rows.map((item, index) => (
+                                    <div
+                                        key={index}
+                                        style={{
+                                            padding: '1rem',
+                                            background: 'rgba(255,255,255,0.03)',
+                                            borderRadius: '12px',
+                                            border: '1px solid var(--card-border)',
+                                        }}
+                                    >
+                                        <p
+                                            style={{
+                                                color: 'var(--text-secondary)',
+                                                fontSize: '0.85rem',
+                                                marginBottom: '0.4rem',
+                                            }}
+                                        >
+                                            {item.label}
+                                        </p>
+                                        <h4 style={{ color: '#fff', fontSize: '1.4rem' }}>
+                                            {item.value}
+                                        </h4>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Main content grid */}
+                    <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
+                        <div className="action-card" style={{ width: '100%', maxWidth: '100%', padding: '2rem', animation: 'slideInUp 1s ease backwards 0.8s', margin: 0 }}>
+                            <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
+                                    <i className='bx bx-list-ul' style={{ color: 'var(--accent-color)' }}></i> Recent System Activity
+                                </h3>
+                                <button style={{ background: 'transparent', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.9rem' }}>View All</button>
+                            </div>
+
+                            <div className="deliveries-list" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                {recentOrders.map((order, index) => (
+                                    <div key={index} className="delivery-item" style={{
+                                        padding: '1.25rem',
+                                        background: 'rgba(255, 255, 255, 0.03)',
+                                        borderRadius: '16px',
+                                        border: '1px solid var(--card-border)',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        transition: 'all 0.3s ease',
+                                    }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                                            e.currentTarget.style.borderColor = 'var(--card-border)';
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                            <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+                                                <i className='bx bx-user'></i>
+                                            </div>
+                                            <div>
+                                                <h4 style={{ color: 'var(--text-primary)', marginBottom: '0.2rem', fontSize: '1.05rem' }}>{order.customer} <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 'normal' }}>({order.id})</span></h4>
+                                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                    <i className='bx bx-map' style={{ color: 'var(--accent-color)', marginRight: '4px' }}></i>
+                                                    {order.destination}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div style={{ textAlign: 'right' }}>
+                                            <span style={{
+                                                display: 'inline-block',
+                                                padding: '0.35rem 0.85rem',
+                                                background: order.status === 'Delivered' ? 'rgba(16, 185, 129, 0.1)' : order.status === 'In Transit' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                                                color: order.status === 'Delivered' ? 'var(--success)' : order.status === 'In Transit' ? 'var(--accent-color)' : '#f59e0b',
+                                                borderRadius: '100px',
+                                                fontSize: '0.85rem',
+                                                fontWeight: '600',
+                                                border: order.status === 'Delivered' ? '1px solid rgba(16, 185, 129, 0.2)' : order.status === 'In Transit' ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid rgba(245, 158, 11, 0.2)'
+                                            }}>
+                                                {order.status}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </>
+            )}
+
+            {activeTab === 'rides' && (
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '2rem',
+                    animation: 'fadeIn 0.4s ease',
+                    width: '100%',
+                    maxWidth: '100%',
+                    boxSizing: 'border-box'
+                }}>
+                    {/* Unified Ride & Order Delivery Assignment Card */}
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', width: '100%' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
+                                    <i className='bx bx-map-pin' style={{ color: 'var(--accent-color)' }}></i> Rider & Delivery Assignment Panel
+                                </h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Assign passenger travel requests and package delivery orders to available riders.</p>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                                <button onClick={() => { loadAtrRequests(); loadPersonalDeliveries(); loadRiders(); }} className="secondary-btn" style={{ width: 'auto', padding: '0.5rem 1rem', height: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                                    <i className='bx bx-refresh'></i> Refresh All
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Filter Bar */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', background: 'rgba(0,0,0,0.2)', padding: '1rem 1.25rem', borderRadius: '12px', marginBottom: '1.5rem', border: '1px solid var(--card-border)', width: '100%', boxSizing: 'border-box' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: '600', marginRight: '0.5rem' }}>Filter Category:</span>
+                                <button
+                                    onClick={() => setAssignmentCategory('all')}
+                                    style={{
+                                        padding: '0.35rem 0.85rem', borderRadius: '8px', fontSize: '0.85rem', cursor: 'pointer', border: 'none',
+                                        background: assignmentCategory === 'all' ? 'var(--accent-color)' : 'rgba(255,255,255,0.05)',
+                                        color: '#fff', fontWeight: assignmentCategory === 'all' ? '600' : 'normal', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    All ({atrRequests.length + personalDeliveries.length})
+                                </button>
+                                <button
+                                    onClick={() => setAssignmentCategory('atr')}
+                                    style={{
+                                        padding: '0.35rem 0.85rem', borderRadius: '8px', fontSize: '0.85rem', cursor: 'pointer', border: 'none',
+                                        background: assignmentCategory === 'atr' ? '#3b82f6' : 'rgba(255,255,255,0.05)',
+                                        color: '#fff', fontWeight: assignmentCategory === 'atr' ? '600' : 'normal', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    ✈️ ATR Rides ({atrRequests.length})
+                                </button>
+                                <button
+                                    onClick={() => setAssignmentCategory('pd')}
+                                    style={{
+                                        padding: '0.35rem 0.85rem', borderRadius: '8px', fontSize: '0.85rem', cursor: 'pointer', border: 'none',
+                                        background: assignmentCategory === 'pd' ? '#a855f7' : 'rgba(255,255,255,0.05)',
+                                        color: '#fff', fontWeight: assignmentCategory === 'pd' ? '600' : 'normal', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    📦 Deliveries ({personalDeliveries.length})
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: '600' }}>Status:</span>
+                                <select
+                                    value={assignmentStatus}
+                                    onChange={(e) => setAssignmentStatus(e.target.value)}
+                                    style={{ padding: '0.35rem 0.85rem', borderRadius: '8px', background: 'rgba(20,20,20,0.95)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
+                                >
+                                    <option value="all">All Statuses</option>
+                                    <option value="pending">⏳ Pending Approval</option>
+                                    <option value="approved">✅ Approved (Ready for Rider)</option>
+                                    <option value="assigned">🏍️ Rider Assigned</option>
+                                    <option value="completed">🏁 Completed</option>
+                                    <option value="rejected">❌ Rejected</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {loadingAtr || loadingPD ? (
+                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading requests and deliveries...</p>
+                        ) : (() => {
+                            // Build combined list directly from Supabase data
+                            const formattedAtrList = atrRequests.map(req => {
+                                const deptInfo = deptCompMap[req.dep_id];
+                                const custCompName = customerCompMap[req.cust_email];
+                                const companyDisplayName = deptInfo?.comp_name || custCompName || 'SC Courier Corporate Client';
+                                const deptDisplayName = deptInfo?.dep_name || 'Operations';
+
+                                return {
+                                    id: `atr-${req.atr_id}`,
+                                    type: 'atr',
+                                    refNumber: req.atr_number || `ATR-${req.atr_id}`,
+                                    status: req.status,
+                                    title: `${companyDisplayName} (${deptDisplayName})`,
+                                    subtitle: `Passenger: ${req.principal_passenger_name} • ${req.vehicle_type || 'Vehicle'} • ${req.required_date} @ ${req.required_time}`,
+                                    details: [
+                                        { label: '🏢 Client', val: companyDisplayName },
+                                        { label: '🏛️ Dept', val: deptDisplayName },
+                                        { label: '👤 Passenger', val: `${req.principal_passenger_name} (${req.principal_passenger_designation || 'Staff'})` },
+                                        { label: '🚘 Vehicle', val: req.vehicle_type || 'Standard' },
+                                        { label: '📅 Date & Time', val: `${req.required_date} @ ${req.required_time}` },
+                                        { label: '📏 Est. Distance', val: `${req.estimated_distance || 0} km` },
+                                        { label: '💰 Est. Cost', val: `${req.estimated_cost || 0} LKR` },
+                                        ...(req.actual_distance ? [{ label: '📍 Actual Distance', val: `${req.actual_distance} km` }] : []),
+                                        ...(req.actual_cost ? [{ label: '💵 Actual Cost', val: `${req.actual_cost} LKR` }] : [])
+                                    ],
+                                    assignedRiderId: req.assigned_rider_nic || req.approved_by,
+                                    rawItem: req
+                                };
+                            });
+
+                            const formattedPDList = personalDeliveries.map(pd => ({
+                                id: `pd-${pd.pd_id}`,
+                                type: 'pd',
+                                refNumber: `PD-${pd.pd_id}`,
+                                status: pd.status,
+                                title: `${pd.item_type || 'Personal Delivery'} • To: ${pd.receiver_name}`,
+                                subtitle: `${pd.pickup_address} ➔ ${pd.drop_address}`,
+                                details: [
+                                    { label: '📦 Item', val: `${pd.item_type || 'Parcel'} (${pd.item_weight || 'N/A'})` },
+                                    { label: '📍 Pickup', val: pd.pickup_address },
+                                    { label: '🏁 Dropoff', val: pd.drop_address },
+                                    { label: '👤 Sender/Receiver', val: `${pd.sender_name} (${pd.sender_phone}) ➔ ${pd.receiver_name}` },
+                                    { label: '📅 Scheduled', val: `${pd.requested_date || pd.scheduled_date || 'N/A'} @ ${pd.requested_time || pd.scheduled_time || 'N/A'}` }
+                                ],
+                                assignedRiderId: pd.assigned_rider_nic || null,
+                                assignedRiderName: pd.assigned_rider_nic || pd.accepted_by || null,
+                                rawItem: pd
+                            }));
+
+                            let combined = [];
+                            if (assignmentCategory === 'all') combined = [...formattedAtrList, ...formattedPDList];
+                            else if (assignmentCategory === 'atr') combined = formattedAtrList;
+                            else if (assignmentCategory === 'pd') combined = formattedPDList;
+
+                            if (assignmentStatus === 'pending') {
+                                combined = combined.filter(item => item.status === 'Pending');
+                            } else if (assignmentStatus === 'approved') {
+                                combined = combined.filter(item => (item.status === 'Approved' || item.status === 'Accepted') && !item.assignedRiderId);
+                            } else if (assignmentStatus === 'assigned') {
+                                combined = combined.filter(item => item.assignedRiderId || item.status === 'Assigned' || item.status === 'In Transit');
+                            } else if (assignmentStatus === 'completed') {
+                                combined = combined.filter(item => item.status === 'Completed');
+                            } else if (assignmentStatus === 'rejected') {
+                                combined = combined.filter(item => item.status === 'Rejected');
+                            }
+
+                            if (combined.length === 0) {
+                                return <p style={{ color: 'var(--text-secondary)', padding: '2rem 0' }}>No matching travel requests or package deliveries found for the selected filters.</p>;
+                            }
+
+                            return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
+                                    {/* Horizontal Bar Header */}
+                                    <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: '130px 1.4fr 140px 110px 100px auto',
+                                        alignItems: 'center',
+                                        gap: '1rem',
+                                        padding: '0.6rem 1.25rem',
+                                        background: 'rgba(255, 255, 255, 0.04)',
+                                        borderRadius: '8px',
+                                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                                        color: 'var(--text-secondary)',
+                                        fontSize: '0.78rem',
+                                        fontWeight: '700',
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.05em'
+                                    }}>
+                                        <div>REF / TYPE</div>
+                                        <div>DETAILS & ROUTE</div>
+                                        <div>SCHEDULE</div>
+                                        <div>ESTIMATE</div>
+                                        <div>STATUS</div>
+                                        <div style={{ textAlign: 'right' }}>ACTIONS</div>
+                                    </div>
+
+                                    {/* Horizontal Bar Items */}
+                                    {combined.map((item) => {
+                                        const isAtr = item.type === 'atr';
+                                        const assignedRiderObj = ridersList.find(r => 
+                                            String(r.staff_id) === String(item.assignedRiderId) ||
+                                            String(r.nic) === String(item.assignedRiderId) ||
+                                            (item.assignedRiderId && String(r.nic).endsWith(String(item.assignedRiderId))) ||
+                                            (item.assignedRiderId && String(r.staff_id).endsWith(String(item.assignedRiderId))) ||
+                                            r.staff_phone === item.assignedRiderId ||
+                                            r.staff_email === item.assignedRiderId
+                                        );
+
+                                        const riderDisplayName = assignedRiderObj ? assignedRiderObj.staff_name : (item.assignedRiderName || (typeof item.assignedRiderId === 'string' ? item.assignedRiderId : null));
+                                        const isPending = item.status === 'Pending';
+                                        const isRejected = item.status === 'Rejected';
+
+                                        const scheduleInfo = isAtr 
+                                            ? `${item.rawItem.required_date || 'N/A'} ${item.rawItem.required_time || ''}`
+                                            : `${item.rawItem.requested_date || item.rawItem.scheduled_date || 'N/A'} ${item.rawItem.requested_time || item.rawItem.scheduled_time || ''}`;
+
+                                        const costDistInfo = isAtr
+                                            ? `${item.rawItem.estimated_cost || 0} LKR (${item.rawItem.estimated_distance || 0} km)`
+                                            : (item.rawItem.item_weight ? `Weight: ${item.rawItem.item_weight}` : 'Standard');
+
+                                        return (
+                                            <div key={item.id} style={{
+                                                display: 'grid',
+                                                gridTemplateColumns: '130px 1.4fr 140px 110px 100px auto',
+                                                alignItems: 'center',
+                                                gap: '1rem',
+                                                padding: '0.9rem 1.25rem',
+                                                background: isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)',
+                                                borderRadius: '10px',
+                                                border: isAtr ? '1px solid rgba(59, 130, 246, 0.15)' : '1px solid rgba(168, 85, 247, 0.15)',
+                                                borderLeft: isAtr ? '4px solid #3b82f6' : '4px solid #a855f7',
+                                                transition: 'all 0.2s ease',
+                                                textAlign: 'left',
+                                                width: '100%'
+                                            }}
+                                                onMouseEnter={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.08)' : 'rgba(168, 85, 247, 0.08)'; e.currentTarget.style.borderColor = isAtr ? 'rgba(59, 130, 246, 0.35)' : 'rgba(168, 85, 247, 0.35)'; }}
+                                                onMouseLeave={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)'; e.currentTarget.style.borderColor = isAtr ? 'rgba(59, 130, 246, 0.15)' : 'rgba(168, 85, 247, 0.15)'; }}
+                                            >
+                                                {/* Col 1: Ref & Badge */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                                    <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#fff', fontFamily: 'monospace' }}>
+                                                        {item.refNumber}
+                                                    </span>
+                                                    <span style={{
+                                                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                                                        padding: '0.15rem 0.45rem', borderRadius: '100px', fontSize: '0.7rem', fontWeight: '600', width: 'fit-content',
+                                                        background: isAtr ? 'rgba(59, 130, 246, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                                                        color: isAtr ? '#60a5fa' : '#c084fc',
+                                                        border: isAtr ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(168, 85, 247, 0.3)'
+                                                    }}>
+                                                        {isAtr ? '✈️ ATR' : '📦 Delivery'}
+                                                    </span>
+                                                </div>
+
+                                                {/* Col 2: Details / Title / Subtitle */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', minWidth: 0 }}>
+                                                    <span style={{ color: '#fff', fontWeight: '600', fontSize: '0.92rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.title}>
+                                                        {item.title}
+                                                    </span>
+                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.subtitle}>
+                                                        {item.subtitle}
+                                                    </span>
+                                                </div>
+
+                                                {/* Col 3: Schedule */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                    <span style={{ color: '#e5e7eb', fontWeight: '500' }}>📅 {scheduleInfo.split(' ')[0]}</span>
+                                                    <span>⏰ {scheduleInfo.split(' ').slice(1).join(' ') || 'Standard'}</span>
+                                                </div>
+
+                                                {/* Col 4: Cost / Distance */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                    <span style={{ color: '#10b981', fontWeight: '600' }}>{costDistInfo}</span>
+                                                    {isAtr && item.rawItem.actual_distance && (
+                                                        <span style={{ color: '#60a5fa', fontSize: '0.72rem' }}>Act: {item.rawItem.actual_distance}km</span>
+                                                    )}
+                                                </div>
+
+                                                {/* Col 5: Status Badge */}
+                                                <div>
+                                                    <span style={{
+                                                        display: 'inline-block', padding: '0.25rem 0.55rem',
+                                                        background: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'rgba(16,185,129,0.1)' : item.status === 'Pending' || item.status === 'Accepted' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                                        color: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'var(--success)' : item.status === 'Pending' || item.status === 'Accepted' ? '#f59e0b' : 'var(--danger)',
+                                                        borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                        border: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'Pending' || item.status === 'Accepted' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                                    }}>{item.status}</span>
+                                                </div>
+
+                                                {/* Col 6: Actions Bar */}
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                                    {isAtr && (item.status === 'Approved' || item.status === 'Assigned' || item.status === 'Completed') && (
+                                                        <button
+                                                            onClick={() => handleOpenAdminAtrModal(item.rawItem)}
+                                                            className="secondary-btn"
+                                                            style={{
+                                                                padding: '0.35rem 0.65rem', height: 'auto', fontSize: '0.75rem',
+                                                                background: item.rawItem.actual_distance ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
+                                                                color: item.rawItem.actual_distance ? 'var(--success)' : '#60a5fa',
+                                                                border: item.rawItem.actual_distance ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(59,130,246,0.25)',
+                                                                cursor: 'pointer', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.25rem'
+                                                            }}
+                                                        >
+                                                            <i className='bx bx-edit-alt'></i> Actuals
+                                                        </button>
+                                                    )}
+
+                                                    {/* Step 1: When Pending, show Approve / Reject */}
+                                                    {isPending ? (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                            <button
+                                                                onClick={() => isAtr ? handleApproveAtr(item.rawItem.atr_id) : handleApprovePD(item.rawItem.pd_id)}
+                                                                className="primary-btn pulse-effect"
+                                                                style={{
+                                                                    width: 'auto',
+                                                                    padding: '0.4rem 0.8rem',
+                                                                    height: '32px',
+                                                                    fontSize: '0.78rem',
+                                                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '0.25rem',
+                                                                    cursor: 'pointer',
+                                                                    borderRadius: '6px'
+                                                                }}
+                                                                title="Approve request"
+                                                            >
+                                                                <i className='bx bx-check'></i> Approve
+                                                            </button>
+                                                            <button
+                                                                onClick={() => isAtr ? handleRejectAtr(item.rawItem.atr_id) : handleRejectPD(item.rawItem.pd_id)}
+                                                                className="secondary-btn"
+                                                                style={{
+                                                                    padding: '0.4rem 0.65rem',
+                                                                    height: '32px',
+                                                                    fontSize: '0.78rem',
+                                                                    background: 'rgba(239, 68, 68, 0.1)',
+                                                                    color: 'var(--danger)',
+                                                                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                                                                    cursor: 'pointer',
+                                                                    borderRadius: '6px',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '0.2rem'
+                                                                }}
+                                                                title="Reject request"
+                                                            >
+                                                                <i className='bx bx-x'></i> Reject
+                                                            </button>
+                                                        </div>
+                                                    ) : isRejected ? (
+                                                        <span style={{ padding: '0.3rem 0.6rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.75rem', fontWeight: 600 }}>
+                                                            Rejected
+                                                        </span>
+                                                    ) : riderDisplayName ? (
+                                                        /* Step 2b: Rider is already assigned */
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '0.35rem 0.65rem', borderRadius: '8px' }}>
+                                                            <span style={{ color: '#fff', fontSize: '0.8rem', fontWeight: '600' }}>👤 {riderDisplayName}</span>
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (isAtr) handleAssignRider(item.rawItem.atr_id, null);
+                                                                    else handleAssignRiderToPD(item.rawItem.pd_id, null);
+                                                                }}
+                                                                className="secondary-btn"
+                                                                style={{ padding: '0.2rem 0.45rem', height: 'auto', fontSize: '0.72rem', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.15)', cursor: 'pointer', borderRadius: '4px' }}
+                                                            >
+                                                                Unassign
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        /* Step 2a: Request is Approved -> Match Rider Now */
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                            <select
+                                                                id={`select-rider-${item.id}`}
+                                                                defaultValue=""
+                                                                style={{ maxWidth: '160px', padding: '0.4rem 0.6rem', background: 'rgba(20, 20, 20, 0.95)', border: '1px solid rgba(16, 185, 129, 0.4)', borderRadius: '6px', color: '#fff', fontSize: '0.78rem', outline: 'none', cursor: 'pointer' }}
+                                                            >
+                                                                <option value="" disabled>Select Rider...</option>
+                                                                {ridersList.map(r => (
+                                                                    <option key={r.staff_id} value={r.staff_id}>
+                                                                        {r.staff_name} ({r.availability_status || 'Available'})
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                            <button
+                                                                onClick={() => {
+                                                                    const sel = document.getElementById(`select-rider-${item.id}`);
+                                                                    if (sel && sel.value) {
+                                                                        if (isAtr) handleAssignRider(item.rawItem.atr_id, sel.value);
+                                                                        else handleAssignRiderToPD(item.rawItem.pd_id, sel.value);
+                                                                    } else {
+                                                                        alert('Please select a rider from the dropdown first.');
+                                                                    }
+                                                                }}
+                                                                className="primary-btn"
+                                                                style={{ width: 'auto', padding: '0.4rem 0.8rem', height: '32px', fontSize: '0.78rem', background: isAtr ? 'var(--accent-color)' : '#a855f7', borderRadius: '6px' }}
+                                                            >
+                                                                Match
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })()}
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'deliveries' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem', animation: 'fadeIn 0.4s ease', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
+                                    <i className='bx bx-package' style={{ color: '#a855f7' }}></i> Personal Delivery Requests
+                                </h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Accept delivery requests and send scheduling emails to customers.</p>
+                            </div>
+                            <button onClick={loadPersonalDeliveries} className="secondary-btn" style={{ width: 'auto', padding: '0.5rem 1rem', height: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                                <i className='bx bx-refresh'></i> Refresh
+                            </button>
+                        </div>
+
+                        {loadingPD ? (
+                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading deliveries...</p>
+                        ) : personalDeliveries.length === 0 ? (
+                            <p style={{ color: 'var(--text-secondary)' }}>No personal delivery requests found.</p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                                {personalDeliveries.map((pd) => {
+                                    const statusColors = {
+                                        'Pending': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                        'Accepted': { bg: 'rgba(59, 130, 246, 0.1)', text: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.2)' },
+                                        'Scheduled': { bg: 'rgba(168, 85, 247, 0.1)', text: '#a855f7', border: '1px solid rgba(168, 85, 247, 0.2)' },
+                                        'Assigned': { bg: 'rgba(16, 185, 129, 0.1)', text: '#10b981', border: '1px solid rgba(16, 185, 129, 0.2)' },
+                                        'In Transit': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                        'Completed': { bg: 'rgba(16, 185, 129, 0.15)', text: '#059669', border: '1px solid rgba(16, 185, 129, 0.3)' },
+                                    };
+                                    const sc = statusColors[pd.status] || statusColors['Pending'];
+
+                                    return (
+                                        <div key={pd.pd_id} style={{
+                                            padding: '1.5rem',
+                                            background: 'rgba(255, 255, 255, 0.02)',
+                                            borderRadius: '16px',
+                                            border: '1px solid var(--card-border)',
+                                            transition: 'all 0.3s ease',
+                                            textAlign: 'left'
+                                        }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                                                <div style={{ flex: '1 1 300px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                                                        <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#fff' }}>PD-{pd.pd_id}</span>
+                                                        <span style={{
+                                                            display: 'inline-block', padding: '0.25rem 0.65rem',
+                                                            background: sc.bg, color: sc.text,
+                                                            borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                            border: sc.border
+                                                        }}>{pd.status}</span>
+                                                    </div>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                        <div><strong>📍 Pickup:</strong> {pd.pickup_address}</div>
+                                                        <div><strong>📍 Drop:</strong> {pd.drop_address}</div>
+                                                        <div><strong>📦 Item:</strong> {pd.item_type} {pd.item_weight ? `(${pd.item_weight})` : ''}</div>
+                                                        <div><strong>👤 Sender:</strong> {pd.sender_name} ({pd.sender_phone})</div>
+                                                        <div><strong>👤 Receiver:</strong> {pd.receiver_name} ({pd.receiver_phone})</div>
+                                                        <div><strong>📅 Requested:</strong> {pd.requested_date} @ {pd.requested_time}</div>
+                                                        {pd.scheduled_date && (
+                                                            <div style={{ color: '#a855f7' }}><strong>📅 Scheduled:</strong> {pd.scheduled_date} @ {pd.scheduled_time}</div>
+                                                        )}
+                                                        {pd.assigned_rider_nic && (
+                                                            <div style={{ color: '#10b981' }}><strong>🏍️ Rider NIC:</strong> {pd.assigned_rider_nic}</div>
+                                                        )}
+                                                        {pd.accepted_by && (
+                                                            <div><strong>✅ Accepted by:</strong> {pd.accepted_by}</div>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                    {pd.status === 'Pending' && (
+                                                        <button
+                                                            onClick={() => handleAcceptDelivery(pd.pd_id)}
+                                                            disabled={acceptingPD === pd.pd_id}
+                                                            className="primary-btn pulse-effect"
+                                                            style={{
+                                                                width: 'auto',
+                                                                background: 'linear-gradient(135deg, #7c3aed, #9333ea)',
+                                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                height: '40px', padding: '0 1.25rem',
+                                                                boxShadow: '0 4px 14px rgba(124, 58, 237, 0.3)',
+                                                                opacity: acceptingPD === pd.pd_id ? 0.7 : 1,
+                                                                cursor: acceptingPD === pd.pd_id ? 'not-allowed' : 'pointer'
+                                                            }}
+                                                        >
+                                                            {acceptingPD === pd.pd_id ? (
+                                                                <><i className='bx bx-loader-alt bx-spin'></i> Accepting...</>
+                                                            ) : (
+                                                                <><i className='bx bx-check-circle'></i> Accept & Send Schedule</>
+                                                            )}
+                                                        </button>
+                                                    )}
+                                                    {(pd.status === 'Assigned' || pd.status === 'In Transit') && (
+                                                        <a
+                                                            href={`http://localhost:5000/api/delivery/${pd.pd_id}/map`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="secondary-btn"
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                padding: '0.5rem 1rem', height: 'auto',
+                                                                background: 'rgba(59, 130, 246, 0.1)',
+                                                                color: '#3b82f6',
+                                                                border: '1px solid rgba(59, 130, 246, 0.2)',
+                                                                textDecoration: 'none', borderRadius: '10px',
+                                                                fontSize: '0.85rem', fontWeight: '600'
+                                                            }}
+                                                        >
+                                                            <i className='bx bx-map'></i> View Map
+                                                        </a>
+                                                    )}
+                                                    {pd.status === 'Completed' && (
+                                                        <span style={{
+                                                            display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                            color: '#059669', fontSize: '0.9rem', fontWeight: '600'
+                                                        }}>
+                                                            <i className='bx bx-check-double'></i> Delivered
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'analytics' && (
+                <ReportAnalyticsView
+                    staffData={analyticsData.staff}
+                    riderData={analyticsData.rider}
+                    atrData={analyticsData.atr}
+                    courierData={analyticsData.courier}
+                    customerData={analyticsData.customer}
+                    invoiceData={analyticsData.invoice}
+                    paymentData={analyticsData.payment}
+                    onExportCSV={handleGenerateReport}
+                    onRefresh={loadAnalyticsData}
+                    isLoading={loadingAnalytics}
+                />
+            )}
+
+            {/* ── Admin ATR Actuals Modal ── */}
+            {adminEditingAtr && (
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(5px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem'
+                }} onClick={() => setAdminEditingAtr(null)}>
+                    <div style={{
+                        background: '#18181b', border: '1px solid var(--card-border)', borderRadius: '20px',
+                        padding: '2rem', maxWidth: '480px', width: '100%', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+                        animation: 'scaleUp 0.3s ease'
+                    }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                            <h3 style={{ margin: 0, color: '#fff', fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <i className='bx bx-calculator' style={{ color: 'var(--accent-color)' }}></i> Verify Actual Distance & Cost
+                            </h3>
+                            <button onClick={() => setAdminEditingAtr(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.4rem' }}>
+                                <i className='bx bx-x'></i>
+                            </button>
+                        </div>
+
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+                            Record or adjust the actual trip distance traveled for <strong>{adminEditingAtr.atr_number}</strong> ({adminEditingAtr.principal_passenger_name}).
+                        </p>
+
+                        {/* 1st Suggestion Badge */}
+                        <div style={{
+                            background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.25)',
+                            padding: '0.75rem 1rem', borderRadius: '10px', marginBottom: '1.25rem',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                        }}>
+                            <div>
+                                <span style={{ fontSize: '0.75rem', color: '#60a5fa', fontWeight: 600, display: 'block' }}>
+                                    1ST SUGGESTION {adminEditingAtr.actual_distance ? '(FROM RIDER TRIP LOG)' : '(ESTIMATED)'}
+                                </span>
+                                <strong style={{ color: '#fff', fontSize: '1.05rem' }}>
+                                    {adminEditingAtr.actual_distance || adminEditingAtr.estimated_distance || 0} km
+                                </strong>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => handleAdminActualDistChange(String(adminEditingAtr.actual_distance || adminEditingAtr.estimated_distance || ''))}
+                                style={{
+                                    background: 'rgba(59, 130, 246, 0.2)', border: 'none', color: '#60a5fa',
+                                    padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600
+                                }}
+                            >
+                                Use Suggestion
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSaveAdminAtrActuals} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', textAlign: 'left' }}>
+                                <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600 }}>
+                                    Actual Traveled Distance (km) <span style={{ color: 'var(--danger)' }}>*</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    required
+                                    value={adminActualDist}
+                                    onChange={(e) => handleAdminActualDistChange(e.target.value)}
+                                    placeholder="e.g. 26.50"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
+                                        borderRadius: '10px', padding: '0.75rem 1rem', color: '#fff', fontSize: '1rem', outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', textAlign: 'left' }}>
+                                <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600 }}>
+                                    Actual Trip Cost (LKR)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={adminActualCost}
+                                    onChange={(e) => setAdminActualCost(e.target.value)}
+                                    placeholder="Auto-calculated from distance"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--card-border)',
+                                        borderRadius: '10px', padding: '0.75rem 1rem', color: '#fff', fontSize: '1rem', outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setAdminEditingAtr(null)}
+                                    className="secondary-btn"
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--card-border)', background: 'transparent', color: '#fff', cursor: 'pointer' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={adminSavingAtr || !adminActualDist}
+                                    style={{
+                                        flex: 2, padding: '0.75rem', borderRadius: '10px', border: 'none',
+                                        background: 'var(--accent-color)', color: '#fff', fontWeight: 600, fontSize: '0.95rem',
+                                        cursor: adminSavingAtr ? 'not-allowed' : 'pointer', display: 'flex',
+                                        alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                                        boxShadow: '0 4px 15px rgba(59, 130, 246, 0.3)'
+                                    }}
+                                >
+                                    {adminSavingAtr ? (
+                                        <><i className='bx bx-loader-alt bx-spin'></i> Saving...</>
+                                    ) : (
+                                        <><i className='bx bx-save'></i> Save Actuals</>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default AdminDashboard;
+
