@@ -160,11 +160,7 @@ const StaffDashboard = ({ loggedInUser }) => {
     useEffect(() => {
         refreshAll();
 
-        const syncTimer = setInterval(() => {
-            loadAtrRequests();
-            loadPersonalDeliveries();
-            loadRiders();
-        }, 5000);
+        
 
         const liveChannel = supabase
             .channel('staff-multi-pc-sync')
@@ -174,7 +170,6 @@ const StaffDashboard = ({ loggedInUser }) => {
             .subscribe();
 
         return () => {
-            clearInterval(syncTimer);
             supabase.removeChannel(liveChannel);
         };
     }, [loggedInUser]);

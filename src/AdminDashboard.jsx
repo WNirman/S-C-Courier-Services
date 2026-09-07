@@ -252,12 +252,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             loadAtrRequests();
             loadPersonalDeliveries();
 
-            // 1. Background sync interval (ensures multi-PC sync even if websockets are delayed)
-            const syncInterval = setInterval(() => {
-                loadAtrRequests();
-                loadPersonalDeliveries();
-                loadRiders();
-            }, 5000);
+            
 
             // 2. Supabase Realtime channel for instant push updates across all PCs
             const liveChannel = supabase
@@ -274,7 +269,6 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 .subscribe();
 
             return () => {
-                clearInterval(syncInterval);
                 supabase.removeChannel(liveChannel);
             };
         }
