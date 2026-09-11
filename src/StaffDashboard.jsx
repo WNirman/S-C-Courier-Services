@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { generateMonthlyExcelReport } from './utils/reportGenerator';
 
 const StaffDashboard = ({ loggedInUser }) => {
     const [staffProfile, setStaffProfile] = useState(null);
@@ -12,6 +13,15 @@ const StaffDashboard = ({ loggedInUser }) => {
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('all'); // 'all' | 'deliveries' | 'atr' | 'riders'
     const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'pending' | 'approved' | 'assigned' | 'completed'
+
+    // Report generation state
+    const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+    const [reportMonth, setReportMonth] = useState(() => {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        return `${y}-${m}`;
+    });
 
     // Actuals completion modal
     const [completingAtr, setCompletingAtr] = useState(null);
@@ -472,6 +482,20 @@ const StaffDashboard = ({ loggedInUser }) => {
         }
     };
 
+    // Generate Monthly Statistical Excel Report
+    const handleGenerateReport = async () => {
+        setIsGeneratingReport(true);
+        try {
+            const res = await generateMonthlyExcelReport(reportMonth, staffProfile?.staff_email || loggedInUser);
+            alert(`Monthly Excel Analytics Report (${res.fileName}) generated and downloaded successfully!`);
+        } catch (error) {
+            console.error('Error generating report:', error);
+            alert('Failed to generate report: ' + error.message);
+        } finally {
+            setIsGeneratingReport(false);
+        }
+    };
+
     // ── Build Unified Order Items ──────────────────────────────────────
     const unifiedOrders = (() => {
         const atrItems = atrRequests.map(req => {
@@ -545,12 +569,58 @@ const StaffDashboard = ({ loggedInUser }) => {
                     </p>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid var(--card-border)', padding: '0 0.75rem', height: '40px', gap: '0.5rem' }}>
+                        <i className='bx bx-calendar' style={{ color: 'var(--accent-color)', fontSize: '1.15rem' }}></i>
+                        <input
+                            type="month"
+                            value={reportMonth}
+                            onChange={(e) => setReportMonth(e.target.value)}
+                            title="Filter Report by Month"
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#fff',
+                                outline: 'none',
+                                fontSize: '0.85rem',
+                                cursor: 'pointer',
+                                fontFamily: 'inherit'
+                            }}
+                        />
+                    </div>
+                    <button
+                        onClick={handleGenerateReport}
+                        disabled={isGeneratingReport}
+                        title="Download comprehensive monthly analytical Excel (.xlsx) report"
+                        className="primary-btn pulse-effect"
+                        style={{
+                            padding: '0 1rem',
+                            height: '40px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            fontSize: '0.85rem',
+                            fontWeight: '600',
+                            cursor: isGeneratingReport ? 'not-allowed' : 'pointer',
+                            opacity: isGeneratingReport ? 0.8 : 1,
+                            borderRadius: '8px',
+                            background: '#10b981',
+                            boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)',
+                            width: 'auto'
+                        }}
+                    >
+                        {isGeneratingReport ? (
+                            <><i className='bx bx-loader-alt bx-spin'></i> Generating...</>
+                        ) : (
+                            <><i className='bx bx-table'></i> Export Excel</>
+                        )}
+                    </button>
                     <button
                         onClick={refreshAll}
                         className="secondary-btn"
                         style={{
-                            padding: '0.6rem 1rem',
+                            padding: '0 1rem',
+                            height: '40px',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '0.4rem',

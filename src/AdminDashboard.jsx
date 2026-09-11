@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { generateMonthlyExcelReport } from './utils/reportGenerator';
 
 const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, loggedInUser }) => {
     const [showAssignForm, setShowAssignForm] = useState(false);
@@ -8,6 +9,12 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     const [staffDetailsLoading, setStaffDetailsLoading] = useState(false);
     const [selectedStat, setSelectedStat] = useState(null);
     const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+    const [reportMonth, setReportMonth] = useState(() => {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        return `${y}-${m}`;
+    });
 
     // Ride Assignment and Rider Availability State
     const [activeTab, setActiveTab] = useState('overview');
@@ -861,216 +868,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     const handleGenerateReport = async () => {
         setIsGeneratingReport(true);
         try {
-            const [
-                staffRes,
-                riderRes,
-                atrRes,
-                courierRes,
-                customerRes,
-                invoiceRes,
-                paymentRes
-            ] = await Promise.all([
-                supabase.from('staff').select('*'),
-                supabase.from('rider').select('*'),
-                supabase.from('atr').select('*'),
-                supabase.from('courier_req').select('*'),
-                supabase.from('customer').select('*'),
-                supabase.from('invoice').select('*'),
-                supabase.from('payment').select('*')
-            ]);
-
-            const staffData = staffRes.status === 'fulfilled' && !staffRes.value.error ? staffRes.value.data : [];
-            const riderData = riderRes.status === 'fulfilled' && !riderRes.value.error ? riderRes.value.data : [];
-            const atrData = atrRes.status === 'fulfilled' && !atrRes.value.error ? atrRes.value.data : [];
-            const courierData = courierRes.status === 'fulfilled' && !courierRes.value.error ? courierRes.value.data : [];
-            const customerData = customerRes.status === 'fulfilled' && !customerRes.value.error ? customerRes.value.data : [];
-            const invoiceData = invoiceRes.status === 'fulfilled' && !invoiceRes.value.error ? invoiceRes.value.data : [];
-            const paymentData = paymentRes.status === 'fulfilled' && !paymentRes.value.error ? paymentRes.value.data : [];
-
-            // Calculate overview stats (Staff and Riders strictly separated)
-            const totalStaff = staffData.length;
-            const totalRiders = riderData.length;
-            const activeRiders = riderData.filter(r => (r.availability_status || 'Available') === 'Available').length;
-            const busyRiders = riderData.filter(r => r.availability_status === 'Busy').length;
-
-            const totalCustomers = customerData.length;
-            const individualCustomers = customerData.filter(c => c.cust_type?.toLowerCase() === 'individual').length;
-            const corporateCustomers = customerData.filter(c => c.cust_type?.toLowerCase() === 'corporate').length;
-
-            const totalATRs = atrData.length;
-            const approvedATRs = atrData.filter(a => a.status === 'Approved').length;
-            const pendingATRs = atrData.filter(a => a.status === 'Pending').length;
-            const completedATRs = atrData.filter(a => a.status === 'Completed').length;
-            const totalEstCost = atrData.reduce((acc, a) => acc + Number(a.estimated_cost || 0), 0);
-            const totalActCost = atrData.reduce((acc, a) => acc + Number(a.actual_cost || 0), 0);
-
-            const totalCouriers = courierData.length;
-            const pendingCouriers = courierData.filter(c => c.status === 'Pending').length;
-            const deliveredCouriers = courierData.filter(c => c.status === 'Delivered').length;
-
-            const totalInvoiced = invoiceData.reduce((acc, i) => acc + Number(i.total_amount || 0), 0);
-            const totalPaid = paymentData.filter(p => p.status === 'Success' || p.status === 'success' || p.status === 'Paid' || p.status === 'paid').reduce((acc, p) => acc + Number(p.amount || 0), 0);
-
-            // Construct CSV
-            let csvContent = '';
-            const appendLine = (line) => { csvContent += line + '\n'; };
-            const appendEmptyRow = () => { csvContent += '\n'; };
-
-            // Helper to escape CSV values
-            const esc = (val) => {
-                if (val === null || val === undefined) return '';
-                let str = String(val);
-                if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-                    return `"${str.replace(/"/g, '""')}"`;
-                }
-                return str;
-            };
-
-            // 1. Report Header
-            appendLine('=== SC COURIER SERVICES - SYSTEM REPORT ===');
-            appendLine(`Report Type,Full System Summary Report`);
-            appendLine(`Generated At,${new Date().toLocaleString()}`);
-            appendLine(`Generated By,${loggedInUser?.email || loggedInUser?.staff_email || 'Admin'}`);
-            appendEmptyRow();
-
-            // 2. Summary Statistics Section
-            appendLine('=== SUMMARY STATISTICS ===');
-            appendLine('Category,Metric,Value');
-            appendLine(`Staff,Total Registered Office Staff,${totalStaff}`);
-            appendLine(`Riders,Total Courier Riders,${totalRiders}`);
-            appendLine(`Riders,Active Available Riders,${activeRiders}`);
-            appendLine(`Riders,Busy Riders,${busyRiders}`);
-            appendLine(`Customer,Total Registered Customers,${totalCustomers}`);
-            appendLine(`Customer,Individual Customers,${individualCustomers}`);
-            appendLine(`Customer,Corporate Customers,${corporateCustomers}`);
-            appendLine(`ATR Requests,Total ATR Requests,${totalATRs}`);
-            appendLine(`ATR Requests,Approved ATRs,${approvedATRs}`);
-            appendLine(`ATR Requests,Pending ATRs,${pendingATRs}`);
-            appendLine(`ATR Requests,Completed ATRs,${completedATRs}`);
-            appendLine(`ATR Requests,Total Estimated Cost (LKR),${totalEstCost.toFixed(2)}`);
-            appendLine(`ATR Requests,Total Actual Cost (LKR),${totalActCost.toFixed(2)}`);
-            appendLine(`Courier Bookings,Total Bookings,${totalCouriers}`);
-            appendLine(`Courier Bookings,Pending Bookings,${pendingCouriers}`);
-            appendLine(`Courier Bookings,Delivered Bookings,${deliveredCouriers}`);
-            appendLine(`Finance,Total Invoiced Amount (LKR),${totalInvoiced.toFixed(2)}`);
-            appendLine(`Finance,Total Payments Received (LKR),${totalPaid.toFixed(2)}`);
-            appendEmptyRow();
-
-            // 3. Staff List (Strictly administrative/office staff)
-            appendLine('=== REGISTERED STAFF MEMBERS ===');
-            appendLine('Staff ID,Name,Email,Phone,Role,Status');
-            staffData.forEach(s => {
-                appendLine([
-                    esc(s.staff_id),
-                    esc(s.staff_name),
-                    esc(s.staff_email),
-                    esc(s.staff_phone),
-                    esc(s.staff_role || 'Staff'),
-                    esc(s.staff_active_status ? 'Active' : 'Inactive')
-                ].join(','));
-            });
-            appendEmptyRow();
-
-            // 3b. Courier Riders List (Dedicated rider fleet)
-            appendLine('=== COURIER RIDERS ===');
-            appendLine('NIC,Name,Email,Phone,Vehicle Type,Vehicle Number,Licence No,Branch,Availability Status');
-            riderData.forEach(r => {
-                appendLine([
-                    esc(r.NIC),
-                    esc(r.Name),
-                    esc(r.email),
-                    esc(r.Phone_Number),
-                    esc(r.Vehicle_Type),
-                    esc(r.Vehicle_Number),
-                    esc(r.Driver_Licence_No),
-                    esc(r.Branch),
-                    esc(r.availability_status || 'Available')
-                ].join(','));
-            });
-            appendEmptyRow();
-
-            // 4. Customers List
-            appendLine('=== REGISTERED CUSTOMERS ===');
-            appendLine('Customer ID,Name,Email,Address,Phone,Type,Joined Date');
-            customerData.forEach(c => {
-                appendLine([
-                    esc(c.customer_id),
-                    esc(c.cust_name),
-                    esc(c.cust_email),
-                    esc(c.cust_address),
-                    esc(c.cust_phoneno),
-                    esc(c.cust_type),
-                    esc(c.created_at ? new Date(c.created_at).toLocaleDateString() : 'N/A')
-                ].join(','));
-            });
-            appendEmptyRow();
-
-            // 5. ATR Requests List
-            appendLine('=== ATR TRAVEL REQUESTS ===');
-            appendLine('ATR ID,ATR Number,Required Date,Required Time,Passenger Name,Passenger Designation,Vehicle Type,Purpose of Travel,Est. Distance,Est. Cost (LKR),Actual Distance,Actual Cost (LKR),Status');
-            atrData.forEach(a => {
-                appendLine([
-                    esc(a.atr_id),
-                    esc(a.atr_number),
-                    esc(a.required_date),
-                    esc(a.required_time),
-                    esc(a.principal_passenger_name),
-                    esc(a.principal_passenger_designation),
-                    esc(a.vehicle_type),
-                    esc(a.purpose_of_travel),
-                    esc(a.estimated_distance),
-                    esc(a.estimated_cost),
-                    esc(a.actual_distance),
-                    esc(a.actual_cost),
-                    esc(a.status)
-                ].join(','));
-            });
-            appendEmptyRow();
-
-            // 6. Courier Requests List
-            appendLine('=== COURIER BOOKINGS ===');
-            appendLine('Book ID,Customer ID,ATR ID,Receiver NIC,Courier Date,Weight,Status,Created At');
-            courierData.forEach(c => {
-                appendLine([
-                    esc(c.book_id),
-                    esc(c.customer_id),
-                    esc(c.atr_id),
-                    esc(c.rec_nic),
-                    esc(c.courier_date),
-                    esc(c.courier_weight),
-                    esc(c.status),
-                    esc(c.created_at ? new Date(c.created_at).toLocaleDateString() : 'N/A')
-                ].join(','));
-            });
-            appendEmptyRow();
-
-            // 7. Invoice & Payments List
-            appendLine('=== INVOICES ===');
-            appendLine('Invoice ID,Invoice Type,Customer ID,Rider ID,Issue Date,Total Amount (LKR),Payment Status');
-            invoiceData.forEach(i => {
-                appendLine([
-                    esc(i.invoice_id),
-                    esc(i.invoice_type),
-                    esc(i.customer_id),
-                    esc(i.rider_id),
-                    esc(i.issue_date),
-                    esc(i.total_amount),
-                    esc(i.payment_status)
-                ].join(','));
-            });
-
-            // Trigger file download
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.setAttribute('href', url);
-            link.setAttribute('download', `SC_Courier_Full_Report_${new Date().toISOString().split('T')[0]}.csv`);
-            link.style.visibility = 'hidden';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-
-            alert('Report generated and downloaded successfully!');
+            const res = await generateMonthlyExcelReport(reportMonth, loggedInUser);
+            alert(`Monthly Excel Analytics Report (${res.fileName}) generated and downloaded successfully!`);
         } catch (error) {
             console.error('Error generating report:', error);
             alert('Failed to generate report: ' + error.message);
@@ -1153,21 +952,40 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     </h2>
                     <p style={{ textAlign: 'left', color: 'var(--text-secondary)' }}>System overview and management</p>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
                     <button className="secondary-btn" onClick={() => setShowAssignForm(!showAssignForm)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', height: '44px', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
                         <i className='bx bx-user-plus'></i> Assign Staff
                     </button>
+                    <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid var(--card-border)', padding: '0 0.75rem', height: '44px', gap: '0.5rem' }}>
+                        <i className='bx bx-calendar' style={{ color: 'var(--accent-color)', fontSize: '1.15rem' }}></i>
+                        <input
+                            type="month"
+                            value={reportMonth}
+                            onChange={(e) => setReportMonth(e.target.value)}
+                            title="Filter Report by Month"
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#fff',
+                                outline: 'none',
+                                fontSize: '0.9rem',
+                                cursor: 'pointer',
+                                fontFamily: 'inherit'
+                            }}
+                        />
+                    </div>
                     <button
                         className="primary-btn pulse-effect"
                         onClick={handleGenerateReport}
                         disabled={isGeneratingReport}
+                        title="Download comprehensive monthly analytical Excel (.xlsx) report"
                         style={{
                             width: 'auto',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '0.5rem',
-                            background: '#f59e0b',
-                            boxShadow: '0 4px 15px rgba(245, 158, 11, 0.3)',
+                            background: '#10b981',
+                            boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)',
                             height: '44px',
                             cursor: isGeneratingReport ? 'not-allowed' : 'pointer',
                             opacity: isGeneratingReport ? 0.8 : 1
@@ -1176,7 +994,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         {isGeneratingReport ? (
                             <><i className='bx bx-loader-alt bx-spin'></i> Generating...</>
                         ) : (
-                            <><i className='bx bx-printer'></i> Generate Report</>
+                            <><i className='bx bx-table'></i> Export Excel Report</>
                         )}
                     </button>
                 </div>
