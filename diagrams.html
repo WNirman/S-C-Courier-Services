@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S&amp;C Courier Services - System Diagrams</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0f1a;
+      --card: #1a1e35;
+      --border: rgba(99,102,241,0.25);
+      --accent: #6366f1;
+      --accent2: #8b5cf6;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --glow: 0 0 40px rgba(99,102,241,0.18);
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1a1e35 0%, #0d0f1a 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 2.5rem 2rem 2rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    header::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% -20%, rgba(99,102,241,0.25) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(99,102,241,0.15);
+      border: 1px solid rgba(99,102,241,0.4);
+      border-radius: 999px;
+      padding: 4px 14px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #a5b4fc;
+      margin-bottom: 1rem;
+    }
+    header h1 {
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-weight: 800;
+      background: linear-gradient(135deg, #e2e8f0 0%, #a5b4fc 60%, #8b5cf6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.2;
+    }
+    header p {
+      margin-top: 0.75rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .tab-bar {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 1.5rem 1rem 0;
+      flex-wrap: wrap;
+    }
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0.65rem 1.4rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--card);
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      font-family: inherit;
+    }
+    .tab-btn:hover { border-color: var(--accent); color: var(--text); }
+    .tab-btn.active {
+      background: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.15));
+      border-color: var(--accent);
+      color: #a5b4fc;
+      box-shadow: var(--glow);
+    }
+
+    main {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+    }
+    .diagram-panel { display: none; }
+    .diagram-panel.active { display: block; }
+
+    .diagram-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 2rem;
+      margin-bottom: 2.5rem;
+      box-shadow: var(--glow);
+      animation: fadeUp 0.4s ease;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .section-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .section-icon {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.3rem;
+      flex-shrink: 0;
+    }
+    .section-header h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .section-header p {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-top: 3px;
+      line-height: 1.5;
+    }
+
+    .diagram-wrap {
+      background: #f8fafc;
+      border-radius: 12px;
+      padding: 2rem;
+      overflow-x: auto;
+      overflow-y: auto;
+      min-height: 300px;
+    }
+    .diagram-wrap svg { display: block; margin: 0 auto; max-width: 100%; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-top: 1rem;
+    }
+    .chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      color: var(--muted);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+    .error-msg {
+      color: #f87171;
+      background: rgba(248,113,113,0.1);
+      border: 1px solid rgba(248,113,113,0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      font-size: 0.85rem;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="badge">&#9679; System Architecture</div>
+  <h1>S&amp;C Courier Services</h1>
+  <p>Use Case &middot; Entity-Relationship &middot; Sequence Diagrams</p>
+</header>
+
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="usecase">&#128100; Use Case Diagram</button>
+  <button class="tab-btn" data-tab="er">&#128451; ER Diagram</button>
+  <button class="tab-btn" data-tab="sequence">&#128260; Sequence Diagrams</button>
+</div>
+
+<main>
+
+  <!-- ===== USE CASE PANEL ===== -->
+  <div class="diagram-panel active" id="tab-usecase">
+    <div class="diagram-card">
+      <div class="section-header">
+        <div class="section-icon">&#128100;</div>
+        <div>
+          <h2>Use Case Diagram</h2>
+          <p>Actors: Customer, Staff, Admin, Rider. Shows all system interactions per role.</p>
+        </div>
+      </div>
+      <div class="diagram-wrap">
+        <pre class="mermaid">
+flowchart LR
+  CUST(["Customer"])
+  STAFF(["Staff"])
+  ADMIN(["Admin"])
+  RIDER(["Rider"])
+
+  UC1(["Register and Login"])
+  UC2(["Track Parcel"])
+  UC3(["Book Courier Request"])
+  UC4(["Submit ATR Form"])
+  UC5(["Request Personal Delivery"])
+  UC6(["View Invoice and Pay"])
+  UC7(["Write Review"])
+  UC8(["Chat with Bot"])
+  UC9(["View Customer Dashboard"])
+
+  UC10(["Manage Courier Requests"])
+  UC11(["Create and Assign Trips"])
+  UC12(["Process ATR Approvals"])
+  UC13(["Manage Deliveries"])
+  UC14(["Send Notifications"])
+  UC15(["Schedule Personal Deliveries"])
+  UC16(["Generate Invoices"])
+
+  UC17(["Manage Staff Accounts"])
+  UC18(["Manage Branches"])
+  UC19(["View Reports and Stats"])
+  UC20(["Manage Riders"])
+  UC21(["Manage Companies and Departments"])
+
+  UC22(["Accept or Reject Delivery"])
+  UC23(["Update Delivery Status"])
+  UC24(["Update GPS Location"])
+  UC25(["View Assigned Trips"])
+
+  CUST --- UC1
+  CUST --- UC2
+  CUST --- UC3
+  CUST --- UC4
+  CUST --- UC5
+  CUST --- UC6
+  CUST --- UC7
+  CUST --- UC8
+  CUST --- UC9
+
+  STAFF --- UC10
+  STAFF --- UC11
+  STAFF --- UC12
+  STAFF --- UC13
+  STAFF --- UC14
+  STAFF --- UC15
+  STAFF --- UC16
+
+  ADMIN --- UC17
+  ADMIN --- UC18
+  ADMIN --- UC19
+  ADMIN --- UC20
+  ADMIN --- UC21
+  ADMIN --- UC10
+  ADMIN --- UC16
+
+  RIDER --- UC22
+  RIDER --- UC23
+  RIDER --- UC24
+  RIDER --- UC25
+
+  style CUST fill:#4f46e5,stroke:#6366f1,color:#fff
+  style STAFF fill:#7c3aed,stroke:#8b5cf6,color:#fff
+  style ADMIN fill:#be123c,stroke:#f43f5e,color:#fff
+  style RIDER fill:#0369a1,stroke:#0ea5e9,color:#fff
+        </pre>
+      </div>
+      <div class="legend">
+        <span class="chip"><span class="dot" style="background:#4f46e5"></span>Customer</span>
+        <span class="chip"><span class="dot" style="background:#7c3aed"></span>Staff</span>
+        <span class="chip"><span class="dot" style="background:#be123c"></span>Admin</span>
+        <span class="chip"><span class="dot" style="background:#0369a1"></span>Rider</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ER PANEL ===== -->
+  <div class="diagram-panel" id="tab-er">
+    <div class="diagram-card">
+      <div class="section-header">
+        <div class="section-icon">&#128451;</div>
+        <div>
+          <h2>Entity-Relationship Diagram</h2>
+          <p>Full ERD covering all 18 database tables with attributes, keys, and relationships.</p>
+        </div>
+      </div>
+      <div class="diagram-wrap" style="max-height:1000px;">
+        <pre class="mermaid">
+erDiagram
+    CUSTOMER {
+        int    customer_id PK
+        string cust_name
+        string cust_email
+        string cust_phoneno
+        string cust_type
+        string created_at
+    }
+    COMPANY {
+        int    comp_id PK
+        string comp_name
+        string comp_address
+        string comp_phoneno
+    }
+    DEPARTMENT {
+        int    dep_id PK
+        string dep_name
+        int    comp_id FK
+    }
+    CLIENT_APPROVER {
+        int    approver_id PK
+        string ca_name
+        string designation
+        string email
+        int    dep_id FK
+    }
+    REVIEWS {
+        int    review_id PK
+        string review_com
+        int    customer_id FK
+    }
+    BRANCH {
+        int    branch_id PK
+        string branch_location
+    }
+    STAFF {
+        int     staff_id PK
+        string  staff_name
+        string  staff_email
+        int     branch_id FK
+        boolean staff_active_status
+    }
+    RIDER {
+        string nic PK
+        string rider_name
+        string phone
+        string email
+        string vehicle_type
+        string vehicle_number
+        float  current_lat
+        float  current_lng
+        string availability_status
+    }
+    INVOICE {
+        int    invoice_id PK
+        string invoice_type
+        int    customer_id FK
+        string issue_date
+        float  total_amount
+        string payment_status
+        string rider_nic FK
+    }
+    PAYMENT {
+        int    payment_id PK
+        int    invoice_id FK
+        string payment_date
+        string payment_method
+        float  amount
+        string status
+        string transaction_id
+    }
+    ATR {
+        int    atr_id PK
+        int    dep_id FK
+        string atr_number
+        string required_date
+        string vehicle_type
+        string purpose_of_travel
+        float  estimated_distance
+        float  estimated_cost
+        float  actual_distance
+        float  actual_cost
+        string status
+        int    approved_by FK
+        int    client_approver_id FK
+        string assigned_rider_nic FK
+    }
+    TRIP {
+        int    trip_id PK
+        string trip_date
+        string trip_status
+        int    branch_id FK
+        int    created_by FK
+        string rider_nic FK
+    }
+    RECEIVER {
+        string rec_nic PK
+        string rec_phone
+        string rec_name
+        string rec_location
+    }
+    COURIER_REQ {
+        int    book_id PK
+        int    customer_id FK
+        string rec_nic FK
+        int    atr_id FK
+        string courier_date
+        string courier_weight
+        string status
+        int    assigned_staff_id FK
+    }
+    DELIVERY {
+        int    del_id PK
+        string delivery_status
+        string pick_location
+        string drop_location
+        int    book_id FK
+        int    trip_id FK
+        string source_type
+    }
+    NOTIFICATION {
+        int    notification_id PK
+        int    customer_id FK
+        int    delivery_id FK
+        string notification_type
+        string notification_msg
+    }
+    ATR_INVOICE {
+        int atr_id PK
+        int invoice_id FK
+    }
+    PERSONAL_DELIVERY {
+        int    pd_id PK
+        string cust_email
+        string pickup_address
+        string drop_address
+        string item_type
+        string sender_name
+        string receiver_name
+        string status
+        string scheduled_date
+        string assigned_rider_nic FK
+    }
+
+    CUSTOMER ||--o{ REVIEWS : "writes"
+    CUSTOMER ||--o{ INVOICE : "billedOn"
+    CUSTOMER ||--o{ COURIER_REQ : "places"
+    CUSTOMER ||--o{ NOTIFICATION : "receives"
+    COMPANY ||--o{ DEPARTMENT : "has"
+    DEPARTMENT ||--o{ CLIENT_APPROVER : "has"
+    DEPARTMENT ||--o{ ATR : "raises"
+    BRANCH ||--o{ STAFF : "employs"
+    STAFF ||--o{ TRIP : "creates"
+    STAFF ||--o{ COURIER_REQ : "handles"
+    STAFF ||--o{ ATR : "approves"
+    RIDER ||--o{ TRIP : "executes"
+    RIDER ||--o{ ATR : "assigned"
+    RIDER ||--o{ PERSONAL_DELIVERY : "delivers"
+    RIDER ||--o{ INVOICE : "linked"
+    INVOICE ||--o{ PAYMENT : "paidVia"
+    INVOICE ||--o{ ATR_INVOICE : "linked"
+    ATR ||--o{ ATR_INVOICE : "linked"
+    ATR ||--o{ COURIER_REQ : "attachedTo"
+    CLIENT_APPROVER ||--o{ ATR : "approves"
+    RECEIVER ||--o{ COURIER_REQ : "receives"
+    COURIER_REQ ||--o{ DELIVERY : "dispatched"
+    TRIP ||--o{ DELIVERY : "contains"
+    BRANCH ||--o{ TRIP : "origin"
+    DELIVERY ||--o{ NOTIFICATION : "triggers"
+        </pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SEQUENCE PANEL ===== -->
+  <div class="diagram-panel" id="tab-sequence">
+
+    <div class="diagram-card">
+      <div class="section-header">
+        <div class="section-icon">&#128272;</div>
+        <div>
+          <h2>Sequence 1 - Customer Login and Registration</h2>
+          <p>Authentication flow: registration, login, role detection and redirect to correct dashboard.</p>
+        </div>
+      </div>
+      <div class="diagram-wrap">
+        <pre class="mermaid">
+sequenceDiagram
+    actor C as Customer
+    participant FE as Frontend React
+    participant BE as Backend Express
+    participant DB as Database PostgreSQL
+
+    C->>FE: Fill registration form
+    FE->>BE: POST /api/auth/register
+    BE->>DB: SELECT FROM Customer WHERE cust_email
+    DB-->>BE: Empty result new user
+    BE->>DB: INSERT INTO Customer
+    DB-->>BE: New customer row
+    BE-->>FE: 200 OK customer data
+    FE-->>C: Registration successful
+
+    C->>FE: Enter email and password
+    FE->>BE: POST /api/auth/login
+    BE->>DB: Check Staff table
+    DB-->>BE: Not found
+    BE->>DB: Check Customer table
+    DB-->>BE: Match found
+    BE-->>FE: role is customer name returned
+    FE-->>C: Redirect to Customer Dashboard
+        </pre>
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="section-header">
+        <div class="section-icon">&#128230;</div>
+        <div>
+          <h2>Sequence 2 - Courier Request Booking and Dispatch</h2>
+          <p>Customer books parcel, staff approves, rider is assigned, delivery tracked end-to-end.</p>
+        </div>
+      </div>
+      <div class="diagram-wrap">
+        <pre class="mermaid">
+sequenceDiagram
+    actor C as Customer
+    actor S as Staff
+    actor R as Rider
+    participant FE as Frontend
+    participant BE as Backend
+    participant DB as Database
+
+    C->>FE: Fill Courier Request form
+    FE->>BE: POST /api/courier-requests
+    BE->>DB: INSERT INTO courier_req
+    DB-->>BE: book_id returned
+    BE-->>FE: 201 Created
+    FE-->>C: Request submitted
+
+    S->>FE: View pending courier requests
+    FE->>BE: GET /api/courier-requests status Pending
+    BE->>DB: SELECT FROM courier_req WHERE status is Pending
+    DB-->>BE: List of requests
+    BE-->>FE: Request list
+    FE-->>S: Rendered table
+
+    S->>FE: Approve request and assign rider
+    FE->>BE: PATCH /api/courier-requests id
+    BE->>DB: UPDATE courier_req status to Approved
+    DB-->>BE: Updated row
+
+    S->>FE: Create trip and assign rider
+    FE->>BE: POST /api/trips with rider_nic and branch_id
+    BE->>DB: INSERT INTO trip
+    DB-->>BE: trip_id returned
+    BE->>DB: INSERT INTO delivery with trip_id and book_id
+    DB-->>BE: del_id returned
+    BE-->>FE: 201 Created
+    FE-->>S: Trip and delivery created
+
+    R->>FE: View assigned trips
+    FE->>BE: GET /api/riders/nic/deliveries
+    BE->>DB: SELECT FROM delivery JOIN trip WHERE rider_nic
+    DB-->>BE: Delivery list
+    FE-->>R: Trip and package info
+
+    R->>FE: Update status to Delivered
+    FE->>BE: PATCH /api/deliveries id status Delivered
+    BE->>DB: UPDATE delivery SET delivery_status to Delivered
+    BE->>DB: INSERT INTO notification for customer
+    DB-->>BE: Saved
+    BE-->>FE: 200 OK
+    FE-->>C: Parcel Delivered notification sent
+        </pre>
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="section-header">
+        <div class="section-icon">&#128203;</div>
+        <div>
+          <h2>Sequence 3 - ATR Activity Travel Request Workflow</h2>
+          <p>Corporate customer submits ATR, client approver signs off, staff processes, rider dispatched.</p>
+        </div>
+      </div>
+      <div class="diagram-wrap">
+        <pre class="mermaid">
+sequenceDiagram
+    actor C as Corporate Customer
+    actor CA as Client Approver
+    actor S as Staff
+    actor R as Rider
+    participant FE as Frontend
+    participant BE as Backend
+    participant DB as Database
+
+    C->>FE: Fill ATR form with department and travel details
+    FE->>BE: POST /api/atr
+    BE->>DB: INSERT INTO atr with status Pending
+    DB-->>BE: atr_id returned
+    BE-->>FE: 201 Created
+    FE-->>C: ATR submitted
+
+    BE-->>CA: Email with approval link token
+    CA->>BE: GET /api/atr/approve/token
+    BE->>DB: UPDATE atr SET status to ClientApproved
+    DB-->>BE: Updated
+    BE-->>CA: Approval confirmed
+
+    S->>FE: View ClientApproved ATRs
+    FE->>BE: GET /api/atr status ClientApproved
+    BE->>DB: SELECT FROM atr WHERE status is ClientApproved
+    DB-->>BE: ATR list
+    FE-->>S: ATR table displayed
+
+    S->>FE: Approve ATR and assign rider
+    FE->>BE: PATCH /api/atr id status StaffApproved rider_nic
+    BE->>DB: UPDATE atr SET status StaffApproved and assigned_rider_nic
+    DB-->>BE: OK
+    FE-->>S: ATR dispatched to rider
+
+    R->>FE: View assigned ATR trip
+    FE->>BE: GET /api/riders/nic/atr
+    BE->>DB: SELECT FROM atr WHERE assigned_rider_nic
+    DB-->>BE: ATR details
+    FE-->>R: ATR info displayed
+
+    R->>FE: Submit actual cost and distance
+    FE->>BE: PATCH /api/atr id with actual_distance and actual_cost
+    BE->>DB: UPDATE atr SET actual values and status Completed
+    BE->>DB: INSERT INTO invoice with total_amount
+    BE->>DB: INSERT INTO atr_invoice linking record
+    DB-->>BE: Invoice created
+    FE-->>C: Invoice generated and sent
+        </pre>
+      </div>
+    </div>
+
+    <div class="diagram-card">
+      <div class="section-header">
+        <div class="section-icon">&#128664;</div>
+        <div>
+          <h2>Sequence 4 - Personal Door to Door Delivery</h2>
+          <p>Customer requests personal delivery, staff schedules and assigns rider, rider delivers.</p>
+        </div>
+      </div>
+      <div class="diagram-wrap">
+        <pre class="mermaid">
+sequenceDiagram
+    actor C as Customer
+    actor S as Staff
+    actor R as Rider
+    participant FE as Frontend
+    participant BE as Backend
+    participant DB as Database
+
+    C->>FE: Fill Personal Delivery form with pickup and drop address
+    FE->>BE: POST /api/personal-deliveries
+    BE->>DB: INSERT INTO personal_delivery with status Pending
+    DB-->>BE: pd_id returned
+    BE-->>FE: 201 Created
+    FE-->>C: Request submitted
+
+    S->>FE: View pending personal deliveries
+    FE->>BE: GET /api/personal-deliveries status Pending
+    BE->>DB: SELECT FROM personal_delivery WHERE status is Pending
+    DB-->>BE: Delivery list
+    FE-->>S: Table of pending deliveries
+
+    S->>FE: Schedule delivery and assign rider
+    FE->>BE: PATCH /api/personal-deliveries id with scheduled_date and rider_nic
+    BE->>DB: UPDATE personal_delivery status to Scheduled and set assigned_rider_nic
+    DB-->>BE: Updated
+    FE-->>S: Delivery scheduled
+
+    R->>FE: View scheduled deliveries
+    FE->>BE: GET /api/riders/nic/personal-deliveries
+    BE->>DB: SELECT FROM personal_delivery WHERE assigned_rider_nic
+    DB-->>BE: Delivery details
+    FE-->>R: Delivery shown on map
+
+    R->>FE: Accept and start delivery
+    FE->>BE: PATCH /api/personal-deliveries id status InTransit
+    BE->>DB: UPDATE personal_delivery to InTransit and set accepted_by rider_nic
+    DB-->>BE: OK
+
+    R->>FE: Mark as Delivered
+    FE->>BE: PATCH /api/personal-deliveries id status Delivered
+    BE->>DB: UPDATE personal_delivery status to Delivered
+    DB-->>BE: OK
+    BE-->>FE: 200 OK
+    FE-->>C: Package delivered notification sent
+        </pre>
+      </div>
+    </div>
+
+  </div><!-- /sequence panel -->
+
+</main>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    securityLevel: 'loose',
+    themeVariables: {
+      primaryColor: '#1e293b',
+      primaryTextColor: '#1e293b',
+      primaryBorderColor: '#6366f1',
+      lineColor: '#6366f1',
+      secondaryColor: '#e2e8f0',
+      tertiaryColor: '#f1f5f9',
+      background: '#f8fafc',
+      mainBkg: '#1e293b',
+      nodeBorder: '#6366f1',
+      titleColor: '#1e293b',
+      edgeLabelBackground: '#e2e8f0',
+      attributeBackgroundColorEven: '#f1f5f9',
+      attributeBackgroundColorOdd: '#e2e8f0',
+      signalColor: '#6366f1',
+      signalTextColor: '#1e293b',
+      actorBkg: '#1e293b',
+      actorTextColor: '#e2e8f0',
+      actorBorder: '#6366f1',
+      actorLineColor: '#6366f1',
+      noteBkgColor: '#fef3c7',
+      noteTextColor: '#1e293b',
+    },
+    er: { diagramPadding: 40, layoutDirection: 'TB', minEntityWidth: 120 },
+    sequence: { diagramMarginX: 20, diagramMarginY: 20, actorMargin: 80, useMaxWidth: false, wrap: true },
+    flowchart: { curve: 'basis', useMaxWidth: false, htmlLabels: false },
+  });
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.diagram-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>
