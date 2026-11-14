@@ -203,15 +203,94 @@
 </header>
 
 <div class="tab-bar">
-  <button class="tab-btn active" data-tab="usecase">&#128100; Use Case Diagram</button>
+  <button class="tab-btn active" data-tab="architecture">&#127959; System Architecture</button>
+  <button class="tab-btn" data-tab="usecase">&#128100; Use Case Diagram</button>
   <button class="tab-btn" data-tab="er">&#128451; ER Diagram</button>
   <button class="tab-btn" data-tab="sequence">&#128260; Sequence Diagrams</button>
 </div>
 
 <main>
 
+  <!-- ===== SYSTEM ARCHITECTURE PANEL ===== -->
+  <div class="diagram-panel active" id="tab-architecture">
+    <div class="diagram-card">
+      <div class="section-header">
+        <div class="section-icon">&#127959;</div>
+        <div>
+          <h2>Overall System Architecture (Web + SC Courier Mobile App)</h2>
+          <p>End-to-end multi-tier architecture linking the React Web Portal, SC Courier Rider Mobile App, Node.js/Express Backend, Supabase Cloud (PostgreSQL + Realtime), and External Geolocation/Email Services.</p>
+        </div>
+      </div>
+      <div class="diagram-wrap">
+        <pre class="mermaid">
+flowchart TB
+  subgraph CLIENTS["1. Client Presentation Layer"]
+    direction LR
+    subgraph WEB["SC Courier Web Application (React + Vite)"]
+      W_CUST["Customer Portal\n• Personal Delivery & Map Pinning\n• Corporate ATR Request\n• Live Order Tracking & AI Chatbot"]
+      W_STAFF["Staff Dashboard\n• Approve / Accept Requests\n• Assign Riders & Dispatch Trips\n• Generate Invoices"]
+      W_ADMIN["Admin Dashboard\n• Manage Staff, Riders & Branches\n• Analytics & Excel/PDF Reports\n• Full Dispatch Control"]
+    end
+
+    subgraph MOBILE["SC Courier Mobile App (Rider App)"]
+      M_AUTH["Rider Login & Profile\n(NIC & Credential Auth)"]
+      M_TRIPS["Assigned Trips & Deliveries\n(Fetches pickup_lat/lng & drop_lat/lng)"]
+      M_NAV["Map Navigation & Route View\n(Google Maps / OSM Pin Navigation)"]
+      M_STATUS["Live Status & Actual Distance\n(Picked Up → In Transit → Delivered)"]
+    end
+  end
+
+  subgraph BACKEND["2. Application & API Layer (Node.js + Express Server)"]
+    API_AUTH["Auth & Role Controller\n(/api/auth/login)"]
+    API_DEL["Delivery & Schedule Controller\n(/api/delivery/accept, /schedule/:token)"]
+    API_TRIP["Trip & Dispatch Engine\n(/api/trip-delivery/create)"]
+    API_ATR["ATR & Approval Token Engine\n(/api/atr/approve, /reject)"]
+  end
+
+  subgraph DATA["3. Cloud Database & Realtime Layer (Supabase BaaS)"]
+    DB[("Supabase PostgreSQL Database\n• customer, company, department\n• personal_delivery (with lat/lng)\n• atr, courier_req, invoice\n• staff, rider, trip, delivery")]
+    RT["Supabase Realtime Engine\n(WebSockets / postgres_changes\nInstant Web ↔ Mobile Sync)"]
+  end
+
+  subgraph EXTERNAL["4. External Services & APIs"]
+    MAPS["Map & Geocoding Services\n• Google Maps & Places API\n• OpenStreetMap (Leaflet / Nominatim)\n• OSRM Route Distance Calculator"]
+    SMTP["SMTP Email Service (Nodemailer)\n• ATR Client Approver Emails\n• Delivery Acceptance & Schedule Links"]
+  end
+
+  %% Connections from Web
+  W_CUST <-->|"Direct SDK & Realtime"| RT
+  W_STAFF <-->|"Direct SDK & Realtime"| RT
+  W_ADMIN <-->|"Direct SDK & Realtime"| RT
+
+  W_CUST <-->|"Search / Pin Address\nGet Lat & Lng + Distance"| MAPS
+  WEB <-->|"REST API (JSON)"| BACKEND
+
+  %% Connections from Mobile App
+  M_AUTH <-->|"Verify Rider"| DB
+  M_TRIPS <-->|"Fetch Assigned Trips &\nPickup/Drop Coordinates"| RT
+  M_NAV <-->|"Render Route from\npickup_lat/lng to drop_lat/lng"| MAPS
+  M_STATUS -->|"Update Delivery Status &\nActual Distance"| DB
+
+  %% Connections from Backend
+  BACKEND <-->|"REST / pg Pool"| DB
+  API_DEL -->|"Send Schedule Link"| SMTP
+  API_ATR -->|"Send Approval Link"| SMTP
+  API_DEL <-->|"Server Geocoding"| MAPS
+  RT <-->|"Change Events"| DB
+
+  style CLIENTS fill:#eef2ff,stroke:#6366f1,stroke-width:2px,color:#1e1b4b
+  style WEB fill:#ffffff,stroke:#4f46e5,stroke-width:1.5px,color:#1e1b4b
+  style MOBILE fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
+  style BACKEND fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
+  style DATA fill:#ecfdf5,stroke:#059669,stroke-width:2px,color:#064e3b
+  style EXTERNAL fill:#fdf4ff,stroke:#c026d3,stroke-width:2px,color:#701a75
+        </pre>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== USE CASE PANEL ===== -->
-  <div class="diagram-panel active" id="tab-usecase">
+  <div class="diagram-panel" id="tab-usecase">
     <div class="diagram-card">
       <div class="section-header">
         <div class="section-icon">&#128100;</div>

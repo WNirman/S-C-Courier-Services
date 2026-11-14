@@ -1,6 +1,6 @@
 const path = require('path');
 require('dotenv').config();
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -483,17 +483,28 @@ const nodemailer = require('nodemailer');
 // Setup Nodemailer Transporter
 let transporter;
 const setupTransporter = async () => {
-  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+  process.env.SMTP_HOST = 'smtp.gmail.com';
+  process.env.SMTP_PORT = '587';
+  process.env.SMTP_SECURE = 'false';
+  process.env.SMTP_USER = 'sccourier369@gmail.com';
+  process.env.SMTP_PASS = 'safajaukaammdgpb';
+
+  const smtpUser = process.env.SMTP_USER.trim();
+  const smtpPass = process.env.SMTP_PASS.replace(/\s+/g, '');
+
+  if (smtpUser && smtpPass) {
+    const host = process.env.SMTP_HOST.trim();
+    const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
     transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+      host,
+      port: smtpPort,
+      secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
       auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user: smtpUser,
+        pass: smtpPass,
       },
     });
-    console.log('SMTP Email transporter configured successfully.');
+    console.log(`SMTP Email transporter configured successfully (${smtpUser}).`);
   } else {
     // Generate test SMTP service account from ethereal.email
     try {
@@ -2083,4 +2094,246 @@ app.post('/api/personal-delivery/create', async (req, res) => {
   }
 });
 
-
+// ============================================================
+// PASSWORD RESET (FORGOT PASSWORD VIA EMAIL LINK)
+// ============================================================
+const passwordResetTokens = new Map(); // token -> { email, role, name, expiresAt }
+
+// 1. POST /api/auth/forgot-password — Verify existing account & send reset link email
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { identifier, frontendOrigin } = req.body;
+  if (!identifier || !identifier.trim()) {
+    return res.status(400).json({ error: 'Please enter your email, username, or phone number.' });
+  }
+
+  const queryVal = identifier.trim();
+  const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
+
+  try {
+    let foundEmail = null;
+    let foundName = null;
+    let foundRole = null;
+
+    // 1. Search in customer table (by cust_email, cust_name, or cust_phoneno)
+    const custRes = await fetch(
+      `${sbUrl}/rest/v1/customer?or=(cust_email.ilike.${encodeURIComponent(queryVal)},cust_name.ilike.${encodeURIComponent(queryVal)},cust_phoneno.eq.${encodeURIComponent(queryVal)})&select=cust_email,cust_name,cust_phoneno`,
+      { headers: sbHeaders }
+    );
+    if (custRes.ok) {
+      const custRows = await custRes.json();
+      if (Array.isArray(custRows) && custRows.length > 0) {
+        foundEmail = custRows[0].cust_email;
+        foundName = custRows[0].cust_name || 'Customer';
+        foundRole = 'customer';
+      }
+    }
+
+    // 2. If not found in customer, search in staff table (by staff_email, staff_name, or staff_phone)
+    if (!foundEmail) {
+      const staffRes = await fetch(
+        `${sbUrl}/rest/v1/staff?or=(staff_email.ilike.${encodeURIComponent(queryVal)},staff_name.ilike.${encodeURIComponent(queryVal)},staff_phone.eq.${encodeURIComponent(queryVal)})&select=staff_email,staff_name,staff_phone`,
+        { headers: sbHeaders }
+      );
+      if (staffRes.ok) {
+        const staffRows = await staffRes.json();
+        if (Array.isArray(staffRows) && staffRows.length > 0) {
+          foundEmail = staffRows[0].staff_email;
+          foundName = staffRows[0].staff_name || 'Staff Member';
+          foundRole = 'staff';
+        }
+      }
+    }
+
+    if (!foundEmail) {
+      return res.status(404).json({
+        error: 'No existing account found with that email, username, or phone number.'
+      });
+    }
+
+    // Generate reset token valid for 1 hour
+    const token = generateToken();
+    passwordResetTokens.set(token, {
+      email: foundEmail,
+      role: foundRole,
+      name: foundName,
+      expiresAt: Date.now() + 60 * 60 * 1000
+    });
+
+    const baseFrontend = (frontendOrigin || 'http://localhost:5173').replace(/\/$/, '');
+    const queryParams = `reset_token=${encodeURIComponent(token)}&email=${encodeURIComponent(foundEmail)}&role=${encodeURIComponent(foundRole)}`;
+    const resetUrl = `${baseFrontend}/?${queryParams}`;
+
+    // Gmail strips href="http://localhost..." from <a> tags.
+    // Replacing localhost with 127.0.0.1.nip.io keeps the link 100% clickable inside Gmail while resolving to 127.0.0.1!
+    const gmailClickableUrl = baseFrontend
+      .replace(/^http:\/\/localhost(?=:|\/|$)/i, 'http://127.0.0.1.nip.io')
+      .replace(/^http:\/\/127\.0\.0\.1(?=:|\/|$)/i, 'http://127.0.0.1.nip.io') + `/?${queryParams}`;
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+      </head>
+      <body style="font-family: Arial, Helvetica, sans-serif; background-color: #f3f4f6; padding: 24px; color: #1f2937; margin: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 560px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0;">
+          <tr>
+            <td style="background-color: #ea580c; color: #ffffff; padding: 28px 24px; text-align: center;">
+              <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff;">🔐 Password Reset Request</h1>
+              <p style="margin: 6px 0 0 0; font-size: 14px; color: #ffedd5;">S&amp;C Courier Services</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 28px 24px;">
+              <p style="font-size: 16px; font-weight: 600; color: #111827; margin: 0 0 12px 0;">Hello ${foundName},</p>
+              <p style="font-size: 14px; line-height: 1.6; color: #374151; margin: 0 0 24px 0;">
+                We received a request to reset the password for your S&amp;C Courier Services account (<strong>${foundEmail}</strong>).
+                Click the button below to set your new password:
+              </p>
+
+              <!-- Email-safe solid button (clickable in Gmail) -->
+              <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto 24px auto;">
+                <tr>
+                  <td align="center" bgcolor="#ea580c" style="background-color: #ea580c; border-radius: 8px;">
+                    <a href="${gmailClickableUrl}" target="_blank" style="display: inline-block; padding: 14px 32px; font-family: Arial, sans-serif; font-size: 15px; font-weight: bold; color: #ffffff !important; text-decoration: none; border-radius: 8px; background-color: #ea580c;">
+                      Reset My Password
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="font-size: 13px; font-weight: 600; color: #374151; margin: 0 0 8px 0;">
+                Or click / copy this reset link directly:
+              </p>
+              <div style="background-color: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; word-break: break-all; font-family: monospace; font-size: 12px; color: #0f172a;">
+                <a href="${gmailClickableUrl}" target="_blank" style="color: #ea580c; text-decoration: underline; font-weight: 600;">${gmailClickableUrl}</a>
+                <br/><br/>
+                <span style="color: #475569;">Local URL: ${resetUrl}</span>
+              </div>
+
+              <p style="font-size: 12px; color: #64748b; margin: 20px 0 0 0;">
+                This link expires in 1 hour. If you did not request a password reset, you can safely ignore this email.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #f8fafc; padding: 16px 24px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0;">
+              &copy; ${new Date().getFullYear()} S&amp;C Courier Services. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    if (!transporter) {
+      await setupTransporter();
+    }
+
+    const info = await transporter.sendMail({
+      from: `"SC Courier Services" <${process.env.SMTP_USER || 'no-reply@sccourier.com'}>`,
+      to: foundEmail,
+      subject: '🔐 Reset Your Password — SC Courier Services',
+      html: htmlContent
+    });
+
+    const previewUrl = nodemailer.getTestMessageUrl(info);
+    if (previewUrl) {
+      console.log(`Password Reset Email Preview URL: ${previewUrl}`);
+    }
+    console.log(`Password reset email sent to ${foundEmail}`);
+
+    // Mask email for UI display (e.g. ni***@gmail.com)
+    const [localPart, domainPart] = foundEmail.split('@');
+    const maskedEmail = localPart.length > 2
+      ? `${localPart.slice(0, 2)}***@${domainPart}`
+      : `${localPart[0]}***@${domainPart}`;
+
+    return res.json({
+      success: true,
+      email: foundEmail,
+      maskedEmail,
+      role: foundRole,
+      previewUrl: previewUrl || null
+    });
+  } catch (err) {
+    console.error('Error in /api/auth/forgot-password:', err);
+    return res.status(500).json({ error: 'Failed to send password reset email: ' + err.message });
+  }
+});
+
+// 2. GET /api/auth/verify-reset-token — Check if a reset token is valid
+app.get('/api/auth/verify-reset-token', (req, res) => {
+  const { token } = req.query;
+  if (!token || !passwordResetTokens.has(token)) {
+    return res.status(400).json({ valid: false, error: 'Invalid or expired password reset link.' });
+  }
+  const data = passwordResetTokens.get(token);
+  if (Date.now() > data.expiresAt) {
+    passwordResetTokens.delete(token);
+    return res.status(400).json({ valid: false, error: 'This password reset link has expired.' });
+  }
+  return res.json({ valid: true, email: data.email, role: data.role, name: data.name });
+});
+
+// 3. POST /api/auth/reset-password — Update password using valid token
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, email, role, newPassword } = req.body;
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+
+  let targetEmail = email;
+  let targetRole = role || 'customer';
+
+  if (token && passwordResetTokens.has(token)) {
+    const tokenData = passwordResetTokens.get(token);
+    if (Date.now() > tokenData.expiresAt) {
+      passwordResetTokens.delete(token);
+      return res.status(400).json({ error: 'This password reset link has expired.' });
+    }
+    targetEmail = tokenData.email;
+    targetRole = tokenData.role;
+  }
+
+  if (!targetEmail) {
+    return res.status(400).json({ error: 'Invalid password reset request.' });
+  }
+
+  const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
+
+  try {
+    if (targetRole === 'staff') {
+      const crypto = require('crypto');
+      const hashedPassword = crypto.createHash('sha256').update(newPassword).digest('hex');
+      const sbRes = await fetch(
+        `${sbUrl}/rest/v1/staff?staff_email=eq.${encodeURIComponent(targetEmail)}`,
+        {
+          method: 'PATCH',
+          headers: { ...sbHeaders, 'Prefer': 'return=representation' },
+          body: JSON.stringify({ staff_password: hashedPassword })
+        }
+      );
+      if (!sbRes.ok) throw new Error('Failed to update staff password in database.');
+    } else {
+      const sbRes = await fetch(
+        `${sbUrl}/rest/v1/customer?cust_email=eq.${encodeURIComponent(targetEmail)}`,
+        {
+          method: 'PATCH',
+          headers: { ...sbHeaders, 'Prefer': 'return=representation' },
+          body: JSON.stringify({ cust_password: newPassword })
+        }
+      );
+      if (!sbRes.ok) throw new Error('Failed to update customer password in database.');
+    }
+
+    if (token) passwordResetTokens.delete(token);
+    return res.json({ success: true, message: 'Password has been reset successfully!' });
+  } catch (err) {
+    console.error('Error resetting password:', err);
+    return res.status(500).json({ error: err.message || 'Server error resetting password.' });
+  }
+});
+
+
+

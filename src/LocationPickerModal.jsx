@@ -1,234 +1,243 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { loadLeaflet, searchPlaces, nominatimReverse } from './mapProvider';
+import { useMapProvider, loadLeaflet, nominatimSearch, nominatimReverse } from './mapProvider';
 
-const SL_CENTER = { lat: 6.9271, lng: 79.8612 }; // Default center: Colombo, Sri Lanka
+const DARK_MAP_STYLE = [
+    { elementType: 'geometry',                                           stylers: [{ color: '#1a1f2e' }] },
+    { elementType: 'labels.text.fill',                                   stylers: [{ color: '#8a9bb5' }] },
+    { elementType: 'labels.text.stroke',                                 stylers: [{ color: '#1a1f2e' }] },
+    { featureType: 'administrative', elementType: 'geometry',            stylers: [{ color: '#2d3748' }] },
+    { featureType: 'poi',            elementType: 'labels.text.fill',    stylers: [{ color: '#8a9bb5' }] },
+    { featureType: 'poi.park',       elementType: 'geometry',            stylers: [{ color: '#17213a' }] },
+    { featureType: 'road',           elementType: 'geometry',            stylers: [{ color: '#2d3748' }] },
+    { featureType: 'road',           elementType: 'labels.text.fill',    stylers: [{ color: '#9aa5be' }] },
+    { featureType: 'road.highway',   elementType: 'geometry',            stylers: [{ color: '#3d4f6b' }] },
+    { featureType: 'water',          elementType: 'geometry',            stylers: [{ color: '#0d1b2a' }] },
+];
+
+const SL_CENTER = { lat: 7.8731, lng: 80.7718 };
 
 /**
- * LocationPickerModal — Always renders an interactive map (Google Hybrid/Streets + OpenStreetMap)
- * with instant place search, click-to-pin, and draggable pin.
+ * LocationPickerModal — Google Maps, with automatic OpenStreetMap (Leaflet) fallback.
  * Props: isOpen, onClose, onConfirm({address,lat,lng}), title, initialLat, initialLng
  */
 function LocationPickerModal({ isOpen, onClose, onConfirm, title = 'Pick a Location', initialLat, initialLng }) {
+    const provider = useMapProvider();          // 'loading' | 'google' | 'osm'
+
     const mapDivRef      = useRef(null);
     const mapRef         = useRef(null);
     const markerRef      = useRef(null);
+    const geocoderRef    = useRef(null);
+    const searchInputRef = useRef(null);
     const debounceRef    = useRef(null);
+    const providerRef    = useRef(provider);
+    providerRef.current  = provider;
 
-    const [searchQuery,  setSearchQuery]  = useState('');
     const [selectedAddr, setSelectedAddr] = useState('');
     const [selectedLat,  setSelectedLat]  = useState(null);
     const [selectedLng,  setSelectedLng]  = useState(null);
     const [isLocating,   setIsLocating]   = useState(false);
-    const [isSearching,  setIsSearching]  = useState(false);
     const [mapReady,     setMapReady]     = useState(false);
     const [suggestions,  setSuggestions]  = useState([]);
-    const [tileMode,     setTileMode]     = useState('gstreets'); // 'gstreets' | 'ghybrid' | 'osm'
-    const tileLayerRef   = useRef(null);
-
-    const getTileUrl = (mode) => {
-        if (mode === 'ghybrid') {
-            return 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
-        }
-        if (mode === 'osm') {
-            return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-        }
-        // Default: Google Maps clean streets view (never shows billing popup!)
-        return 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}';
-    };
 
     // ── Reverse geocode ──────────────────────────────────────────────────────
     const reverseGeocode = async (lat, lng) => {
-        try {
-            const addr = await nominatimReverse(lat, lng);
-            if (addr) {
-                setSelectedAddr(addr);
-                setSearchQuery(addr);
-            }
-        } catch { /* ignore */ }
+        let addr = '';
+        if (providerRef.current === 'google' && geocoderRef.current) {
+            addr = await new Promise((resolve) => {
+                geocoderRef.current.geocode({ location: { lat, lng } }, (results, st) => {
+                    resolve(st === 'OK' && results[0] ? results[0].formatted_address : '');
+                });
+            });
+        } else {
+            try { addr = await nominatimReverse(lat, lng); } catch { /* ignore */ }
+        }
+        if (addr) {
+            setSelectedAddr(addr);
+            if (searchInputRef.current) searchInputRef.current.value = addr;
+        }
     };
 
-    // ── Place / move marker ──────────────────────────────────────────────────
+    // ── Place / move marker (works for both providers) ───────────────────────
     const placeMarker = (lat, lng) => {
         const map = mapRef.current;
-        const L = window.L;
-        if (!map || !L) return;
+        if (!map) return;
 
-        if (markerRef.current) {
-            markerRef.current.setLatLng([lat, lng]);
+        if (providerRef.current === 'google') {
+            const G = window.google.maps;
+            if (markerRef.current) {
+                markerRef.current.setPosition({ lat, lng });
+            } else {
+                markerRef.current = new G.Marker({
+                    position: { lat, lng }, map, draggable: true, animation: G.Animation.DROP,
+                    icon: { path: G.SymbolPath.CIRCLE, scale: 10, fillColor: '#f97316', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+                });
+                markerRef.current.addListener('dragend', (e) => {
+                    const lt = e.latLng.lat(), ln = e.latLng.lng();
+                    setSelectedLat(lt); setSelectedLng(ln);
+                    reverseGeocode(lt, ln);
+                });
+            }
         } else {
-            markerRef.current = L.marker([lat, lng], {
-                draggable: true,
-                icon: L.divIcon({
-                    className: '',
-                    html: '<div class="loc-pin"></div>',
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12],
-                }),
-            }).addTo(map);
-
-            markerRef.current.on('dragend', (e) => {
-                const p = e.target.getLatLng();
-                setSelectedLat(p.lat);
-                setSelectedLng(p.lng);
-                reverseGeocode(p.lat, p.lng);
-            });
+            const L = window.L;
+            if (markerRef.current) {
+                markerRef.current.setLatLng([lat, lng]);
+            } else {
+                markerRef.current = L.marker([lat, lng], {
+                    draggable: true,
+                    icon: L.divIcon({ className: '', html: '<div class="loc-pin"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }),
+                }).addTo(map);
+                markerRef.current.on('dragend', (e) => {
+                    const p = e.target.getLatLng();
+                    setSelectedLat(p.lat); setSelectedLng(p.lng);
+                    reverseGeocode(p.lat, p.lng);
+                });
+            }
         }
         setSelectedLat(lat);
         setSelectedLng(lng);
     };
 
     const moveTo = (lat, lng, zoom = 16) => {
-        if (mapRef.current) {
-            mapRef.current.setView([lat, lng], zoom);
-        }
+        const map = mapRef.current;
+        if (!map) return;
+        if (providerRef.current === 'google') { map.setCenter({ lat, lng }); map.setZoom(zoom); }
+        else map.setView([lat, lng], zoom);
     };
 
-    // ── Initialize Map when modal opens ──────────────────────────────────────
+    const resetSelection = () => {
+        setSelectedAddr(''); setSelectedLat(null); setSelectedLng(null); setSuggestions([]);
+        if (searchInputRef.current) searchInputRef.current.value = '';
+    };
+
+    // ── Init GOOGLE map ──────────────────────────────────────────────────────
     useEffect(() => {
-        if (!isOpen) return;
-        let cancelled = false;
+        if (!isOpen || provider !== 'google') return;
+        let ac = null;
         setMapReady(false);
+        resetSelection();
 
-        loadLeaflet().then((L) => {
-            if (cancelled || !mapDivRef.current) return;
+        const t = setTimeout(() => {
+            if (!mapDivRef.current || !window.google?.maps) return;
+            const G = window.google.maps;
+            const hasInit = initialLat && initialLng;
 
-            // Clean up any existing instance on this container
-            if (mapRef.current) {
-                mapRef.current.remove();
-                mapRef.current = null;
-                markerRef.current = null;
-            }
-
-            const hasInit = typeof initialLat === 'number' && typeof initialLng === 'number';
-            const startLat = hasInit ? initialLat : SL_CENTER.lat;
-            const startLng = hasInit ? initialLng : SL_CENTER.lng;
-
-            const map = L.map(mapDivRef.current, { zoomControl: true }).setView(
-                [startLat, startLng],
-                hasInit ? 16 : 11
-            );
-
-            tileLayerRef.current = L.tileLayer(getTileUrl(tileMode), {
-                attribution: '© Google Maps / OpenStreetMap',
-                maxZoom: 20,
-            }).addTo(map);
-
+            const map = new G.Map(mapDivRef.current, {
+                center: hasInit ? { lat: initialLat, lng: initialLng } : SL_CENTER,
+                zoom: hasInit ? 16 : 8,
+                mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+                styles: DARK_MAP_STYLE,
+            });
             mapRef.current = map;
+            geocoderRef.current = new G.Geocoder();
 
-            if (hasInit) {
-                placeMarker(initialLat, initialLng);
-                reverseGeocode(initialLat, initialLng);
-            }
+            if (hasInit) { placeMarker(initialLat, initialLng); reverseGeocode(initialLat, initialLng); }
 
-            map.on('click', (e) => {
-                const { lat, lng } = e.latlng;
+            map.addListener('click', (e) => {
+                const lat = e.latLng.lat(), lng = e.latLng.lng();
                 placeMarker(lat, lng);
                 reverseGeocode(lat, lng);
             });
 
-            setTimeout(() => map.invalidateSize(), 120);
+            if (searchInputRef.current) {
+                ac = new G.places.Autocomplete(searchInputRef.current, {
+                    componentRestrictions: { country: 'lk' },
+                    fields: ['geometry', 'formatted_address', 'name'],
+                });
+                ac.addListener('place_changed', () => {
+                    const place = ac.getPlace();
+                    if (!place.geometry?.location) return;
+                    const lat = place.geometry.location.lat(), lng = place.geometry.location.lng();
+                    placeMarker(lat, lng);
+                    moveTo(lat, lng);
+                    setSelectedAddr(place.formatted_address || place.name || '');
+                });
+            }
             setMapReady(true);
-        }).catch((err) => console.error('Map load error:', err));
+        }, 60);
+
+        return () => {
+            clearTimeout(t);
+            if (ac) window.google?.maps?.event?.clearInstanceListeners(ac);
+            if (mapRef.current) window.google?.maps?.event?.clearInstanceListeners(mapRef.current);
+            mapRef.current = null; markerRef.current = null; geocoderRef.current = null;
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, provider]);
+
+    // ── Init OPENSTREETMAP (Leaflet) map ─────────────────────────────────────
+    useEffect(() => {
+        if (!isOpen || provider !== 'osm') return;
+        let cancelled = false;
+        setMapReady(false);
+        resetSelection();
+        document.querySelectorAll('.pac-container').forEach((el) => el.remove());
+
+        loadLeaflet().then((L) => {
+            if (cancelled || !mapDivRef.current) return;
+            const hasInit = initialLat && initialLng;
+
+            const map = L.map(mapDivRef.current).setView(
+                hasInit ? [initialLat, initialLng] : [SL_CENTER.lat, SL_CENTER.lng],
+                hasInit ? 16 : 8
+            );
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors', maxZoom: 19,
+            }).addTo(map);
+            mapRef.current = map;
+
+            if (hasInit) { placeMarker(initialLat, initialLng); reverseGeocode(initialLat, initialLng); }
+
+            map.on('click', (e) => {
+                placeMarker(e.latlng.lat, e.latlng.lng);
+                reverseGeocode(e.latlng.lat, e.latlng.lng);
+            });
+
+            setTimeout(() => map.invalidateSize(), 100);   // fixes "map not visible" inside modals
+            setMapReady(true);
+        }).catch((err) => console.error(err));
 
         return () => {
             cancelled = true;
-            if (mapRef.current) {
-                mapRef.current.remove();
-                mapRef.current = null;
-                markerRef.current = null;
-            }
+            if (mapRef.current) { mapRef.current.remove(); }
+            mapRef.current = null; markerRef.current = null;
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen]);
+    }, [isOpen, provider]);
 
-    // ── Switch map tile layer (Google Streets / Google Satellite / OSM) ──────
-    const handleSwitchTile = (newMode) => {
-        setTileMode(newMode);
-        if (mapRef.current && window.L) {
-            if (tileLayerRef.current) {
-                mapRef.current.removeLayer(tileLayerRef.current);
-            }
-            tileLayerRef.current = window.L.tileLayer(getTileUrl(newMode), {
-                attribution: '© Google Maps / OpenStreetMap',
-                maxZoom: 20,
-            }).addTo(mapRef.current);
-        }
-    };
+    // ── Reset when closed ────────────────────────────────────────────────────
+    useEffect(() => { if (!isOpen) { resetSelection(); setMapReady(false); } }, [isOpen]);
 
-    // ── Search-as-you-type + Enter to search ─────────────────────────────────
-    const runSearch = async (val) => {
-        if (!val || val.trim().length < 2) {
-            setSuggestions([]);
-            return;
-        }
-        setIsSearching(true);
-        try {
-            const results = await searchPlaces(val);
-            setSuggestions(results || []);
-        } catch {
-            setSuggestions([]);
-        } finally {
-            setIsSearching(false);
-        }
-    };
-
+    // ── OSM search-as-you-type (Google mode uses Places Autocomplete instead) ─
     const handleSearchChange = (e) => {
+        if (providerRef.current !== 'osm') return;
         const val = e.target.value;
-        setSearchQuery(val);
         clearTimeout(debounceRef.current);
-        if (val.trim().length < 2) {
-            setSuggestions([]);
-            return;
-        }
-        debounceRef.current = setTimeout(() => runSearch(val), 350);
-    };
-
-    const handleSearchKeyDown = async (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            clearTimeout(debounceRef.current);
-            if (suggestions.length > 0) {
-                handleSuggestionClick(suggestions[0]);
-            } else if (searchQuery.trim().length >= 2) {
-                setIsSearching(true);
-                const results = await searchPlaces(searchQuery);
-                setIsSearching(false);
-                if (results && results.length > 0) {
-                    handleSuggestionClick(results[0]);
-                }
-            }
-        }
+        if (val.trim().length < 3) { setSuggestions([]); return; }
+        debounceRef.current = setTimeout(async () => {
+            try { setSuggestions((await nominatimSearch(val)) || []); } catch { /* ignore */ }
+        }, 500);
     };
 
     const handleSuggestionClick = (item) => {
-        const lat = parseFloat(item.lat);
-        const lng = parseFloat(item.lng ?? item.lon);
+        const lat = parseFloat(item.lat), lng = parseFloat(item.lon);
         placeMarker(lat, lng);
-        moveTo(lat, lng, 16);
+        moveTo(lat, lng);
         setSelectedAddr(item.display_name);
-        setSearchQuery(item.display_name);
+        if (searchInputRef.current) searchInputRef.current.value = item.display_name;
         setSuggestions([]);
     };
 
     // ── GPS ──────────────────────────────────────────────────────────────────
     const handleUseMyLocation = () => {
-        if (!navigator.geolocation) {
-            alert('Geolocation not supported by your browser.');
-            return;
-        }
+        if (!navigator.geolocation) { alert('Geolocation not supported by your browser.'); return; }
         setIsLocating(true);
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 const { latitude: lat, longitude: lng } = pos.coords;
-                placeMarker(lat, lng);
-                moveTo(lat, lng, 16);
-                reverseGeocode(lat, lng);
+                placeMarker(lat, lng); moveTo(lat, lng); reverseGeocode(lat, lng);
                 setIsLocating(false);
             },
-            () => {
-                alert('Could not get your location. Please search or click on the map to pin.');
-                setIsLocating(false);
-            },
+            () => { alert('Could not get your location. Please pin manually on the map.'); setIsLocating(false); },
             { timeout: 10000 }
         );
     };
@@ -238,11 +247,7 @@ function LocationPickerModal({ isOpen, onClose, onConfirm, title = 'Pick a Locat
             alert('Please select a location by clicking on the map or searching.');
             return;
         }
-        onConfirm({
-            address: selectedAddr || searchQuery || `${selectedLat.toFixed(6)}, ${selectedLng.toFixed(6)}`,
-            lat: selectedLat,
-            lng: selectedLng,
-        });
+        onConfirm({ address: selectedAddr || searchInputRef.current?.value || '', lat: selectedLat, lng: selectedLng });
         onClose();
     };
 
@@ -257,79 +262,27 @@ function LocationPickerModal({ isOpen, onClose, onConfirm, title = 'Pick a Locat
                         <i className='bx bxs-map-pin' style={{ color: 'var(--accent-color)', fontSize: '1.4rem' }}></i>
                         <h3 style={{ margin: 0, color: '#fff', fontWeight: 700 }}>{title}</h3>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <button
-                            type="button"
-                            onClick={() => handleSwitchTile('gstreets')}
-                            style={{
-                                padding: '4px 8px', fontSize: '0.72rem', borderRadius: '6px', cursor: 'pointer',
-                                border: '1px solid rgba(255,255,255,0.15)',
-                                background: tileMode === 'gstreets' ? 'var(--accent-color)' : 'rgba(255,255,255,0.06)',
-                                color: '#fff', fontWeight: 600
-                            }}
-                        >
-                            Google Map
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => handleSwitchTile('ghybrid')}
-                            style={{
-                                padding: '4px 8px', fontSize: '0.72rem', borderRadius: '6px', cursor: 'pointer',
-                                border: '1px solid rgba(255,255,255,0.15)',
-                                background: tileMode === 'ghybrid' ? 'var(--accent-color)' : 'rgba(255,255,255,0.06)',
-                                color: '#fff', fontWeight: 600
-                            }}
-                        >
-                            Satellite
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => handleSwitchTile('osm')}
-                            style={{
-                                padding: '4px 8px', fontSize: '0.72rem', borderRadius: '6px', cursor: 'pointer',
-                                border: '1px solid rgba(255,255,255,0.15)',
-                                background: tileMode === 'osm' ? 'var(--accent-color)' : 'rgba(255,255,255,0.06)',
-                                color: '#fff', fontWeight: 600
-                            }}
-                        >
-                            OSM
-                        </button>
-                        <button className="loc-modal-close" onClick={onClose} title="Close"><i className='bx bx-x'></i></button>
-                    </div>
+                    <button className="loc-modal-close" onClick={onClose} title="Close"><i className='bx bx-x'></i></button>
                 </div>
 
                 <div className="loc-search-bar">
                     <div className="loc-search-input-wrap">
                         <i className='bx bx-search'></i>
                         <input
+                            ref={searchInputRef}
                             type="text"
-                            value={searchQuery}
                             onChange={handleSearchChange}
-                            onKeyDown={handleSearchKeyDown}
-                            placeholder="Search place, street, city in Sri Lanka (e.g. Pugoda, Kandy)..."
+                            placeholder="Search place, street, city in Sri Lanka..."
                             autoComplete="off"
                         />
-                        {isSearching && <i className='bx bx-loader-alt bx-spin' style={{ color: 'var(--accent-color)' }}></i>}
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => runSearch(searchQuery)}
-                        title="Search place"
-                        style={{
-                            padding: '0 0.85rem', borderRadius: '10px', border: '1px solid rgba(249,115,22,0.4)',
-                            background: 'rgba(249,115,22,0.15)', color: 'var(--accent-color)', cursor: 'pointer',
-                            fontWeight: 600, fontSize: '0.82rem', whiteSpace: 'nowrap'
-                        }}
-                    >
-                        Search
-                    </button>
                     <button type="button" className="loc-gps-btn" onClick={handleUseMyLocation}
                         disabled={isLocating || !mapReady} title="Use my current location">
                         {isLocating ? <i className='bx bx-loader-alt bx-spin'></i> : <i className='bx bx-current-location'></i>}
                     </button>
                 </div>
 
-                {suggestions.length > 0 && (
+                {provider === 'osm' && suggestions.length > 0 && (
                     <ul className="loc-suggestions">
                         {suggestions.map((item) => (
                             <li key={item.place_id} onClick={() => handleSuggestionClick(item)}>
@@ -340,17 +293,24 @@ function LocationPickerModal({ isOpen, onClose, onConfirm, title = 'Pick a Locat
                 )}
 
                 <div className="loc-map-container">
-                    <div ref={mapDivRef} style={{ width: '100%', height: '100%' }} />
-                    {!mapReady && (
+                    {/* key forces a fresh DOM node when switching Google ↔ OSM */}
+                    <div key={provider} ref={mapDivRef} style={{ width: '100%', height: '100%' }} />
+                    {(provider === 'loading' || !mapReady) && (
                         <div className="loc-map-loading">
                             <i className='bx bx-loader-alt bx-spin'></i>
                             <span>Loading map...</span>
                         </div>
                     )}
                     {mapReady && selectedLat === null && (
-                        <div className="loc-map-hint"><i className='bx bx-pointer'></i> Search above or click anywhere on the map to pin</div>
+                        <div className="loc-map-hint"><i className='bx bx-pointer'></i> Click anywhere on the map to pin</div>
                     )}
                 </div>
+
+                {provider === 'osm' && (
+                    <div style={{ margin: '0 1.25rem 0.5rem', fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                        <i className='bx bx-info-circle'></i> Using OpenStreetMap (Google Maps unavailable)
+                    </div>
+                )}
 
                 {selectedLat !== null && (
                     <div className="loc-selected-info">
@@ -360,7 +320,7 @@ function LocationPickerModal({ isOpen, onClose, onConfirm, title = 'Pick a Locat
                                 {selectedAddr || 'Location pinned'}
                             </div>
                             <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginTop: '2px' }}>
-                                📍 Lat: {selectedLat.toFixed(6)}, Lng: {selectedLng.toFixed(6)}
+                                📍 {selectedLat.toFixed(6)}, {selectedLng.toFixed(6)}
                             </div>
                         </div>
                     </div>

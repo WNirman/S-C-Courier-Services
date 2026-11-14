@@ -1,0 +1,261 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1420 830" width="1420" height="830" font-family="Segoe UI, Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <linearGradient id="orange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fb923c"/><stop offset="1" stop-color="#ea580c"/>
+    </linearGradient>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  <style>
+    .t   { fill:#0f172a; }
+    .sub { fill:#475569; font-size:13px; }
+    .lbl { fill:#1e293b; font-size:12.5px; font-weight:600; paint-order:stroke; stroke:#fff; stroke-width:5px; stroke-linejoin:round; }
+    .box { filter:url(#sh); }
+    .ln  { stroke:#334155; stroke-width:2.2; fill:none; }
+  </style>
+
+  <rect width="1420" height="830" fill="#ffffff"/>
+  <text x="710" y="62" text-anchor="middle" font-size="40" font-weight="800" fill="#0b4f6c">System Architecture</text>
+  <text x="710" y="88" text-anchor="middle" font-size="16" fill="#64748b">S&amp;C Courier Services - Web Portal, Rider Mobile App, Backend and Cloud</text>
+
+  <!-- ================= ARROWS (behind boxes) ================= -->
+  <g class="ln">
+    <!-- Customer -> Web -->
+    <path d="M290,200 L420,225" marker-end="url(#arr)"/>
+    <!-- Staff/Admin <-> Web -->
+    <path d="M290,400 L420,315" marker-end="url(#arr)" marker-start="url(#arr)"/>
+    <!-- Web <-> Cloud PostgreSQL (direct) -->
+    <path d="M680,270 L821,296" marker-end="url(#arr)" marker-start="url(#arr)"/>
+    <!-- Web <-> Backend -->
+    <path d="M550,370 L550,440" marker-end="url(#arr)" marker-start="url(#arr)"/>
+    <!-- Backend <-> Cloud PostgreSQL -->
+    <path d="M680,485 L821,340" marker-end="url(#arr)" marker-start="url(#arr)"/>
+    <!-- Backend -> SMTP -->
+    <path d="M680,530 L1140,530" marker-end="url(#arr)"/>
+    <!-- Web -> Maps (top) -->
+    <path d="M550,170 L550,112 L1255,112 L1255,130" marker-end="url(#arr)"/>
+    <!-- Mobile App <-> Cloud PostgreSQL (direct) -->
+    <path d="M680,680 L775,680 L775,362 L821,362" marker-end="url(#arr)" marker-start="url(#arr)"/>
+    <!-- Mobile -> Maps -->
+    <path d="M680,745 L1110,745 L1110,235 L1140,235" marker-end="url(#arr)"/>
+    <!-- Rider phone -> Mobile app -->
+    <path d="M370,700 L420,700" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  </g>
+
+  <!-- ================= USERS (left) ================= -->
+  <!-- Customer -->
+  <g class="box">
+    <rect x="40" y="130" width="250" height="150" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  </g>
+  <!-- laptop -->
+  <g transform="translate(70,150)">
+    <rect x="0" y="0" width="100" height="64" rx="5" fill="#e2e8f0" stroke="#475569" stroke-width="2.5"/>
+    <rect x="8" y="8" width="84" height="48" fill="#bae6fd"/>
+    <path d="M-10,64 L110,64 L100,74 L0,74 z" fill="#94a3b8" stroke="#475569" stroke-width="2"/>
+    <circle cx="50" cy="32" r="9" fill="#0ea5e9"/><path d="M36,52 Q50,34 64,52 z" fill="#0ea5e9"/>
+  </g>
+  <!-- phone -->
+  <g transform="translate(200,148)">
+    <rect x="0" y="0" width="44" height="78" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="2.5"/>
+    <rect x="5" y="9" width="34" height="56" fill="#fed7aa"/>
+    <circle cx="22" cy="71" r="3" fill="#475569"/>
+    <path d="M22,22 a8,8 0 1 1 0.1,0 z M12,50 Q22,30 32,50 z" fill="#ea580c"/>
+  </g>
+  <text x="165" y="252" text-anchor="middle" font-size="16" font-weight="700" class="t">Customers</text>
+  <text x="165" y="270" text-anchor="middle" class="sub">Individual &amp; Corporate</text>
+
+  <!-- Staff / Admin -->
+  <g class="box">
+    <rect x="40" y="330" width="250" height="150" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  </g>
+  <g transform="translate(95,352)">
+    <rect x="0" y="0" width="100" height="64" rx="5" fill="#e2e8f0" stroke="#475569" stroke-width="2.5"/>
+    <rect x="8" y="8" width="84" height="48" fill="#ddd6fe"/>
+    <rect x="18" y="16" width="30" height="8" fill="#7c3aed"/><rect x="18" y="29" width="50" height="5" fill="#a78bfa"/><rect x="18" y="39" width="42" height="5" fill="#a78bfa"/>
+    <path d="M-10,64 L110,64 L100,74 L0,74 z" fill="#94a3b8" stroke="#475569" stroke-width="2"/>
+  </g>
+  <!-- headset person -->
+  <g transform="translate(220,356)">
+    <circle cx="20" cy="18" r="14" fill="#fcd34d" stroke="#475569" stroke-width="2"/>
+    <path d="M6,18 a14,14 0 0 1 28,0" fill="none" stroke="#475569" stroke-width="3"/>
+    <path d="M0,62 Q20,30 40,62 z" fill="#7c3aed"/>
+  </g>
+  <text x="165" y="452" text-anchor="middle" font-size="16" font-weight="700" class="t">Staff &amp; Admin</text>
+  <text x="165" y="470" text-anchor="middle" class="sub">Dispatch &amp; management</text>
+
+  <!-- Rider + bike + phone -->
+  <g class="box">
+    <rect x="40" y="560" width="330" height="230" rx="14" fill="#fff7ed" stroke="#fb923c" stroke-width="2"/>
+  </g>
+  <!-- bike -->
+  <g transform="translate(58,628)" stroke="#334155" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- wheels -->
+    <circle cx="34" cy="92" r="24" fill="#fff"/><circle cx="34" cy="92" r="6" fill="#334155"/>
+    <circle cx="176" cy="92" r="24" fill="#fff"/><circle cx="176" cy="92" r="6" fill="#334155"/>
+    <!-- frame / body -->
+    <path d="M34,92 L78,92 L96,64 L150,64 L176,92" fill="none"/>
+    <path d="M78,92 L118,92 L130,76" fill="none"/>
+    <!-- seat -->
+    <path d="M70,60 L112,60" stroke-width="6"/>
+    <!-- front fork + handle -->
+    <path d="M150,64 L162,50 M150,44 L172,48" fill="none"/>
+    <!-- delivery box -->
+    <rect x="-6" y="36" width="58" height="42" rx="4" fill="url(#orange)" stroke="#9a3412"/>
+    <text x="23" y="63" text-anchor="middle" font-size="15" font-weight="800" fill="#fff" stroke="none">SC</text>
+    <!-- rider -->
+    <circle cx="104" cy="14" r="11" fill="#fcd34d"/>
+    <path d="M93,12 a11,11 0 0 1 22,0 z" fill="#ea580c"/>
+    <path d="M104,26 L96,58" stroke-width="9" stroke="#2563eb"/>
+    <path d="M102,34 L158,46" stroke-width="5" stroke="#2563eb"/>
+    <path d="M96,58 L122,72 L126,90" stroke-width="6" stroke="#1e3a8a" fill="none"/>
+  </g>
+  <!-- speed lines -->
+  <g stroke="#fdba74" stroke-width="3" stroke-linecap="round">
+    <path d="M44,700 L56,700"/><path d="M44,712 L62,712"/><path d="M46,724 L58,724"/>
+  </g>
+  <!-- rider phone -->
+  <g transform="translate(290,590)">
+    <rect x="0" y="0" width="64" height="116" rx="11" fill="#1e293b" stroke="#0f172a" stroke-width="2.5"/>
+    <rect x="5" y="12" width="54" height="88" rx="3" fill="#e0f2fe"/>
+    <path d="M12,32 q14,-22 28,0 t14,18" fill="none" stroke="#ea580c" stroke-width="3" stroke-dasharray="4 3"/>
+    <circle cx="14" cy="34" r="4.5" fill="#16a34a"/>
+    <path d="M47,60 q-5,-8 0,-13 q5,5 0,13 z" fill="#dc2626"/>
+    <rect x="12" y="74" width="40" height="8" rx="3" fill="#ea580c"/>
+    <rect x="12" y="86" width="26" height="5" rx="2" fill="#94a3b8"/>
+    <circle cx="32" cy="108" r="3" fill="#64748b"/>
+  </g>
+  <text x="205" y="772" text-anchor="middle" font-size="16" font-weight="700" class="t">Rider (Bike + Phone)</text>
+  <text x="205" y="787" text-anchor="middle" class="sub" font-size="12">Delivers on the road</text>
+
+  <!-- ================= WEB APP ================= -->
+  <g class="box">
+    <rect x="420" y="170" width="260" height="200" rx="14" fill="#eef2ff" stroke="#6366f1" stroke-width="2"/>
+  </g>
+  <rect x="436" y="184" width="228" height="26" rx="6" fill="#c7d2fe"/>
+  <circle cx="450" cy="197" r="4" fill="#ef4444"/><circle cx="463" cy="197" r="4" fill="#f59e0b"/><circle cx="476" cy="197" r="4" fill="#22c55e"/>
+  <text x="490" y="202" font-size="11" fill="#3730a3">sc-courier web app</text>
+  <text x="550" y="236" text-anchor="middle" font-size="18" font-weight="800" fill="#312e81">SC Courier Web App</text>
+  <text x="550" y="256" text-anchor="middle" class="sub">React + Vite</text>
+  <g font-size="13" fill="#1e293b">
+    <text x="440" y="285">&#9679; Customer portal - book &amp; track</text>
+    <text x="440" y="305">&#9679; Pin pickup / drop on map (lat, lng)</text>
+    <text x="440" y="325">&#9679; Staff dashboard - approve &amp; assign</text>
+    <text x="440" y="345">&#9679; Admin dashboard - reports &amp; control</text>
+  </g>
+
+  <!-- ================= BACKEND ================= -->
+  <g class="box">
+    <rect x="420" y="440" width="260" height="130" rx="14" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  </g>
+  <rect x="440" y="456" width="34" height="34" rx="7" fill="#16a34a"/>
+  <text x="457" y="480" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">JS</text>
+  <text x="486" y="474" font-size="17" font-weight="800" fill="#78350f">Node.js + Express</text>
+  <text x="486" y="491" class="sub">Cloud-hosted REST API</text>
+  <g font-size="12.5" fill="#1e293b">
+    <text x="440" y="518">/api/auth/login</text>
+    <text x="440" y="535">/api/delivery/accept &amp; /schedule</text>
+    <text x="440" y="552">/api/trip-delivery/create</text>
+  </g>
+
+  <!-- ================= MOBILE APP ================= -->
+  <g class="box">
+    <rect x="420" y="640" width="260" height="150" rx="14" fill="#e0f2fe" stroke="#0284c7" stroke-width="2"/>
+  </g>
+  <rect x="438" y="654" width="22" height="38" rx="5" fill="#0369a1"/>
+  <rect x="442" y="660" width="14" height="22" fill="#bae6fd"/>
+  <text x="470" y="672" font-size="17" font-weight="800" fill="#0c4a6e">SC Courier Mobile App</text>
+  <text x="470" y="690" class="sub">Rider application</text>
+  <g font-size="13" fill="#1e293b">
+    <text x="440" y="716">&#9679; Rider login</text>
+    <text x="440" y="735">&#9679; View assigned trips &amp; orders</text>
+    <text x="440" y="754">&#9679; Navigate pickup &#8594; drop (lat, lng)</text>
+    <text x="440" y="773">&#9679; Update status &amp; distance</text>
+  </g>
+
+  <!-- ================= SUPABASE ================= -->
+  <g class="box">
+    <rect x="800" y="130" width="280" height="340" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
+  </g>
+  <path d="M826,152 l14,-18 l0,13 l12,0 l-14,18 l0,-13 z" fill="#22c55e"/>
+  <text x="862" y="152" font-size="18" font-weight="800" fill="#064e3b">Supabase Cloud</text>
+  <!-- API -->
+  <rect x="820" y="172" width="240" height="46" rx="8" fill="#fff" stroke="#10b981" stroke-width="1.5"/>
+  <text x="940" y="192" text-anchor="middle" font-size="14" font-weight="700" fill="#065f46">REST API (PostgREST)</text>
+  <text x="940" y="209" text-anchor="middle" class="sub" font-size="12">Auth &#183; queries &#183; row access</text>
+  <!-- DB cylinder -->
+  <g>
+    <path d="M820,246 v104 a120,16 0 0 0 240,0 v-104" fill="#fff" stroke="#10b981" stroke-width="1.5"/>
+    <ellipse cx="940" cy="246" rx="120" ry="16" fill="#d1fae5" stroke="#10b981" stroke-width="1.5"/>
+    <text x="940" y="250" text-anchor="middle" font-size="13" font-weight="700" fill="#065f46">PostgreSQL (Cloud Database)</text>
+    <g font-size="12" fill="#1e293b" text-anchor="middle">
+      <text x="940" y="277">customer &#183; company &#183; department</text>
+      <text x="940" y="294">atr &#183; personal_delivery (lat/lng)</text>
+      <text x="940" y="311">courier_req &#183; invoice &#183; payment</text>
+      <text x="940" y="328">staff &#183; rider &#183; trip &#183; delivery</text>
+    </g>
+  </g>
+  <!-- Realtime -->
+  <rect x="820" y="384" width="240" height="66" rx="8" fill="#fff" stroke="#10b981" stroke-width="1.5"/>
+  <path d="M836,402 l10,0 l-4,10 l10,0 l-14,18 l3,-12 l-9,0 z" fill="#f59e0b"/>
+  <text x="862" y="406" font-size="14" font-weight="700" fill="#065f46">Realtime (WebSocket)</text>
+  <text x="862" y="424" class="sub" font-size="12">Live sync: Web dashboards</text>
+  <text x="862" y="440" class="sub" font-size="12">&#8596; Rider mobile app</text>
+
+  <!-- ================= EXTERNAL SERVICES ================= -->
+  <g class="box">
+    <rect x="1140" y="130" width="230" height="200" rx="14" fill="#fdf4ff" stroke="#c026d3" stroke-width="2"/>
+  </g>
+  <!-- map pin icon -->
+  <path d="M1170,160 a14,14 0 1 1 28,0 c0,12 -14,26 -14,26 s-14,-14 -14,-26 z" fill="#ef4444"/>
+  <circle cx="1184" cy="160" r="5" fill="#fff"/>
+  <text x="1210" y="162" font-size="16" font-weight="800" fill="#701a75">Maps &amp; Geocoding</text>
+  <g font-size="13" fill="#1e293b">
+    <text x="1158" y="208">&#9679; Google Maps &amp; Places</text>
+    <text x="1158" y="228">&#9679; OpenStreetMap (fallback)</text>
+    <text x="1158" y="248">&#9679; Nominatim / Photon search</text>
+    <text x="1158" y="268">&#9679; OSRM driving distance</text>
+  </g>
+  <text x="1158" y="302" class="sub" font-size="12">Address &#8596; Latitude / Longitude</text>
+
+  <g class="box">
+    <rect x="1140" y="480" width="230" height="110" rx="14" fill="#fff1f2" stroke="#e11d48" stroke-width="2"/>
+  </g>
+  <rect x="1160" y="504" width="44" height="30" rx="4" fill="#fff" stroke="#e11d48" stroke-width="2.5"/>
+  <path d="M1160,508 l22,16 l22,-16" fill="none" stroke="#e11d48" stroke-width="2.5"/>
+  <text x="1214" y="516" font-size="16" font-weight="800" fill="#9f1239">SMTP Email</text>
+  <text x="1214" y="534" class="sub" font-size="12">Nodemailer</text>
+  <text x="1158" y="562" class="sub" font-size="12">Approval &amp; scheduling emails</text>
+  <text x="1158" y="578" class="sub" font-size="12">to clients and customers</text>
+
+  <!-- ================= ARROW LABELS ================= -->
+  <text x="355" y="196" text-anchor="middle" class="lbl">1. Book delivery / ATR</text>
+  <text x="352" y="338" text-anchor="middle" class="lbl">2. Approve &amp; assign rider</text>
+  <text x="738" y="258" text-anchor="middle" class="lbl">3. Direct to DB</text>
+  <text x="612" y="413" class="lbl">REST</text>
+  <text x="712" y="440" text-anchor="middle" class="lbl">4. Secure ops</text>
+  <text x="900" y="523" text-anchor="middle" class="lbl">5. Send emails</text>
+  <text x="900" y="106" text-anchor="middle" class="lbl">6. Search / pin place &#8594; lat &amp; lng</text>
+  <text x="790" y="672" class="lbl">7. Trips, lat/lng &#8596; status (direct to DB)</text>
+  <text x="900" y="738" text-anchor="middle" class="lbl">8. Route: pickup &#8594; drop</text>
+  <text x="395" y="692" text-anchor="middle" class="lbl" font-size="11">uses</text>
+
+  <!-- ================= LEGEND ================= -->
+  <g transform="translate(1140,620)">
+    <rect x="0" y="0" width="230" height="170" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="14" y="26" font-size="14" font-weight="800" class="t">How it works</text>
+    <g font-size="12" fill="#334155">
+      <text x="14" y="48">1. Customer books &amp; pins location</text>
+      <text x="14" y="66">2. Staff approves, assigns a rider</text>
+      <text x="14" y="84">3. Trip + Delivery saved in DB</text>
+      <text x="14" y="102">4. Realtime pushes job to rider app</text>
+      <text x="14" y="120">5. Rider navigates by map on bike</text>
+      <text x="14" y="138">6. Status &amp; distance sync back live</text>
+      <text x="14" y="156">7. Web &amp; app share ONE cloud DB</text>
+    </g>
+  </g>
+</svg>
+

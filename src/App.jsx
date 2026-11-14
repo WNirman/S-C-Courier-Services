@@ -27,6 +27,10 @@ function App({ onNavigate }) {
     });
 
     const [activeForm, setActiveForm] = useState(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('reset_token')) {
+            return 'reset-confirm';
+        }
         const savedForm = localStorage.getItem('activeForm') || 'tracking';
         const savedUser = localStorage.getItem('loggedInUser');
         const authRoutes = ['dashboard', 'admin', 'staff', 'atr', 'personal-delivery'];
@@ -168,36 +172,232 @@ function App({ onNavigate }) {
     const [isRegistering, setIsRegistering] = useState(false);
     const [registerSuccess, setRegisterSuccess] = useState(false);
 
-    // Forgot Password State
+    // Forgot / Reset Password State
     const [forgotEmail, setForgotEmail] = useState('');
+    const [forgotError, setForgotError] = useState('');
+    const [resetEmailSent, setResetEmailSent] = useState(false);
+    const [resetSentInfo, setResetSentInfo] = useState(null); // { email, maskedEmail, role, previewUrl, fallbackUrl }
+
+    // Step 2 (from email link ?reset_token=...)
+    const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') || '');
+    const [resetTargetEmail, setResetTargetEmail] = useState(() => new URLSearchParams(window.location.search).get('email') || '');
+    const [resetTargetRole, setResetTargetRole] = useState(() => new URLSearchParams(window.location.search).get('role') || 'customer');
     const [newPassword, setNewPassword] = useState('');
     const [confirmNewPassword, setConfirmNewPassword] = useState('');
     const [isResetting, setIsResetting] = useState(false);
     const [resetSuccess, setResetSuccess] = useState(false);
 
-    const handleResetPassword = (e) => {
+    // Detect password reset link (?reset_token=...) when user clicks link in email
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const tokenParam = params.get('reset_token');
+        const emailParam = params.get('email');
+        const roleParam = params.get('role');
+
+        if (tokenParam) {
+            setResetToken(tokenParam);
+            if (emailParam) setResetTargetEmail(emailParam);
+            if (roleParam) setResetTargetRole(roleParam);
+            setActiveForm('reset-confirm');
+
+            // Verify token with backend if reachable
+            fetch(`http://localhost:5000/api/auth/verify-reset-token?token=${encodeURIComponent(tokenParam)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.valid) {
+                        setResetTargetEmail(data.email);
+                        setResetTargetRole(data.role || 'customer');
+                    }
+                })
+                .catch(() => { /* fallback to URL params if backend is offline */ });
+        }
+    }, []);
+
+    // Step 1: Verify existing account (by email, username, or phone) & send reset email link
+    const handleSendResetEmail = async (e) => {
         e.preventDefault();
-        if (!forgotEmail || !newPassword || !confirmNewPassword) return;
-        
+        const identifier = forgotEmail.trim();
+        if (!identifier) return;
+
+        setIsResetting(true);
+        setForgotError('');
+        setResetEmailSent(false);
+        setResetSentInfo(null);
+
+        try {
+            // 1. Try backend endpoint first (checks DB + sends email via Nodemailer)
+            let handledByBackend = false;
+            try {
+                const res = await fetch('http://localhost:5000/api/auth/forgot-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        identifier,
+                        frontendOrigin: window.location.origin
+                    })
+                });
+                const data = await res.json();
+                if (res.status === 404) {
+                    setForgotError(data.error || 'No existing account found with that email, username, or phone number.');
+                    setIsResetting(false);
+                    return;
+                }
+                if (res.ok && data.success) {
+                    handledByBackend = true;
+                    setResetEmailSent(true);
+                    setResetSentInfo({
+                        email: data.email,
+                        maskedEmail: data.maskedEmail || data.email,
+                        role: data.role || 'customer',
+                        previewUrl: data.previewUrl || null,
+                        fallbackUrl: null
+                    });
+                }
+            } catch (backendErr) {
+                console.warn('Backend forgot-password unreachable, checking Supabase directly:', backendErr);
+            }
+
+            // 2. Fallback: Check Supabase directly if backend wasn't running
+            if (!handledByBackend) {
+                let foundEmail = null;
+                let foundRole = null;
+
+                // Check customer table by email, name (username), or phone
+                const { data: custRows } = await supabase
+                    .from('customer')
+                    .select('cust_email, cust_name, cust_phoneno')
+                    .or(`cust_email.ilike.${identifier},cust_name.ilike.${identifier},cust_phoneno.eq.${identifier}`)
+                    .limit(1);
+
+                if (custRows && custRows.length > 0) {
+                    foundEmail = custRows[0].cust_email;
+                    foundRole = 'customer';
+                }
+
+                // Check staff table if not found in customer
+                if (!foundEmail) {
+                    const { data: staffRows } = await supabase
+                        .from('staff')
+                        .select('staff_email, staff_name, staff_phone')
+                        .or(`staff_email.ilike.${identifier},staff_name.ilike.${identifier},staff_phone.eq.${identifier}`)
+                        .limit(1);
+
+                    if (staffRows && staffRows.length > 0) {
+                        foundEmail = staffRows[0].staff_email;
+                        foundRole = 'staff';
+                    }
+                }
+
+                if (!foundEmail) {
+                    setForgotError('No existing account found with that email, username, or phone number.');
+                    setIsResetting(false);
+                    return;
+                }
+
+                const token = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+                    .map(b => b.toString(16).padStart(2, '0')).join('');
+                const resetLink = `${window.location.origin}/?reset_token=${token}&email=${encodeURIComponent(foundEmail)}&role=${foundRole}`;
+
+                const [localPart, domainPart] = foundEmail.split('@');
+                const maskedEmail = localPart.length > 2
+                    ? `${localPart.slice(0, 2)}***@${domainPart}`
+                    : `${localPart[0]}***@${domainPart}`;
+
+                setResetEmailSent(true);
+                setResetSentInfo({
+                    email: foundEmail,
+                    maskedEmail,
+                    role: foundRole,
+                    previewUrl: null,
+                    fallbackUrl: resetLink
+                });
+            }
+        } catch (err) {
+            console.error('Error requesting password reset:', err);
+            setForgotError('Something went wrong. Please try again.');
+        } finally {
+            setIsResetting(false);
+        }
+    };
+
+    // Step 2: Submit new password after clicking the reset link from email
+    const handleConfirmNewPassword = async (e) => {
+        e.preventDefault();
+        if (!newPassword || !confirmNewPassword) return;
+
         if (newPassword !== confirmNewPassword) {
             alert('Passwords do not match');
+            return;
+        }
+        if (newPassword.length < 6) {
+            alert('Password must be at least 6 characters');
+            return;
+        }
+        if (!resetTargetEmail) {
+            alert('Invalid reset link. Please request a new password reset.');
             return;
         }
 
         setIsResetting(true);
         setResetSuccess(false);
 
-        setTimeout(() => {
+        try {
+            let updated = false;
+
+            // 1. Update directly in Supabase
+            if (resetTargetRole === 'staff') {
+                const hashed = await hashPassword(newPassword);
+                const { error } = await supabase
+                    .from('staff')
+                    .update({ staff_password: hashed })
+                    .eq('staff_email', resetTargetEmail);
+                if (!error) updated = true;
+            } else {
+                const { error } = await supabase
+                    .from('customer')
+                    .update({ cust_password: newPassword })
+                    .eq('cust_email', resetTargetEmail);
+                if (!error) updated = true;
+            }
+
+            // 2. Also notify backend to update & clear token
+            try {
+                const res = await fetch('http://localhost:5000/api/auth/reset-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        token: resetToken,
+                        email: resetTargetEmail,
+                        role: resetTargetRole,
+                        newPassword
+                    })
+                });
+                if (res.ok) updated = true;
+            } catch { /* ignore if backend offline */ }
+
+            if (!updated) {
+                throw new Error('Could not update password in database.');
+            }
+
             setIsResetting(false);
             setResetSuccess(true);
+
+            // Clear ?reset_token from URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+
             setTimeout(() => {
                 setActiveForm('login');
                 setResetSuccess(false);
                 setForgotEmail('');
                 setNewPassword('');
                 setConfirmNewPassword('');
+                setResetToken('');
             }, 1500);
-        }, 1500);
+        } catch (err) {
+            console.error('Reset password error:', err);
+            alert('Failed to reset password: ' + err.message);
+            setIsResetting(false);
+        }
     };
 
     const handleTrackPackage = async (e) => {
@@ -1094,7 +1294,7 @@ function App({ onNavigate }) {
                             )}
                         </div>
 
-                        {(activeForm === 'tracking' || activeForm === 'login' || activeForm === 'forgot') && (
+                        {(activeForm === 'tracking' || activeForm === 'login' || activeForm === 'forgot' || activeForm === 'reset-confirm') && (
                             <div className="action-card">
                                 {/* Tracking Form */}
                                 {activeForm === 'tracking' && (
@@ -1250,7 +1450,13 @@ function App({ onNavigate }) {
                                                     <span className="checkmark"></span>
                                                     Remember me
                                                 </label>
-                                                <a href="#" className="forgot-link" onClick={(e) => { e.preventDefault(); setActiveForm('forgot'); }}>Forgot Password?</a>
+                                                <a href="#" className="forgot-link" onClick={(e) => {
+                                                    e.preventDefault();
+                                                    setForgotError('');
+                                                    setResetEmailSent(false);
+                                                    setResetSentInfo(null);
+                                                    setActiveForm('forgot');
+                                                }}>Forgot Password?</a>
                                             </div>
                                             <button
                                                 type="submit"
@@ -1287,34 +1493,125 @@ function App({ onNavigate }) {
                                     </div>
                                 )}
 
-                                {/* Forgot Password Form */}
+                                {/* Forgot Password Form (Step 1: Verify Existing Account & Send Email Link) */}
                                 {activeForm === 'forgot' && (
                                     <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
                                         <div className="card-header">
                                             <h2><i className='bx bx-lock-open-alt'></i> Reset Password</h2>
-                                            <p>Enter your details to reset your password</p>
+                                            <p>Enter the email, username, or phone number used to register your account</p>
                                         </div>
-                                        <form onSubmit={handleResetPassword}>
-                                            <div className="form-control">
-                                                <label>Email</label>
-                                                <div className="input-wrapper">
-                                                    <i className='bx bx-envelope input-icon'></i>
-                                                    <input
-                                                        type="email"
-                                                        placeholder="Enter your email"
-                                                        required
-                                                        value={forgotEmail}
-                                                        onChange={(e) => setForgotEmail(e.target.value)}
-                                                    />
+
+                                        {!resetEmailSent ? (
+                                            <form onSubmit={handleSendResetEmail}>
+                                                <div className="form-control">
+                                                    <label>Email, Username, or Phone Number</label>
+                                                    <div className="input-wrapper">
+                                                        <i className='bx bx-user-check input-icon'></i>
+                                                        <input
+                                                            type="text"
+                                                            placeholder="e.g. name@email.com, username, or 0771234567"
+                                                            required
+                                                            value={forgotEmail}
+                                                            onChange={(e) => {
+                                                                setForgotEmail(e.target.value);
+                                                                if (forgotError) setForgotError('');
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </div>
+
+                                                {forgotError && (
+                                                    <div style={{
+                                                        marginTop: '0.75rem',
+                                                        padding: '0.75rem 0.9rem',
+                                                        borderRadius: '10px',
+                                                        background: 'rgba(239, 68, 68, 0.12)',
+                                                        border: '1px solid rgba(239, 68, 68, 0.35)',
+                                                        color: '#f87171',
+                                                        fontSize: '0.85rem',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.5rem'
+                                                    }}>
+                                                        <i className='bx bx-error-circle' style={{ fontSize: '1.15rem', flexShrink: 0 }}></i>
+                                                        <span>{forgotError}</span>
+                                                    </div>
+                                                )}
+
+                                                <button
+                                                    type="submit"
+                                                    className="primary-btn full-width"
+                                                    style={{ marginTop: '1rem' }}
+                                                    disabled={isResetting}
+                                                >
+                                                    {isResetting ? (
+                                                        <><i className='bx bx-loader-alt bx-spin'></i> Checking Account &amp; Sending...</>
+                                                    ) : (
+                                                        <>
+                                                            <span>Send Reset Link</span>
+                                                            <i className='bx bx-mail-send'></i>
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </form>
+                                        ) : (
+                                            <div style={{
+                                                padding: '1.1rem',
+                                                borderRadius: '12px',
+                                                background: 'rgba(16, 185, 129, 0.1)',
+                                                border: '1px solid rgba(16, 185, 129, 0.3)',
+                                                color: '#e5e7eb',
+                                                fontSize: '0.9rem',
+                                                lineHeight: 1.5
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontWeight: 700, marginBottom: '0.5rem', fontSize: '1rem' }}>
+                                                    <i className='bx bx-check-circle' style={{ fontSize: '1.3rem' }}></i>
+                                                    Reset Link Sent!
+                                                </div>
+                                                <p style={{ margin: '0 0 0.6rem 0', color: 'var(--text-secondary)' }}>
+                                                    We verified your account and sent a password reset link to <strong style={{ color: '#fff' }}>{resetSentInfo?.maskedEmail || resetSentInfo?.email}</strong>.
+                                                    Please check your inbox and click the link in the email to set your new password.
+                                                </p>
+
+                                                {resetSentInfo?.previewUrl && (
+                                                    <div style={{ marginTop: '0.75rem', paddingTop: '0.65rem', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '0.82rem' }}>
+                                                        <a href={resetSentInfo.previewUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-color)', fontWeight: 600, textDecoration: 'underline' }}>
+                                                            <i className='bx bx-link-external'></i> Open Test Email Preview
+                                                        </a>
+                                                    </div>
+                                                )}
+
+                                                {resetSentInfo?.fallbackUrl && (
+                                                    <div style={{ marginTop: '0.75rem', paddingTop: '0.65rem', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '0.82rem' }}>
+                                                        <a href={resetSentInfo.fallbackUrl} style={{ color: 'var(--accent-color)', fontWeight: 600, textDecoration: 'underline' }}>
+                                                            <i className='bx bx-key'></i> Click here to open your Reset Password Link
+                                                        </a>
+                                                    </div>
+                                                )}
                                             </div>
+                                        )}
+
+                                        <button type="button" className="back-btn" onClick={() => setActiveForm('login')} style={{ marginTop: '1.5rem' }}>
+                                            <i className='bx bx-left-arrow-alt'></i> Back to Login
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Set New Password Form (Step 2: Opened via Email Reset Link ?reset_token=...) */}
+                                {activeForm === 'reset-confirm' && (
+                                    <div className="form-container" style={{ animation: 'fadeIn 0.4s ease' }}>
+                                        <div className="card-header">
+                                            <h2><i className='bx bx-key'></i> Set New Password</h2>
+                                            <p>Create a new password for <strong style={{ color: '#fff' }}>{resetTargetEmail || 'your account'}</strong></p>
+                                        </div>
+                                        <form onSubmit={handleConfirmNewPassword}>
                                             <div className="form-control">
                                                 <label>New Password</label>
                                                 <div className="input-wrapper">
                                                     <i className='bx bx-lock-alt input-icon'></i>
                                                     <input
                                                         type="password"
-                                                        placeholder="Enter new password"
+                                                        placeholder="Enter new password (min. 6 characters)"
                                                         required
                                                         value={newPassword}
                                                         onChange={(e) => setNewPassword(e.target.value)}
@@ -1322,12 +1619,12 @@ function App({ onNavigate }) {
                                                 </div>
                                             </div>
                                             <div className="form-control">
-                                                <label>Confirm Password</label>
+                                                <label>Confirm New Password</label>
                                                 <div className="input-wrapper">
                                                     <i className='bx bx-lock-alt input-icon'></i>
                                                     <input
                                                         type="password"
-                                                        placeholder="Confirm new password"
+                                                        placeholder="Re-enter new password"
                                                         required
                                                         value={confirmNewPassword}
                                                         onChange={(e) => setConfirmNewPassword(e.target.value)}
@@ -1341,19 +1638,22 @@ function App({ onNavigate }) {
                                                 disabled={isResetting || resetSuccess}
                                             >
                                                 {isResetting ? (
-                                                    <><i className='bx bx-loader-alt bx-spin'></i> Resetting...</>
+                                                    <><i className='bx bx-loader-alt bx-spin'></i> Updating Password...</>
                                                 ) : resetSuccess ? (
-                                                    <><i className='bx bx-check'></i> Password Reset</>
+                                                    <><i className='bx bx-check'></i> Password Updated!</>
                                                 ) : (
                                                     <>
-                                                        <span>Reset Password</span>
+                                                        <span>Update Password</span>
                                                         <i className='bx bx-check-circle'></i>
                                                     </>
                                                 )}
                                             </button>
                                         </form>
 
-                                        <button type="button" className="back-btn" onClick={() => setActiveForm('login')} style={{ marginTop: '1.5rem' }}>
+                                        <button type="button" className="back-btn" onClick={() => {
+                                            window.history.replaceState({}, document.title, window.location.pathname);
+                                            setActiveForm('login');
+                                        }} style={{ marginTop: '1.5rem' }}>
                                             <i className='bx bx-left-arrow-alt'></i> Back to Login
                                         </button>
                                     </div>
