@@ -27,28 +27,6 @@ function extractAtrDestination(purposeText) {
     return { purposeClean: purposeText, destinationAddress: '' };
 }
 
-function getStagePipeline(type, status) {
-    const isCancelled = status === 'Cancelled';
-    const steps = type === 'atr'
-        ? ['Pending', 'Approved', 'Assigned', 'In Transit', 'Completed']
-        : ['Pending', 'Accepted', 'Assigned', 'In Transit', 'Delivered'];
-
-    let activeIndex = 0;
-    if (isCancelled) {
-        activeIndex = -1;
-    } else if (status === 'Completed' || status === 'Delivered') {
-        activeIndex = 4;
-    } else if (status === 'In Transit') {
-        activeIndex = 3;
-    } else if (status === 'Assigned') {
-        activeIndex = 2;
-    } else if (status === 'Approved' || status === 'Accepted' || status === 'Scheduled') {
-        activeIndex = 1;
-    }
-
-    return { steps, activeIndex, isCancelled };
-}
-
 async function fetchAssignedRiderAndTripInfo(directRiderNic, sourceType, sourceId) {
     let deliveryRow = null;
     try {
@@ -591,7 +569,6 @@ function App({ onNavigate }) {
                     status: pdMatch.status,
                     statusColor: statusColorMap[pdMatch.status] || '#3b82f6',
                     progress: progressMap[pdMatch.status] ?? 50,
-                    stagePipeline: getStagePipeline('personal', pdMatch.status),
                     location: locationText,
                     origin: pdMatch.pickup_address || deliveryRow?.pick_location || '',
                     destination: pdMatch.drop_address || deliveryRow?.drop_location || '',
@@ -698,7 +675,6 @@ function App({ onNavigate }) {
                     status: atrMatch.status,
                     statusColor: statusColorMap[atrMatch.status] || '#3b82f6',
                     progress: progressMap[atrMatch.status] ?? 50,
-                    stagePipeline: getStagePipeline('atr', atrMatch.status),
                     location: locationText,
                     origin: originAddr,
                     destination: destAddr,
@@ -729,7 +705,6 @@ function App({ onNavigate }) {
                     status: demoStatus,
                     statusColor: upperQuery === 'SC100892' ? '#10b981' : '#38bdf8',
                     progress: upperQuery === 'SC100892' ? 100 : 70,
-                    stagePipeline: getStagePipeline('personal', demoStatus),
                     location: upperQuery === 'SC100892' ? 'Delivered to recipient in Colombo' : 'In Transit • Colombo Central Sorting Hub',
                     origin: 'Colombo Hub',
                     destination: 'Destination Address',
@@ -1619,27 +1594,6 @@ function App({ onNavigate }) {
                                                             <p style={{ color: '#fff', fontSize: '1.05rem', fontWeight: 'bold', marginBottom: '0.6rem', fontFamily: 'monospace' }}>
                                                                 #{trackingResult.id}
                                                             </p>
-
-                                                            {/* Delivery Stages Pipeline */}
-                                                            {trackingResult.stagePipeline && !trackingResult.stagePipeline.isCancelled && (
-                                                                <div className="tracking-stages-stepper" aria-label="Delivery stages">
-                                                                    {trackingResult.stagePipeline.steps.map((stepLabel, idx) => {
-                                                                        const isDone = idx < trackingResult.stagePipeline.activeIndex;
-                                                                        const isCurrent = idx === trackingResult.stagePipeline.activeIndex;
-                                                                        return (
-                                                                            <div
-                                                                                key={stepLabel}
-                                                                                className={`tracking-stage-step ${isDone ? 'is-done' : ''} ${isCurrent ? 'is-current' : ''}`}
-                                                                            >
-                                                                                <div className="stage-dot">
-                                                                                    {isDone ? <i className='bx bx-check'></i> : <span>{idx + 1}</span>}
-                                                                                </div>
-                                                                                <span className="stage-label">{stepLabel}</span>
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            )}
 
                                                             <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--card-border)', borderRadius: '10px', padding: '0.75rem', marginBottom: '0.75rem', fontSize: '0.85rem' }}>
                                                                 <p style={{ color: '#e5e7eb', margin: '0 0 0.4rem 0', display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
