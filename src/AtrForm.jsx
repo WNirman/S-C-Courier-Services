@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import logoImg from './assets/favicon.png';
+import deliveryAnimData from './assets/Delivery.json';
 import { supabase } from './supabaseClient';
 import { getCachedPricingRates, fetchPricingRates } from './utils/pricingRates';
 
@@ -28,12 +29,66 @@ function AtrForm({ onBack, loggedInUser }) {
     const [destinationAddress, setDestinationAddress] = useState('');
     const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
     const [distanceStatus, setDistanceStatus] = useState('');
+    const deliveryPlayerRef = useRef(null);
+    const [showLottieFallback, setShowLottieFallback] = useState(false);
 
     useEffect(() => {
         fetchPricingRates().then(r => {
             if (r?.vehicleRates) setVehicleRates(r.vehicleRates);
         });
     }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        const player = deliveryPlayerRef.current;
+        if (!player || showLottieFallback) return;
+
+        // Show crisp inline fallback if external lottie-player CDN fails to define/load
+        const loadTimeoutId = window.setTimeout(() => {
+            if (!cancelled && (!player.currentState || player.currentState === 'loading' || player.currentState === 'error')) {
+                setShowLottieFallback(true);
+            }
+        }, 4000);
+
+        const handleReady = () => {
+            window.clearTimeout(loadTimeoutId);
+            if (!cancelled) setShowLottieFallback(false);
+        };
+        const handleError = () => {
+            window.clearTimeout(loadTimeoutId);
+            if (!cancelled) setShowLottieFallback(true);
+        };
+
+        player.addEventListener('ready', handleReady);
+        player.addEventListener('load', handleReady);
+        player.addEventListener('error', handleError);
+
+        customElements.whenDefined('lottie-player')
+            .then(async () => {
+                if (cancelled || !player.isConnected) return;
+                if (player.updateComplete) {
+                    await player.updateComplete;
+                }
+                if (cancelled || !player.isConnected || typeof player.load !== 'function') return;
+                const clonedData = typeof structuredClone === 'function'
+                    ? structuredClone(deliveryAnimData)
+                    : JSON.parse(JSON.stringify(deliveryAnimData));
+                player.currentState = 'loading';
+                player.load(clonedData);
+            })
+            .catch(() => {
+                window.clearTimeout(loadTimeoutId);
+                if (!cancelled) setShowLottieFallback(true);
+            });
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(loadTimeoutId);
+            player.removeEventListener('ready', handleReady);
+            player.removeEventListener('load', handleReady);
+            player.removeEventListener('error', handleError);
+        };
+    }, [showLottieFallback]);
 
     // Companies and Departments State
     const [companiesList, setCompaniesList] = useState([]);
@@ -320,12 +375,17 @@ function AtrForm({ onBack, loggedInUser }) {
 
     const handleChange = (e) => {
         const { name, value } = e.target;
+        // Estimates are system-calculated and strictly view-only
+        if (name === 'estimatedDistance' || name === 'estimatedCost') return;
+
         setFormData(prev => {
             const updated = { ...prev, [name]: value };
-            // If vehicle type or estimatedDistance changed and both are present, auto-update estimated cost
-            if ((name === 'vehicleType' || name === 'estimatedDistance') && updated.vehicleType && updated.estimatedDistance && !isNaN(parseFloat(updated.estimatedDistance))) {
-                const rate = Number(vehicleRates[updated.vehicleType]) || 100;
-                updated.estimatedCost = (parseFloat(updated.estimatedDistance) * rate).toFixed(2);
+            // When vehicle type changes and distance is already calculated, recompute estimated cost using the exact rate
+            if (name === 'vehicleType' && updated.estimatedDistance && !isNaN(parseFloat(updated.estimatedDistance))) {
+                const rawRate = updated.vehicleType ? Number(vehicleRates[updated.vehicleType]) : NaN;
+                updated.estimatedCost = (updated.vehicleType && !Number.isNaN(rawRate))
+                    ? (parseFloat(updated.estimatedDistance) * rawRate).toFixed(2)
+                    : '';
             }
             return updated;
         });
@@ -389,19 +449,31 @@ function AtrForm({ onBack, loggedInUser }) {
             );
             const routeData = await routeRes.json();
 
+            const applyCalculatedDistance = (kmValue, statusPrefix) => {
+                const rawRate = formData.vehicleType ? Number(vehicleRates[formData.vehicleType]) : NaN;
+                const hasVehicle = Boolean(formData.vehicleType) && !Number.isNaN(rawRate);
+
+                setFormData(prev => {
+                    const prevRate = prev.vehicleType ? Number(vehicleRates[prev.vehicleType]) : NaN;
+                    const validRate = Boolean(prev.vehicleType) && !Number.isNaN(prevRate);
+                    return {
+                        ...prev,
+                        estimatedDistance: kmValue,
+                        estimatedCost: validRate ? (parseFloat(kmValue) * prevRate).toFixed(2) : ''
+                    };
+                });
+
+                setDistanceStatus(
+                    hasVehicle
+                        ? statusPrefix
+                        : `${statusPrefix} — Select a Vehicle Type above to calculate Estimated Cost`
+                );
+            };
+
             if (routeData && routeData.routes && routeData.routes.length > 0) {
                 const distanceKm = (routeData.routes[0].distance / 1000).toFixed(2);
-                const rate = Number(vehicleRates[formData.vehicleType]) || 100;
-                const cost = (parseFloat(distanceKm) * rate).toFixed(2);
-
-                setFormData(prev => ({
-                    ...prev,
-                    estimatedDistance: distanceKm,
-                    estimatedCost: cost
-                }));
-
                 const destName = destCoords.displayName || addressToSearch;
-                setDistanceStatus(`✓ ${distanceKm} km from [${selectedOffice}] to [${destName}]`);
+                applyCalculatedDistance(distanceKm, `✓ ${distanceKm} km from [${selectedOffice}] to [${destName}]`);
             } else {
                 // Fallback Haversine straight line
                 const R = 6371; // km
@@ -413,13 +485,7 @@ function AtrForm({ onBack, loggedInUser }) {
                 const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
                 const estKm = (R * c * 1.3).toFixed(2);
 
-                const rate = Number(vehicleRates[formData.vehicleType]) || 100;
-                setFormData(prev => ({
-                    ...prev,
-                    estimatedDistance: estKm,
-                    estimatedCost: (parseFloat(estKm) * rate).toFixed(2)
-                }));
-                setDistanceStatus(`✓ Approx. ${estKm} km from [${selectedOffice}]`);
+                applyCalculatedDistance(estKm, `✓ Approx. ${estKm} km from [${selectedOffice}]`);
             }
         } catch (err) {
             console.error('Error fetching distance from OpenStreetMap:', err);
@@ -523,13 +589,36 @@ function AtrForm({ onBack, loggedInUser }) {
                         <p>Submit and manage your vehicle authorization requests. Fill in the details to submit your request directly to dispatch.</p>
 
                         <div className="atr-lottie-container">
-                            <lottie-player
-                                src="/src/assets/Delivery.json"
-                                background="transparent"
-                                speed="1"
-                                loop
-                                autoplay
-                            ></lottie-player>
+                            {showLottieFallback ? (
+                                <svg
+                                    viewBox="0 0 240 180"
+                                    width="240"
+                                    height="180"
+                                    role="img"
+                                    aria-label="Courier transport illustration"
+                                    style={{ display: 'block', margin: '0 auto', maxWidth: '100%' }}
+                                >
+                                    <ellipse cx="120" cy="148" rx="92" ry="18" fill="rgba(255,255,255,0.08)" />
+                                    <circle cx="72" cy="128" r="20" fill="#1e293b" stroke="#f97316" strokeWidth="5" />
+                                    <circle cx="72" cy="128" r="6" fill="#fdba74" />
+                                    <circle cx="168" cy="128" r="20" fill="#1e293b" stroke="#f97316" strokeWidth="5" />
+                                    <circle cx="168" cy="128" r="6" fill="#fdba74" />
+                                    <path d="M68 124 L98 92 L144 92 L166 124 Z" fill="#f97316" />
+                                    <rect x="64" y="64" width="44" height="34" rx="6" fill="#ea580c" stroke="#fed7aa" strokeWidth="2.5" />
+                                    <path d="M138 92 L152 62 L168 62" fill="none" stroke="#f8fafc" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+                                    <circle cx="118" cy="58" r="11" fill="#fde68a" />
+                                    <path d="M106 76 C110 66, 128 66, 134 78 L142 92 L106 92 Z" fill="#3b82f6" />
+                                </svg>
+                            ) : (
+                                <lottie-player
+                                    key="atr-delivery-lottie-inline"
+                                    ref={deliveryPlayerRef}
+                                    background="transparent"
+                                    speed="1"
+                                    loop
+                                    autoplay
+                                ></lottie-player>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -875,62 +964,58 @@ function AtrForm({ onBack, loggedInUser }) {
 
 
                         <div className="atr-form-row">
-                            <div className="atr-form-group">
-                                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <span>Estimated Distance (km)</span>
-                                    <span style={{ fontSize: '0.72rem', color: '#60a5fa', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                                        <i className='bx bxs-lock-alt'></i> Auto-Calculated
-                                    </span>
-                                </label>
-                                <div className="atr-input-with-icon">
-                                    <i className='bx bx-map-alt'></i>
-                                    <input
-                                        type="text"
-                                        name="estimatedDistance"
-                                        value={formData.estimatedDistance ? `${formData.estimatedDistance} km` : ''}
-                                        readOnly
-                                        tabIndex={-1}
-                                        placeholder="Auto-calculated via Destination"
-                                        style={{
-                                            cursor: 'default',
-                                            userSelect: 'none',
-                                            backgroundColor: 'rgba(59, 130, 246, 0.08)',
-                                            borderColor: 'rgba(59, 130, 246, 0.28)',
-                                            color: '#fff',
-                                            fontWeight: 700
-                                        }}
-                                    />
+                            {[
+                                {
+                                    label: 'Estimated Distance (km)',
+                                    icon: 'bx-map-alt',
+                                    displayValue: formData.estimatedDistance ? `${formData.estimatedDistance} km` : '',
+                                    placeholder: 'Auto-calculated via Destination',
+                                    hint: 'Automatically calculated from Starting Office to Destination'
+                                },
+                                {
+                                    label: 'Estimated Cost (LKR)',
+                                    icon: 'bx-money',
+                                    displayValue: formData.estimatedCost
+                                        ? `LKR ${Number(formData.estimatedCost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        : '',
+                                    placeholder: formData.estimatedDistance && !formData.vehicleType
+                                        ? 'Select a Vehicle Type above to calculate cost'
+                                        : 'Auto-calculated via Vehicle Rate × Distance',
+                                    hint: 'Automatically calculated from Distance × Vehicle Per-KM Rate'
+                                }
+                            ].map((field) => (
+                                <div className="atr-form-group" key={field.label}>
+                                    <label>{field.label}</label>
+                                    <div
+                                        className="atr-input-with-icon"
+                                        aria-readonly="true"
+                                        style={{ pointerEvents: 'none', userSelect: 'none', cursor: 'default' }}
+                                    >
+                                        <i className={`bx ${field.icon}`}></i>
+                                        <div
+                                            role="status"
+                                            aria-label={field.label}
+                                            style={{
+                                                boxSizing: 'border-box',
+                                                width: '100%',
+                                                minHeight: '46px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                padding: '0.85rem 1rem 0.85rem 2.8rem',
+                                                borderRadius: '12px',
+                                                fontSize: '0.92rem',
+                                                background: 'var(--input-bg)',
+                                                border: '1px solid var(--card-border)',
+                                                color: field.displayValue ? 'var(--text-primary)' : 'rgba(255, 255, 255, 0.2)',
+                                                fontWeight: field.displayValue ? 500 : 400
+                                            }}
+                                        >
+                                            {field.displayValue || field.placeholder}
+                                        </div>
+                                    </div>
+                                    <div className="atr-input-hint">{field.hint}</div>
                                 </div>
-                                <div className="atr-input-hint">Automatically calculated from Starting Office to Destination (read-only)</div>
-                            </div>
-                            <div className="atr-form-group">
-                                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <span>Estimated Cost (LKR)</span>
-                                    <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                                        <i className='bx bxs-lock-alt'></i> Auto-Calculated
-                                    </span>
-                                </label>
-                                <div className="atr-input-with-icon">
-                                    <i className='bx bx-money'></i>
-                                    <input
-                                        type="text"
-                                        name="estimatedCost"
-                                        value={formData.estimatedCost ? `LKR ${Number(formData.estimatedCost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
-                                        readOnly
-                                        tabIndex={-1}
-                                        placeholder="Auto-calculated via Vehicle Rate × Distance"
-                                        style={{
-                                            cursor: 'default',
-                                            userSelect: 'none',
-                                            backgroundColor: 'rgba(16, 185, 129, 0.08)',
-                                            borderColor: 'rgba(16, 185, 129, 0.28)',
-                                            color: '#34d399',
-                                            fontWeight: 700
-                                        }}
-                                    />
-                                </div>
-                                <div className="atr-input-hint">Automatically calculated from Distance × Vehicle Per-KM Rate (read-only)</div>
-                            </div>
+                            ))}
                         </div>
 
                         <div className="atr-section-title">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyArfrBIf3sqWRnA5MvMOowVSfntyvLTRus';
+const GOOGLE_KEY = import.meta.env?.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyArfrBIf3sqWRnA5MvMOowVSfntyvLTRus';
 
 let status = 'osm';
 let googleScriptLoaded = false;
@@ -145,4 +145,129 @@ export async function nominatimReverse(lat, lng) {
         if (data?.display_name) return data.display_name;
     } catch { /* ignore */ }
     return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+}
+
+// ── Shared Sri Lanka coordinate fallback & routing helpers ───────────────────
+const KNOWN_LK_LOCATIONS = {
+    colombo: { lat: 6.9271, lng: 79.8612 },
+    kandy: { lat: 7.2906, lng: 80.6337 },
+    galle: { lat: 6.0535, lng: 80.2210 },
+    jaffna: { lat: 9.6615, lng: 80.0255 },
+    kurunegala: { lat: 7.4863, lng: 80.3623 },
+    gampaha: { lat: 7.0840, lng: 79.9941 },
+    negombo: { lat: 7.2008, lng: 79.8736 },
+    matara: { lat: 5.9549, lng: 80.5550 },
+    radawana: { lat: 7.0339, lng: 80.0684 },
+    pugoda: { lat: 6.9765, lng: 80.1235 },
+    nugegoda: { lat: 6.8649, lng: 79.8997 },
+    maharagama: { lat: 6.8480, lng: 79.9265 },
+    dehiwala: { lat: 6.8511, lng: 79.8659 },
+    moratuwa: { lat: 6.7730, lng: 79.8816 },
+    panadura: { lat: 6.7133, lng: 79.9026 },
+    kalutara: { lat: 6.5854, lng: 79.9607 },
+    kaduwela: { lat: 6.9333, lng: 79.9833 },
+    malabe: { lat: 6.9061, lng: 79.9697 },
+    battaramulla: { lat: 6.8980, lng: 79.9223 },
+    rajagiriya: { lat: 6.9094, lng: 79.8944 },
+    kelaniya: { lat: 6.9553, lng: 79.9220 },
+    wattala: { lat: 6.9892, lng: 79.8917 },
+    avissawella: { lat: 6.9543, lng: 80.2046 },
+    anuradhapura: { lat: 8.3114, lng: 80.4037 },
+    ratnapura: { lat: 6.6828, lng: 80.3992 },
+    badulla: { lat: 6.9934, lng: 81.0550 },
+    batticaloa: { lat: 7.7310, lng: 81.6747 },
+    trincomalee: { lat: 8.5874, lng: 81.2152 }
+};
+
+export function haversineKm(lat1, lng1, lat2, lng2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lng2 - lng1) * Math.PI / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export function formatDuration(minutes) {
+    if (minutes == null || isNaN(minutes)) return '';
+    const mins = Math.max(1, Math.round(minutes));
+    if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'}`;
+    const hrs = Math.floor(mins / 60);
+    const rem = mins % 60;
+    return rem > 0 ? `${hrs} hr${hrs > 1 ? 's' : ''} ${rem} min` : `${hrs} hr${hrs > 1 ? 's' : ''}`;
+}
+
+export async function geocodeLocation(address) {
+    if (!address || typeof address !== 'string') return null;
+    const clean = address.trim();
+    if (!clean) return null;
+
+    // Build candidate queries (full string, extracted "(Destination: X)" or "(City)", last comma segment)
+    const candidates = [clean];
+    const destMatch = clean.match(/\(Destination:\s*(.+?)\)/i);
+    if (destMatch && destMatch[1]) {
+        candidates.push(destMatch[1].trim());
+    }
+    const parenMatch = clean.match(/\(([^)]+)\)/);
+    if (parenMatch && parenMatch[1]) {
+        const inside = parenMatch[1].replace(/^Destination:\s*/i, '').trim();
+        if (inside && !candidates.includes(inside)) candidates.push(inside);
+    }
+
+    // 1. Live geocoding via Nominatim / Photon
+    for (const candidate of candidates) {
+        try {
+            const results = await searchPlaces(candidate);
+            if (results && results.length > 0 && !isNaN(results[0].lat) && !isNaN(results[0].lng)) {
+                return { lat: results[0].lat, lng: results[0].lng, label: results[0].display_name };
+            }
+        } catch { /* try next candidate / city fallback */ }
+    }
+
+    // 2. Fallback match against known Sri Lankan branch / city names
+    const lower = clean.toLowerCase();
+    for (const [city, coords] of Object.entries(KNOWN_LK_LOCATIONS)) {
+        if (lower.includes(city)) {
+            return { lat: coords.lat, lng: coords.lng, label: clean };
+        }
+    }
+
+    return null;
+}
+
+export async function getDrivingRoute(fromLat, fromLng, toLat, toLng) {
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const url = `https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`;
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timer);
+
+        if (res.ok) {
+            const data = await res.json();
+            if (data?.routes?.length > 0) {
+                const route = data.routes[0];
+                const coords = Array.isArray(route.geometry?.coordinates)
+                    ? route.geometry.coordinates.map(([lng, lat]) => [lat, lng])
+                    : [[fromLat, fromLng], [toLat, toLng]];
+                return {
+                    coords,
+                    distanceKm: Number((route.distance / 1000).toFixed(2)),
+                    durationMins: Math.max(1, Math.round((route.duration || 0) / 60)),
+                    source: 'osrm'
+                };
+            }
+        }
+    } catch { /* fallback to Haversine */ }
+
+    const approxKm = Number((haversineKm(fromLat, fromLng, toLat, toLng) * 1.25).toFixed(2));
+    const approxMins = Math.max(5, Math.round((approxKm / 40) * 60));
+    return {
+        coords: [[fromLat, fromLng], [toLat, toLng]],
+        distanceKm: approxKm,
+        durationMins: approxMins,
+        source: 'estimate'
+    };
 }

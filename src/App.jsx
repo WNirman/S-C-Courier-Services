@@ -11,6 +11,106 @@ import AdminDashboard from './AdminDashboard';
 import StaffDashboard from './StaffDashboard';
 import Chatbot from './Chatbot';
 import StatsSection from './StatsSection';
+import TrackingMapSection from './TrackingMapSection';
+
+function extractAtrDestination(purposeText) {
+    if (!purposeText || typeof purposeText !== 'string') {
+        return { purposeClean: '', destinationAddress: '' };
+    }
+    const match = purposeText.match(/^(.*?)\s*\(Destination:\s*(.+?)\)\s*$/i);
+    if (match) {
+        return {
+            purposeClean: match[1].trim() || purposeText,
+            destinationAddress: match[2].trim()
+        };
+    }
+    return { purposeClean: purposeText, destinationAddress: '' };
+}
+
+function getStagePipeline(type, status) {
+    const isCancelled = status === 'Cancelled';
+    const steps = type === 'atr'
+        ? ['Pending', 'Approved', 'Assigned', 'In Transit', 'Completed']
+        : ['Pending', 'Accepted', 'Assigned', 'In Transit', 'Delivered'];
+
+    let activeIndex = 0;
+    if (isCancelled) {
+        activeIndex = -1;
+    } else if (status === 'Completed' || status === 'Delivered') {
+        activeIndex = 4;
+    } else if (status === 'In Transit') {
+        activeIndex = 3;
+    } else if (status === 'Assigned') {
+        activeIndex = 2;
+    } else if (status === 'Approved' || status === 'Accepted' || status === 'Scheduled') {
+        activeIndex = 1;
+    }
+
+    return { steps, activeIndex, isCancelled };
+}
+
+async function fetchAssignedRiderAndTripInfo(directRiderNic, sourceType, sourceId) {
+    let deliveryRow = null;
+    try {
+        if (sourceId) {
+            const { data: delRows } = await supabase
+                .from('delivery')
+                .select('del_id, delivery_status, pick_location, drop_location, trip(trip_id, rider_nic, trip_status)')
+                .eq('source_type', sourceType)
+                .eq('source_id', sourceId)
+                .order('del_id', { ascending: false })
+                .limit(1);
+            if (Array.isArray(delRows) && delRows.length > 0) {
+                deliveryRow = delRows[0];
+            }
+        }
+    } catch (err) {
+        console.warn('Tracking delivery lookup note:', err);
+    }
+
+    const effectiveRiderNic = directRiderNic || deliveryRow?.trip?.rider_nic || null;
+    if (!effectiveRiderNic) {
+        return { effectiveRiderNic: null, deliveryRow, riderDetails: null };
+    }
+
+    let rawRider = null;
+    try {
+        const { data: upperRows, error: upperErr } = await supabase
+            .from('rider')
+            .select('*')
+            .eq('NIC', effectiveRiderNic)
+            .limit(1);
+        if (!upperErr && Array.isArray(upperRows) && upperRows.length > 0) {
+            rawRider = upperRows[0];
+        } else {
+            const { data: lowerRows } = await supabase
+                .from('rider')
+                .select('*')
+                .eq('nic', effectiveRiderNic)
+                .limit(1);
+            if (Array.isArray(lowerRows) && lowerRows.length > 0) {
+                rawRider = lowerRows[0];
+            }
+        }
+    } catch (rErr) {
+        console.warn('Tracking rider lookup note:', rErr);
+    }
+
+    const riderDetails = {
+        nic: rawRider?.NIC || rawRider?.nic || effectiveRiderNic,
+        name: rawRider?.Name || rawRider?.name || 'Assigned Rider',
+        phone: rawRider?.Phone_Number || rawRider?.phone_number || rawRider?.phone || 'N/A',
+        branch: rawRider?.Branch || rawRider?.branch || '',
+        vehicleType: rawRider?.Vehicle_Type || rawRider?.vehicle_type || '',
+        vehicleNumber: rawRider?.Vehicle_Number || rawRider?.vehicle_number || rawRider?.vehicle_no || '',
+        licenceNo: rawRider?.Driver_Licence_No || rawRider?.driver_licence_no || '',
+        availability: rawRider?.availability_status || 'Assigned',
+        currentLat: rawRider?.current_lat != null && !isNaN(Number(rawRider.current_lat)) ? Number(rawRider.current_lat) : null,
+        currentLng: rawRider?.current_lng != null && !isNaN(Number(rawRider.current_lng)) ? Number(rawRider.current_lng) : null
+    };
+
+    return { effectiveRiderNic, deliveryRow, riderDetails };
+}
 
 const hashPassword = async (password) => {
     const encoder = new TextEncoder();
@@ -71,6 +171,7 @@ function App({ onNavigate }) {
     // Tracking State
     const [trackingNumber, setTrackingNumber] = useState('');
     const [isTracking, setIsTracking] = useState(false);
+    const [isRefreshingTrack, setIsRefreshingTrack] = useState(false);
     const [trackingResult, setTrackingResult] = useState(null);
 
     // Login State
@@ -403,24 +504,32 @@ function App({ onNavigate }) {
         }
     };
 
-    const handleTrackPackage = async (e) => {
+    const handleTrackPackage = async (e, overrideQuery = null, options = {}) => {
         if (e) e.preventDefault();
-        const query = trackingNumber.trim();
+        const silent = Boolean(options?.silent);
+        const query = (overrideQuery !== null ? String(overrideQuery) : trackingNumber).trim();
         if (!query) return;
 
-        setIsTracking(true);
-        setTrackingResult(null);
+        if (silent) {
+            setIsRefreshingTrack(true);
+        } else {
+            setIsTracking(true);
+            setTrackingResult(null);
+        }
 
         try {
             // 1. Check if it's a Personal Delivery (e.g. PD-1, 1, or matching phone)
+            const trimmedUpper = query.toUpperCase();
+            const isExplicitPd = trimmedUpper.startsWith('PD') || /^\d{1,7}$/.test(query);
             const numericId = parseInt(query.replace(/\D/g, ''), 10);
-            
+            const safeNumericId = !isNaN(numericId) && numericId > 0 && numericId <= 2147483647 ? numericId : null;
+
             let pdMatch = null;
-            if (!isNaN(numericId)) {
+            if (safeNumericId && isExplicitPd) {
                 const { data: pdData } = await supabase
                     .from('personal_delivery')
                     .select('*')
-                    .eq('pd_id', numericId);
+                    .eq('pd_id', safeNumericId);
                 if (pdData && pdData.length > 0) pdMatch = pdData[0];
             }
             if (!pdMatch) {
@@ -433,15 +542,19 @@ function App({ onNavigate }) {
 
             if (pdMatch) {
                 const progressMap = {
-                    'Pending': 25,
-                    'Assigned': 45,
-                    'In Transit': 75,
+                    'Pending': 20,
+                    'Accepted': 35,
+                    'Scheduled': 40,
+                    'Assigned': 60,
+                    'In Transit': 80,
                     'Completed': 100,
                     'Delivered': 100,
                     'Cancelled': 0
                 };
                 const statusColorMap = {
                     'Pending': '#f59e0b',
+                    'Accepted': '#8b5cf6',
+                    'Scheduled': '#a855f7',
                     'Assigned': '#3b82f6',
                     'In Transit': '#38bdf8',
                     'Completed': '#10b981',
@@ -449,26 +562,52 @@ function App({ onNavigate }) {
                     'Cancelled': '#ef4444'
                 };
 
+                const { effectiveRiderNic, deliveryRow, riderDetails } = await fetchAssignedRiderAndTripInfo(
+                    pdMatch.assigned_rider_nic,
+                    'personal',
+                    pdMatch.pd_id
+                );
+                const isRiderAssigned = Boolean(effectiveRiderNic && riderDetails && pdMatch.status !== 'Cancelled');
+
                 let locationText = 'Order registered & awaiting rider dispatch';
-                if (pdMatch.status === 'Assigned') locationText = `Assigned to Rider • Preparing for pickup at ${pdMatch.pickup_address}`;
-                else if (pdMatch.status === 'In Transit') locationText = `In Transit • Moving towards ${pdMatch.drop_address}`;
-                else if (pdMatch.status === 'Completed' || pdMatch.status === 'Delivered') locationText = `Delivered safely to ${pdMatch.receiver_name} at ${pdMatch.drop_address}`;
+                if (pdMatch.status === 'Accepted' || pdMatch.status === 'Scheduled') {
+                    locationText = `Order confirmed • Preparing for pickup at ${pdMatch.pickup_address}`;
+                } else if (pdMatch.status === 'Assigned') {
+                    locationText = `Assigned to ${riderDetails?.name || 'Rider'} • Preparing for pickup at ${pdMatch.pickup_address}`;
+                } else if (pdMatch.status === 'In Transit') {
+                    locationText = `In Transit with ${riderDetails?.name || 'Rider'} • Moving towards ${pdMatch.drop_address}`;
+                } else if (pdMatch.status === 'Completed' || pdMatch.status === 'Delivered') {
+                    locationText = `Delivered safely to ${pdMatch.receiver_name} at ${pdMatch.drop_address}`;
+                } else if (pdMatch.status === 'Cancelled') {
+                    locationText = 'This delivery request was cancelled.';
+                }
 
                 setTrackingResult({
                     found: true,
+                    rawQuery: query,
+                    category: 'personal',
                     type: 'Personal Package Delivery',
                     id: `PD-${pdMatch.pd_id}`,
                     status: pdMatch.status,
                     statusColor: statusColorMap[pdMatch.status] || '#3b82f6',
-                    progress: progressMap[pdMatch.status] || 50,
+                    progress: progressMap[pdMatch.status] ?? 50,
+                    stagePipeline: getStagePipeline('personal', pdMatch.status),
                     location: locationText,
-                    origin: pdMatch.pickup_address,
-                    destination: pdMatch.drop_address,
+                    origin: pdMatch.pickup_address || deliveryRow?.pick_location || '',
+                    destination: pdMatch.drop_address || deliveryRow?.drop_location || '',
+                    originLat: pdMatch.pickup_lat,
+                    originLng: pdMatch.pickup_lng,
+                    destLat: pdMatch.drop_lat,
+                    destLng: pdMatch.drop_lng,
+                    estimatedDistance: pdMatch.estimated_distance || null,
+                    actualDistance: pdMatch.actual_distance || null,
                     sender: `${pdMatch.sender_name} (${pdMatch.sender_phone})`,
                     receiver: `${pdMatch.receiver_name} (${pdMatch.receiver_phone})`,
                     item: `${pdMatch.item_type} ${pdMatch.item_weight ? `(${pdMatch.item_weight})` : ''}`,
                     date: `${pdMatch.requested_date} @ ${pdMatch.requested_time}`,
-                    rider: pdMatch.assigned_rider_nic ? `Assigned Rider: ${pdMatch.assigned_rider_nic}` : null
+                    assignedRiderNic: effectiveRiderNic,
+                    riderDetails,
+                    isRiderAssigned
                 });
                 return;
             }
@@ -481,48 +620,98 @@ function App({ onNavigate }) {
                 .or(`atr_number.ilike.%${query}%,atr_number.eq.${query}`);
             if (atrData && atrData.length > 0) {
                 atrMatch = atrData[0];
-            } else if (!isNaN(numericId)) {
+            } else if (safeNumericId) {
                 const { data: atrIdData } = await supabase
                     .from('atr')
                     .select('*')
-                    .eq('atr_id', numericId);
+                    .eq('atr_id', safeNumericId);
                 if (atrIdData && atrIdData.length > 0) atrMatch = atrIdData[0];
             }
 
             if (atrMatch) {
                 const progressMap = {
                     'Pending': 20,
-                    'Approved': 45,
-                    'In Transit': 75,
+                    'Approved': 40,
+                    'Assigned': 60,
+                    'In Transit': 80,
                     'Completed': 100,
+                    'Delivered': 100,
                     'Cancelled': 0
                 };
                 const statusColorMap = {
                     'Pending': '#f59e0b',
-                    'Approved': '#3b82f6',
+                    'Approved': '#8b5cf6',
+                    'Assigned': '#3b82f6',
                     'In Transit': '#38bdf8',
                     'Completed': '#10b981',
+                    'Delivered': '#10b981',
                     'Cancelled': '#ef4444'
                 };
 
-                let locationText = 'ATR request submitted, awaiting dispatch';
-                if (atrMatch.status === 'Approved') locationText = 'Approved • Vehicle scheduled for passenger pickup';
-                else if (atrMatch.status === 'In Transit') locationText = `Vehicle In Transit with Passenger ${atrMatch.principal_passenger_name}`;
-                else if (atrMatch.status === 'Completed') locationText = `Trip completed successfully (${atrMatch.actual_distance || atrMatch.estimated_distance || ''} km)`;
+                const { effectiveRiderNic, deliveryRow, riderDetails } = await fetchAssignedRiderAndTripInfo(
+                    atrMatch.assigned_rider_nic,
+                    'atr',
+                    atrMatch.atr_id
+                );
+                const isRiderAssigned = Boolean(effectiveRiderNic && riderDetails && atrMatch.status !== 'Cancelled');
+
+                const { purposeClean, destinationAddress } = extractAtrDestination(atrMatch.purpose_of_travel);
+                let originAddr = deliveryRow?.pick_location || '';
+                if (!originAddr && atrMatch.dep_id) {
+                    try {
+                        const { data: deptRow } = await supabase
+                            .from('department')
+                            .select('dep_name, company(comp_name, comp_address)')
+                            .eq('dep_id', atrMatch.dep_id)
+                            .single();
+                        if (deptRow?.company?.comp_address && deptRow.company.comp_address !== 'N/A') {
+                            originAddr = `${deptRow.company.comp_name} (${deptRow.company.comp_address})`;
+                        } else if (deptRow?.company?.comp_name) {
+                            originAddr = deptRow.company.comp_name;
+                        }
+                    } catch { /* fallback below */ }
+                }
+                if (!originAddr) originAddr = 'Colombo Main Office, Sri Lanka';
+
+                const fallbackDrop = extractAtrDestination(deliveryRow?.drop_location || '');
+                const destAddr = destinationAddress || fallbackDrop.destinationAddress || deliveryRow?.drop_location || purposeClean;
+
+                let locationText = 'ATR request submitted, awaiting approval & dispatch';
+                if (atrMatch.status === 'Approved') {
+                    locationText = 'Approved • Vehicle ready for rider assignment';
+                } else if (atrMatch.status === 'Assigned') {
+                    locationText = `Assigned to ${riderDetails?.name || 'Rider'} • Dispatched for passenger pickup`;
+                } else if (atrMatch.status === 'In Transit') {
+                    locationText = `Vehicle In Transit with ${riderDetails?.name || 'Rider'} (Passenger: ${atrMatch.principal_passenger_name})`;
+                } else if (atrMatch.status === 'Completed' || atrMatch.status === 'Delivered') {
+                    locationText = `Trip completed successfully (${atrMatch.actual_distance || atrMatch.estimated_distance || ''} km)`;
+                } else if (atrMatch.status === 'Cancelled') {
+                    locationText = 'This ATR transport request was cancelled.';
+                }
 
                 setTrackingResult({
                     found: true,
+                    rawQuery: query,
+                    category: 'atr',
                     type: 'Corporate ATR Transport Request',
                     id: atrMatch.atr_number,
                     status: atrMatch.status,
                     statusColor: statusColorMap[atrMatch.status] || '#3b82f6',
-                    progress: progressMap[atrMatch.status] || 50,
+                    progress: progressMap[atrMatch.status] ?? 50,
+                    stagePipeline: getStagePipeline('atr', atrMatch.status),
                     location: locationText,
+                    origin: originAddr,
+                    destination: destAddr,
+                    estimatedDistance: atrMatch.estimated_distance || null,
+                    actualDistance: atrMatch.actual_distance || null,
                     passenger: `${atrMatch.principal_passenger_name} (${atrMatch.principal_passenger_designation || 'Staff'})`,
                     vehicle: atrMatch.vehicle_type,
-                    purpose: atrMatch.purpose_of_travel,
+                    purpose: purposeClean || atrMatch.purpose_of_travel,
                     date: `${atrMatch.required_date} @ ${atrMatch.required_time}`,
-                    cost: atrMatch.actual_cost ? `${atrMatch.actual_cost} LKR (Actual)` : `${atrMatch.estimated_cost || 0} LKR (Est.)`
+                    cost: atrMatch.actual_cost ? `${atrMatch.actual_cost} LKR (Actual)` : `${atrMatch.estimated_cost || 0} LKR (Est.)`,
+                    assignedRiderNic: effectiveRiderNic,
+                    riderDetails,
+                    isRiderAssigned
                 });
                 return;
             }
@@ -530,17 +719,23 @@ function App({ onNavigate }) {
             // 3. Fallback demo sample IDs (for SC101000, SC100892, etc.)
             const upperQuery = query.toUpperCase();
             if (upperQuery.startsWith('SC')) {
+                const demoStatus = upperQuery === 'SC100892' ? 'Delivered' : 'In Transit';
                 setTrackingResult({
                     found: true,
+                    rawQuery: query,
+                    category: 'personal',
                     type: 'Standard Parcel Delivery',
                     id: upperQuery,
-                    status: upperQuery === 'SC100892' ? 'Delivered' : 'In Transit',
+                    status: demoStatus,
                     statusColor: upperQuery === 'SC100892' ? '#10b981' : '#38bdf8',
                     progress: upperQuery === 'SC100892' ? 100 : 70,
+                    stagePipeline: getStagePipeline('personal', demoStatus),
                     location: upperQuery === 'SC100892' ? 'Delivered to recipient in Colombo' : 'In Transit • Colombo Central Sorting Hub',
                     origin: 'Colombo Hub',
                     destination: 'Destination Address',
-                    date: new Date().toLocaleDateString()
+                    date: new Date().toLocaleDateString(),
+                    isRiderAssigned: false,
+                    riderDetails: null
                 });
                 return;
             }
@@ -553,15 +748,41 @@ function App({ onNavigate }) {
             });
         } catch (err) {
             console.error('Error tracking package:', err);
-            setTrackingResult({
-                found: false,
-                query: query,
-                message: 'Unable to connect to tracking servers. Please try again in a moment.'
-            });
+            if (!silent) {
+                setTrackingResult({
+                    found: false,
+                    query: query,
+                    message: 'Unable to connect to tracking servers. Please try again in a moment.'
+                });
+            }
         } finally {
-            setIsTracking(false);
+            if (silent) {
+                setIsRefreshingTrack(false);
+            } else {
+                setIsTracking(false);
+            }
         }
     };
+
+    // Periodically refresh active assigned shipment tracking so live rider GPS updates automatically
+    useEffect(() => {
+        if (
+            activeForm !== 'tracking' ||
+            !trackingResult?.found ||
+            !trackingResult?.isRiderAssigned ||
+            (trackingResult.status !== 'Assigned' && trackingResult.status !== 'In Transit')
+        ) {
+            return;
+        }
+        const queryToPoll = trackingResult.rawQuery || trackingResult.id;
+        if (!queryToPoll) return;
+
+        const timer = setInterval(() => {
+            handleTrackPackage(null, queryToPoll, { silent: true });
+        }, 15000);
+
+        return () => clearInterval(timer);
+    }, [activeForm, trackingResult?.found, trackingResult?.isRiderAssigned, trackingResult?.status, trackingResult?.id, trackingResult?.rawQuery]);
 
     const handleLogin = async (e) => {
         e.preventDefault();
@@ -1350,7 +1571,7 @@ function App({ onNavigate }) {
                         </div>
 
                         {(activeForm === 'tracking' || activeForm === 'login' || activeForm === 'forgot' || activeForm === 'reset-confirm') && (
-                            <div className="action-card">
+                            <div className={`action-card ${activeForm === 'tracking' && trackingResult?.found && trackingResult?.isRiderAssigned ? 'action-card--wide' : ''}`}>
                                 {/* Tracking Form */}
                                 {activeForm === 'tracking' && (
                                     <div className="form-container active" style={{ animation: 'fadeIn 0.4s ease' }}>
@@ -1363,7 +1584,7 @@ function App({ onNavigate }) {
                                                 <i className='bx bx-box input-icon'></i>
                                                 <input
                                                     type="text"
-                                                    placeholder="Enter Tracking Number (e.g. SC12345678)"
+                                                    placeholder="Enter Tracking Number (e.g. PD-1, ATR-2026-001)"
                                                     required
                                                     autoComplete="off"
                                                     value={trackingNumber}
@@ -1395,9 +1616,30 @@ function App({ onNavigate }) {
                                                                 </div>
                                                             </div>
 
-                                                            <p style={{ color: '#fff', fontSize: '1.05rem', fontWeight: 'bold', marginBottom: '0.5rem', fontFamily: 'monospace' }}>
+                                                            <p style={{ color: '#fff', fontSize: '1.05rem', fontWeight: 'bold', marginBottom: '0.6rem', fontFamily: 'monospace' }}>
                                                                 #{trackingResult.id}
                                                             </p>
+
+                                                            {/* Delivery Stages Pipeline */}
+                                                            {trackingResult.stagePipeline && !trackingResult.stagePipeline.isCancelled && (
+                                                                <div className="tracking-stages-stepper" aria-label="Delivery stages">
+                                                                    {trackingResult.stagePipeline.steps.map((stepLabel, idx) => {
+                                                                        const isDone = idx < trackingResult.stagePipeline.activeIndex;
+                                                                        const isCurrent = idx === trackingResult.stagePipeline.activeIndex;
+                                                                        return (
+                                                                            <div
+                                                                                key={stepLabel}
+                                                                                className={`tracking-stage-step ${isDone ? 'is-done' : ''} ${isCurrent ? 'is-current' : ''}`}
+                                                                            >
+                                                                                <div className="stage-dot">
+                                                                                    {isDone ? <i className='bx bx-check'></i> : <span>{idx + 1}</span>}
+                                                                                </div>
+                                                                                <span className="stage-label">{stepLabel}</span>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
 
                                                             <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--card-border)', borderRadius: '10px', padding: '0.75rem', marginBottom: '0.75rem', fontSize: '0.85rem' }}>
                                                                 <p style={{ color: '#e5e7eb', margin: '0 0 0.4rem 0', display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
@@ -1430,6 +1672,72 @@ function App({ onNavigate }) {
                                                             <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
                                                                 <div style={{ width: `${trackingResult.progress}%`, height: '100%', background: trackingResult.statusColor, borderRadius: '3px', transition: 'width 0.6s ease' }}></div>
                                                             </div>
+
+                                                            {/* Rider Details & Route Map — only shown when assigned to a rider */}
+                                                            {trackingResult.isRiderAssigned && trackingResult.riderDetails && (
+                                                                <>
+                                                                    <div className="tracking-rider-card">
+                                                                        <div className="tracking-rider-header">
+                                                                            <div className="tracking-rider-identity">
+                                                                                <div className="rider-avatar">
+                                                                                    <i className='bx bx-cycling'></i>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <div className="rider-tag">Assigned Rider</div>
+                                                                                    <h4>{trackingResult.riderDetails.name}</h4>
+                                                                                </div>
+                                                                            </div>
+                                                                            <span className="rider-status-badge">
+                                                                                {trackingResult.riderDetails.branch || trackingResult.riderDetails.availability}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="tracking-rider-grid">
+                                                                            <div>
+                                                                                <span className="meta-label">Phone</span>
+                                                                                {trackingResult.riderDetails.phone && trackingResult.riderDetails.phone !== 'N/A' ? (
+                                                                                    <a className="meta-value meta-link" href={`tel:${trackingResult.riderDetails.phone}`}>
+                                                                                        <i className='bx bx-phone'></i> {trackingResult.riderDetails.phone}
+                                                                                    </a>
+                                                                                ) : (
+                                                                                    <span className="meta-value">N/A</span>
+                                                                                )}
+                                                                            </div>
+                                                                            <div>
+                                                                                <span className="meta-label">Vehicle</span>
+                                                                                <span className="meta-value">
+                                                                                    {[trackingResult.riderDetails.vehicleType, trackingResult.riderDetails.vehicleNumber].filter(Boolean).join(' • ') || 'N/A'}
+                                                                                </span>
+                                                                            </div>
+                                                                            <div>
+                                                                                <span className="meta-label">Rider ID / NIC</span>
+                                                                                <span className="meta-value">{trackingResult.riderDetails.nic}</span>
+                                                                            </div>
+                                                                            {trackingResult.riderDetails.branch && (
+                                                                                <div>
+                                                                                    <span className="meta-label">Branch</span>
+                                                                                    <span className="meta-value">{trackingResult.riderDetails.branch}</span>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <TrackingMapSection
+                                                                        trackingId={trackingResult.id}
+                                                                        status={trackingResult.status}
+                                                                        originAddress={trackingResult.origin}
+                                                                        destinationAddress={trackingResult.destination}
+                                                                        originLat={trackingResult.originLat}
+                                                                        originLng={trackingResult.originLng}
+                                                                        destLat={trackingResult.destLat}
+                                                                        destLng={trackingResult.destLng}
+                                                                        estimatedDistance={trackingResult.estimatedDistance}
+                                                                        actualDistance={trackingResult.actualDistance}
+                                                                        rider={trackingResult.riderDetails}
+                                                                        onRefresh={() => handleTrackPackage(null, trackingResult.rawQuery || trackingResult.id, { silent: true })}
+                                                                        isRefreshing={isRefreshingTrack}
+                                                                    />
+                                                                </>
+                                                            )}
                                                         </>
                                                     ) : (
                                                         <div style={{ padding: '0.5rem 0', color: '#f87171', fontSize: '0.88rem', display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
