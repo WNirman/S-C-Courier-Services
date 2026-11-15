@@ -184,13 +184,14 @@ const Chatbot = () => {
                     const item = data[0];
                     return `📦 **Package Tracking: PD-${item.pd_id}**\n\n🟢 **Status**: ${item.status}\n📍 **Route**: ${item.pickup_address} ➔ ${item.drop_address}\n👤 **Recipient**: ${item.receiver_name} (${item.receiver_phone})\n📦 **Item**: ${item.item_type} (${item.item_weight || 'Standard'})\n📅 **Scheduled**: ${item.requested_date} @ ${item.requested_time}`;
                 }
+                return `❌ No delivery record found matching **PD-${id}**. Please verify the tracking ID and try again.`;
             } catch (e) {
                 console.error(e);
             }
         }
 
         // 2. Check for ATR Reference ID
-        const atrMatch = cleanQuery.match(/atr[-\s]?(\w+)/i);
+        const atrMatch = cleanQuery.match(/atr[-\s]?([\w-]+)/i);
         if (atrMatch) {
             try {
                 const { data } = await supabase.from('atr').select('*').or(`atr_number.ilike.%${query.trim()}%,atr_number.eq.${query.trim()}`);
@@ -198,52 +199,16 @@ const Chatbot = () => {
                     const item = data[0];
                     return `✈️ **ATR Travel Request: ${item.atr_number}**\n\n🟢 **Status**: ${item.status}\n👤 **Passenger**: ${item.principal_passenger_name} (${item.principal_passenger_designation || 'Staff'})\n🚘 **Vehicle**: ${item.vehicle_type}\n📅 **Required Date**: ${item.required_date} @ ${item.required_time}\n💰 **Estimated Cost**: ${item.estimated_cost || 0} LKR`;
                 }
+                return `❌ No ATR request found matching **${query.trim()}**. Please verify the ATR number and try again.`;
             } catch (e) {
                 console.error(e);
             }
         }
 
-        // 1. Check for specific tracking numbers (Independent of language)
-        const trackingMatch = cleanQuery.match(/sc\d+/i);
-        if (trackingMatch) {
-            const id = trackingMatch[0].toUpperCase();
-            if (language === 'SI') {
-                if (id === 'SC101000') {
-                    return `📦 **පැකේජ හැඳුනුම්පත: SC101000**\n\n🟢 **තත්ත්වය**: අනුමත කර ඇත / ප්‍රවාහනයේ පවතී\n📍 **ගමනාන්තය**: Seattle, WA\n📅 **ඇණවුම් කළ දිනය**: 2024-02-25\n\nඔබේ පැකේජය දැනට ප්‍රවාහනයේ පවතින අතර නියමිත වේලාවට ලැබෙනු ඇත.`;
-                } else if (id === 'SC101015') {
-                    return `📦 **පැකේජ හැඳුනුම්පත: SC101015**\n\n🔴 **තත්ත්වය**: භාරදීම ප්‍රතික්ෂේප විය\n📍 **ගමනාන්තය**: Denver, CO\n📅 **ඇණවුම් කළ දිනය**: 2024-03-02\n\nමෙම භාරදීම ප්‍රතික්ෂේප කර ඇති බව සටහන්ව ඇත. වැඩිදුර තොරතුරු සඳහා අපගේ සහාය සේවාව අමතන්න.`;
-                } else if (id === 'SC100892' || id === 'SC100865' || id === 'SC100810') {
-                    return `📦 **පැකේජ හැඳුනුම්පත: ${id}**\n\n✅ **තත්ත්වය**: සාර්ථකව භාර දෙන ලදී\n📍 **ගමනාන්තය**: ශ්‍රී ලංකාව / එක්සත් ජනපදය\n\nමෙම පැකේජය දැනටමත් ලබන්නා වෙත සාර්ථකව භාර දී ඇත.`;
-                } else {
-                    return `📦 **පැකේජ හැඳුනුම්පත: ${id}**\n\n🟢 **තත්ත්වය**: ප්‍රවාහනයේ පවතී\n📍 **ස්ථානය**: Distribution Center, NY\n⚡ **ප්‍රගතිය**: 60%\n\nඔබේ පැකේජය ගමනාන්තය වෙත සාර්ථකව ගමන් කරමින් පවතී.`;
-                }
-            } else if (language === 'TA') {
-                if (id === 'SC101000') {
-                    return `📦 **தொகுப்பு ஐடி: SC101000**\n\n🟢 **நிலைமை**: அங்கீகரிக்கப்பட்டது / வழியில் உள்ளது\n📍 **சேருமிடம்**: Seattle, WA\n📅 **ஆர்டர் தேதி**: 2024-02-25\n\nஉங்கள் தொகுப்பு தற்போது வழியில் உள்ளது மற்றும் திட்டமிட்டபடி வந்து சேரும்.`;
-                } else if (id === 'SC101015') {
-                    return `📦 **தொகுப்பு ஐடி: SC101015**\n\n🔴 **நிலைமை**: டெலிவரி மறுக்கப்பட்டது\n📍 **சேருமிடம்**: Denver, CO\n📅 **ஆர்டர் தேதி**: 2024-03-02\n\nஇந்த டெலிவரி மறுக்கப்பட்டுள்ளது. மேலும் தகவலுக்கு எங்கள் ஆதரவு சேவையைத் தொடர்பு கொள்ளவும்.`;
-                } else if (id === 'SC100892' || id === 'SC100865' || id === 'SC100810') {
-                    return `📦 **தொகுப்பு ஐடி: ${id}**\n\n✅ **நிலைமை**: வெற்றிகரமாக வழங்கப்பட்டது\n📍 **சேருமிடம்**: இலங்கை / அமெரிக்கா\n\nஇந்த தொகுப்பு ஏற்கனவே பெறுநரிடம் வெற்றிகரமாக ஒப்படைக்கப்பட்டுவிட்டது.`;
-                } else {
-                    return `📦 **தொகுப்பு ஐடி: ${id}**\n\n🟢 **நிலைமை**: வழியில் உள்ளது\n📍 **இருப்பிடம்**: Distribution Center, NY\n⚡ **முன்னேற்றம்**: 60%\n\nஉங்கள் தொகுப்பு சேருமிடத்தை நோக்கி வெற்றிகரமாக சென்று கொண்டிருக்கிறது.`;
-                }
-            } else {
-                if (id === 'SC101000') {
-                    return `📦 **Package ID: SC101000**\n\n🟢 **Status**: Approved / In Transit\n📍 **Destination**: Seattle, WA\n📅 **Ordered**: 2024-02-25\n\nYour package is currently in transit and is on schedule.`;
-                } else if (id === 'SC101015') {
-                    return `📦 **Package ID: SC101015**\n\n🔴 **Status**: Declined on delivery\n📍 **Destination**: Denver, CO\n📅 **Ordered**: 2024-03-02\n\nThis delivery was marked as declined. Please contact our support line for further details.`;
-                } else if (id === 'SC100892' || id === 'SC100865' || id === 'SC100810') {
-                    return `📦 **Package ID: ${id}**\n\n✅ **Status**: Delivered\n📍 **Destination**: USA\n\nThis package has already been successfully delivered to the recipient.`;
-                } else {
-                    return `📦 **Package ID: ${id}**\n\n🟢 **Status**: In Transit\n📍 **Location**: Distribution Center, NY\n⚡ **Progress**: 60%\n\nYour package is moving smoothly towards its destination.`;
-                }
-            }
-        }
-
-        // 2. Keyword routing based on language selection
+        // 3. Keyword routing based on language selection
         if (language === 'SI') {
             if (cleanQuery.includes('ලුහු') || cleanQuery.includes('ලැබෙ') || cleanQuery.includes('කෝ') || cleanQuery.includes('track') || cleanQuery.includes('status')) {
-                return "පැකේජයක් ලුහුබැඳීමට කරුණාකර **SC** වලින් ආරම්භ වන ඔබගේ ලුහුබැඳීමේ අංකය ඇතුළත් කරන්න (උදාහරණයක් ලෙස: **SC101000** හෝ **SC100892**).";
+                return "පැකේජයක් ලුහුබැඳීමට කරුණාකර **PD-** හෝ **ATR-** වලින් ආරම්භ වන ඔබගේ ලුහුබැඳීමේ අංකය ඇතුළත් කරන්න (උදාහරණයක් ලෙස: **PD-1** හෝ **ATR-2026-001**).";
             }
             if (cleanQuery.includes('ගාස්තු') || cleanQuery.includes('මිල') || cleanQuery.includes('කීයද') || cleanQuery.includes('rates') || cleanQuery.includes('price')) {
                 return "💵 **SC Courier නැව්ගත කිරීමේ ගාස්තු:**\n\n• **සාමාන්‍ය දේශීය**: රු. 500.00 (කිලෝග්‍රෑම් 1 දක්වා) + අමතර කිලෝග්‍රෑමයකට රු. 150.00.\n• **වේගවත් දේශීය**: රු. 1200.00 (කිලෝග්‍රෑම් 1 දක්වා) + අමතර කිලෝග්‍රෑමයකට රු. 300.00.\n• **ජාත්‍යන්තර**: රු. 7500.00 සිට ඉහළට (ගමනාන්තය අනුව වෙනස් වේ).\n\nඔබට ගිණුමක් සාදා ලොග් වීමෙන් පසු ඇණවුම් ඉදිරිපත් කළ හැකිය.";
@@ -266,10 +231,10 @@ const Chatbot = () => {
             if (cleanQuery.includes('ස්තූතියි') || cleanQuery.includes('නියමයි') || cleanQuery.includes('thank')) {
                 return "ඔබ සාදරයෙන් පිළිගනිමු! ඔබට තවත් සහායක් අවශ්‍ය නම් මට දන්වන්න. 👍";
             }
-            return "කණගාටුයි, මට එය පැහැදිලි නැත. 😅 කරුණාකර ඔබේ ප්‍රශ්නය වෙනත් ආකාරයකින් අසන්න. නැතහොත් පහත විකල්ප වලින් එකක් තෝරන්න:\n\n• පැකේජය ලුහුබැඳීමට **SC101000** ටයිප් කරන්න.\n• ගාස්තු දැනගැනීමට **ගාස්තු** ටයිප් කරන්න.\n• සහාය සේවාව සඳහා **සහාය** ටයිප් කරන්න.";
+            return "කණගාටුයි, මට එය පැහැදිලි නැත. 😅 කරුණාකර ඔබේ ප්‍රශ්නය වෙනත් ආකාරයකින් අසන්න. නැතහොත් පහත විකල්ප වලින් එකක් තෝරන්න:\n\n• පැකේජය ලුහුබැඳීමට ඔබගේ **PD-** හෝ **ATR-** අංකය ඇතුළත් කරන්න.\n• ගාස්තු දැනගැනීමට **ගාස්තු** ටයිප් කරන්න.\n• සහාය සේවාව සඳහා **සහාය** ටයිප් කරන්න.";
         } else if (language === 'TA') {
             if (cleanQuery.includes('கண்கா') || cleanQuery.includes('எங்கே') || cleanQuery.includes('நிலை') || cleanQuery.includes('track') || cleanQuery.includes('status')) {
-                return "தொகுப்பைக் கண்காணிக்க, தயவுசெய்து **SC** இல் தொடங்கும் உங்கள் கண்காணிப்பு எண்ணை உள்ளிடவும் (உதாரணமாக: **SC101000** அல்லது **SC100892**).";
+                return "தொகுப்பைக் கண்காணிக்க, தயவுசெய்து **PD-** அல்லது **ATR-** இல் தொடங்கும் உங்கள் கண்காணிப்பு எண்ணை உள்ளிடவும் (உதாரணமாக: **PD-1** அல்லது **ATR-2026-001**).";
             }
             if (cleanQuery.includes('கட்டண') || cleanQuery.includes('விலை') || cleanQuery.includes('மதிப') || cleanQuery.includes('rates') || cleanQuery.includes('price')) {
                 return "💵 **SC Courier கப்பல் கட்டணங்கள்:**\n\n• **சாதாரண உள்நாட்டு**: ரூ. 500.00 (1 கிலோ வரை) + கிலோவிற்கு ரூ. 150.00.\n• **விரைவான உள்நாட்டு**: ரூ. 1200.00 (1 கிலோ வரை) + கிலோவிற்கு ரூ. 300.00.\n• **சர்வதேச**: ரூ. 7500.00 இலிருந்து ஆரம்பம் (நாட்டின் இருப்பிடத்தைப் பொறுத்தது).\n\nபதிவு செய்து உள்நுழைந்த பிறகு நீங்கள் டெலிவரி கோரிக்கைகளை சமர்ப்பிக்கலாம்.";
@@ -292,11 +257,11 @@ const Chatbot = () => {
             if (cleanQuery.includes('நன்றி') || cleanQuery.includes('வாழ்த்து') || cleanQuery.includes('thank')) {
                 return "உங்களை வரவேற்பதில் மகிழ்ச்சி! மேலும் உதவி தேவைப்பட்டால் எனக்குத் தெரிவிக்கவும். 👍";
             }
-            return "மன்னிக்கவும், எனக்கு அது சரியாகப் புரியவில்லை. 😅 உங்கள் கேள்வியை வேறு விதமாக கேட்கவும். அல்லது கீழே உள்ள விருப்பங்களில் ஒன்றைத் தேர்ந்தெடுக்கவும்:\n\n• தொகுப்பைக் கண்காணிக்க **SC101000** என தட்டச்சு செய்யவும்.\n• கட்டணங்களை அறிய **கட்டணங்கள்** என தட்டச்சு செய்யவும்.\n• ஆதரவுக்கு **ஆதரவு** என தட்டச்சு செய்யவும்.";
+            return "மன்னிக்கவும், எனக்கு அது சரியாகப் புரியவில்லை. 😅 உங்கள் கேள்வியை வேறு விதமாக கேட்கவும். அல்லது கீழே உள்ள விருப்பங்களில் ஒன்றைத் தேர்ந்தெடுக்கவும்:\n\n• தொகுப்பைக் கண்காணிக்க உங்கள் **PD-** அல்லது **ATR-** எண்ணை உள்ளிடவும்.\n• கட்டணங்களை அறிய **கட்டணங்கள்** என தட்டச்சு செய்யவும்.\n• ஆதரவுக்கு **ஆதரவு** என தட்டச்சு செய்யவும்.";
         } else {
             // English default fallback
             if (cleanQuery.includes('track') || cleanQuery.includes('status') || cleanQuery.includes('where')) {
-                return "To track a package, please enter your tracking number starting with **SC** (for example, try typing **SC101000** or **SC100892**).";
+                return "To track a package or transport request, please enter your tracking number (for example **PD-1** or **ATR-2026-001**).";
             }
             if (cleanQuery.includes('price') || cleanQuery.includes('cost') || cleanQuery.includes('rate') || cleanQuery.includes('fee') || cleanQuery.includes('charge')) {
                 return "💵 **SC Courier Shipping Rates:**\n\n• **Standard Domestic**: $5.00 (up to 1kg) + $1.50 per extra kg.\n• **Express Domestic**: $12.00 (up to 1kg) + $3.00 per extra kg.\n• **International Shipping**: Starts at $25.00 (dependent on destination).\n\nYou can create and view shipments by registering an account and logging in.";
@@ -319,7 +284,7 @@ const Chatbot = () => {
             if (cleanQuery.includes('thank') || cleanQuery.includes('thanks') || cleanQuery.includes('cool') || cleanQuery.includes('great')) {
                 return "You're very welcome! Let me know if there's anything else I can do for you. 👍";
             }
-            return "I'm sorry, I didn't quite catch that. 😅 Could you rephrase your question? Or, you can choose one of the quick options below:\n\n• Type **SC101000** to test package tracking.\n• Type **rates** to view shipping costs.\n• Type **contact** to see our support info.";
+            return "I'm sorry, I didn't quite catch that. 😅 Could you rephrase your question? Or, you can choose one of the options below:\n\n• Enter a real tracking ID like **PD-1** or **ATR-2026-001** to check status.\n• Type **rates** to view shipping costs.\n• Type **contact** to see our support info.";
         }
     };
 

@@ -363,14 +363,12 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     };
 
     useEffect(() => {
-        if (activeTab === 'rides' || activeTab === 'deliveries') {
+        if (['overview', 'rides', 'deliveries', 'corporate'].includes(activeTab)) {
             loadRiders();
             loadAtrRequests();
             loadPersonalDeliveries();
 
-            
-
-            // 2. Supabase Realtime channel for instant push updates across all PCs
+            // Supabase Realtime channel for instant push updates across all PCs
             const liveChannel = supabase
                 .channel('admin-multi-pc-sync')
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'atr' }, () => {
@@ -1015,26 +1013,42 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         }
     };
 
-    // Sample dummy data for admin view
+    // Live overview metrics computed from real Supabase records
+    const allSystemOrders = [...atrRequests, ...personalDeliveries];
+    const normalizeStatus = (status) => String(status || 'Pending').trim().toLowerCase();
+
+    const completedOrdersCount = allSystemOrders.filter(o => ['completed', 'delivered'].includes(normalizeStatus(o.status))).length;
+    const inTransitOrdersCount = allSystemOrders.filter(o => ['assigned', 'in transit', 'on delivery', 'picked up', 'in_transit'].includes(normalizeStatus(o.status))).length;
+    const awaitingApprovalCount = allSystemOrders.filter(o => normalizeStatus(o.status) === 'pending').length;
+    const readyToAssignCount = allSystemOrders.filter(o => ['approved', 'scheduled'].includes(normalizeStatus(o.status))).length;
+    const waitingDispatchCount = awaitingApprovalCount + readyToAssignCount;
+
+    const availableCouriersCount = ridersList.filter(r => ['available', 'active', 'online'].includes(normalizeStatus(r.availability_status || 'Available'))).length;
+    const onDeliveryCouriersCount = ridersList.filter(r => ['busy', 'on delivery', 'on_delivery', 'in transit'].includes(normalizeStatus(r.availability_status))).length;
+    const offDutyCouriersCount = ridersList.filter(r => ['off duty', 'offline', 'inactive', 'on break', 'unavailable'].includes(normalizeStatus(r.availability_status))).length;
+    const activeCouriersCount = Math.max(0, ridersList.length - offDutyCouriersCount);
+
+    const pendingRoutesCount = awaitingApprovalCount + readyToAssignCount;
+
     const stats = [
         {
             id: 'deliveries',
             title: 'Total Deliveries',
-            value: '1,284',
+            value: allSystemOrders.length.toLocaleString(),
             icon: 'bx-package',
             color: 'var(--success)',
         },
         {
             id: 'couriers',
             title: 'Active Couriers',
-            value: '42',
+            value: activeCouriersCount.toLocaleString(),
             icon: 'bx-run',
             color: 'var(--accent-color)',
         },
         {
             id: 'routes',
             title: 'Pending Routes',
-            value: '15',
+            value: pendingRoutesCount.toLocaleString(),
             icon: 'bx-map-alt',
             color: '#f59e0b',
         },
@@ -1044,40 +1058,59 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         deliveries: {
             title: 'Total Deliveries',
             icon: 'bx-package',
-            description: 'All deliveries recorded in the system.',
+            description: 'Live count of corporate ATR requests and personal deliveries recorded in the system.',
             rows: [
-                { label: 'Delivered', value: '986' },
-                { label: 'In Transit', value: '214' },
-                { label: 'Pending', value: '84' },
+                { label: 'Completed / Delivered', value: completedOrdersCount.toLocaleString() },
+                { label: 'Assigned / In Transit', value: inTransitOrdersCount.toLocaleString() },
+                { label: 'Pending / Approved', value: waitingDispatchCount.toLocaleString() },
             ],
         },
         couriers: {
             title: 'Active Couriers',
             icon: 'bx-run',
-            description: 'Courier staff currently active and available.',
+            description: 'Live status of registered riders from the fleet database.',
             rows: [
-                { label: 'Available Couriers', value: '28' },
-                { label: 'On Delivery', value: '12' },
-                { label: 'On Break', value: '2' },
+                { label: 'Available Couriers', value: availableCouriersCount.toLocaleString() },
+                { label: 'On Delivery', value: onDeliveryCouriersCount.toLocaleString() },
+                { label: 'Total Registered', value: ridersList.length.toLocaleString() },
             ],
         },
         routes: {
             title: 'Pending Routes',
             icon: 'bx-map-alt',
-            description: 'Routes waiting to be assigned or completed.',
+            description: 'Live orders waiting for approval, rider assignment, or delivery completion.',
             rows: [
-                { label: 'Awaiting Assignment', value: '7' },
-                { label: 'Delayed Routes', value: '3' },
-                { label: 'Scheduled Today', value: '5' },
+                { label: 'Pending Approval', value: awaitingApprovalCount.toLocaleString() },
+                { label: 'Awaiting Rider Assignment', value: readyToAssignCount.toLocaleString() },
+                { label: 'Active / In Progress', value: inTransitOrdersCount.toLocaleString() },
             ],
         },
     };
 
+    const parseAtrDestination = (purposeText) => {
+        if (!purposeText || typeof purposeText !== 'string') return 'Corporate Travel Request';
+        const match = purposeText.match(/^(.*?)\s*\(Destination:\s*(.+?)\)\s*$/i);
+        return match ? match[2].trim() : purposeText;
+    };
+
     const recentOrders = [
-        { id: 'SC101000', customer: 'John Doe', destination: 'Seattle, WA', status: 'In Transit' },
-        { id: 'SC101015', customer: 'Jane Smith', destination: 'Denver, CO', status: 'Pending' },
-        { id: 'SC101018', customer: 'Bob Johnson', destination: 'Miami, FL', status: 'Delivered' },
-    ];
+        ...atrRequests.map(req => ({
+            id: req.atr_number || `ATR-${req.atr_id}`,
+            customer: req.principal_passenger_name || customerCompMap[req.cust_email] || req.cust_email || 'Corporate Client',
+            destination: parseAtrDestination(req.purpose_of_travel),
+            status: req.status || 'Pending',
+            sortKey: req.created_at ? new Date(req.created_at).getTime() : Number(req.atr_id) || 0,
+        })),
+        ...personalDeliveries.map(pd => ({
+            id: `PD-${pd.pd_id}`,
+            customer: pd.receiver_name || pd.sender_name || pd.cust_email || 'Customer',
+            destination: pd.drop_address || pd.pickup_address || 'Delivery Address',
+            status: pd.status || 'Pending',
+            sortKey: pd.created_at ? new Date(pd.created_at).getTime() : Number(pd.pd_id) || 0,
+        }))
+    ]
+        .sort((a, b) => b.sortKey - a.sortKey)
+        .slice(0, 5);
 
     return (
         <div className="dashboard-container" style={{ animation: 'fadeIn 0.5s ease', padding: '2rem', width: '100%', maxWidth: '1200px', margin: '0 auto', zIndex: 10 }}>
@@ -1789,12 +1822,24 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff' }}>
                                     <i className='bx bx-list-ul' style={{ color: 'var(--accent-color)' }}></i> Recent System Activity
                                 </h3>
-                                <button style={{ background: 'transparent', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.9rem' }}>View All</button>
+                                <button onClick={() => setActiveTab('rides')} style={{ background: 'transparent', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.9rem' }}>View All</button>
                             </div>
 
                             <div className="deliveries-list" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                {recentOrders.map((order, index) => (
-                                    <div key={index} className="delivery-item" style={{
+                                {recentOrders.length === 0 ? (
+                                    <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary)', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '12px', border: '1px dashed var(--card-border)' }}>
+                                        No recent deliveries or transport requests recorded yet.
+                                    </div>
+                                ) : recentOrders.map((order) => {
+                                    const isDone = order.status === 'Delivered' || order.status === 'Completed';
+                                    const isDeclined = order.status === 'Declined' || order.status === 'Cancelled';
+                                    const isActive = order.status === 'In Transit' || order.status === 'Assigned' || order.status === 'Approved';
+                                    const badgeBg = isDone ? 'rgba(16, 185, 129, 0.1)' : isDeclined ? 'rgba(239, 68, 68, 0.1)' : isActive ? 'rgba(59, 130, 246, 0.1)' : 'rgba(245, 158, 11, 0.1)';
+                                    const badgeColor = isDone ? 'var(--success)' : isDeclined ? '#ef4444' : isActive ? 'var(--accent-color)' : '#f59e0b';
+                                    const badgeBorder = isDone ? 'rgba(16, 185, 129, 0.2)' : isDeclined ? 'rgba(239, 68, 68, 0.2)' : isActive ? 'rgba(59, 130, 246, 0.2)' : 'rgba(245, 158, 11, 0.2)';
+
+                                    return (
+                                    <div key={order.id} className="delivery-item" style={{
                                         padding: '1.25rem',
                                         background: 'rgba(255, 255, 255, 0.03)',
                                         borderRadius: '16px',
@@ -1829,18 +1874,19 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                             <span style={{
                                                 display: 'inline-block',
                                                 padding: '0.35rem 0.85rem',
-                                                background: order.status === 'Delivered' ? 'rgba(16, 185, 129, 0.1)' : order.status === 'In Transit' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(245, 158, 11, 0.1)',
-                                                color: order.status === 'Delivered' ? 'var(--success)' : order.status === 'In Transit' ? 'var(--accent-color)' : '#f59e0b',
+                                                background: badgeBg,
+                                                color: badgeColor,
                                                 borderRadius: '100px',
                                                 fontSize: '0.85rem',
                                                 fontWeight: '600',
-                                                border: order.status === 'Delivered' ? '1px solid rgba(16, 185, 129, 0.2)' : order.status === 'In Transit' ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid rgba(245, 158, 11, 0.2)'
+                                                border: `1px solid ${badgeBorder}`
                                             }}>
                                                 {order.status}
                                             </span>
                                         </div>
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>

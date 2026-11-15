@@ -10,7 +10,6 @@ import PersonalDeliveryForm from './PersonalDeliveryForm';
 import AdminDashboard from './AdminDashboard';
 import StaffDashboard from './StaffDashboard';
 import Chatbot from './Chatbot';
-import StatsSection from './StatsSection';
 import TrackingMapSection from './TrackingMapSection';
 
 function extractAtrDestination(purposeText) {
@@ -688,29 +687,6 @@ function App({ onNavigate }) {
                     assignedRiderNic: effectiveRiderNic,
                     riderDetails,
                     isRiderAssigned
-                });
-                return;
-            }
-
-            // 3. Fallback demo sample IDs (for SC101000, SC100892, etc.)
-            const upperQuery = query.toUpperCase();
-            if (upperQuery.startsWith('SC')) {
-                const demoStatus = upperQuery === 'SC100892' ? 'Delivered' : 'In Transit';
-                setTrackingResult({
-                    found: true,
-                    rawQuery: query,
-                    category: 'personal',
-                    type: 'Standard Parcel Delivery',
-                    id: upperQuery,
-                    status: demoStatus,
-                    statusColor: upperQuery === 'SC100892' ? '#10b981' : '#38bdf8',
-                    progress: upperQuery === 'SC100892' ? 100 : 70,
-                    location: upperQuery === 'SC100892' ? 'Delivered to recipient in Colombo' : 'In Transit • Colombo Central Sorting Hub',
-                    origin: 'Colombo Hub',
-                    destination: 'Destination Address',
-                    date: new Date().toLocaleDateString(),
-                    isRiderAssigned: false,
-                    riderDetails: null
                 });
                 return;
             }
