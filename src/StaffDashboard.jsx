@@ -468,24 +468,6 @@ const StaffDashboard = ({ loggedInUser }) => {
         }
     };
 
-    const handleUpdateStatus = async (type, id, newStatus) => {
-        try {
-            const table = type === 'atr' ? 'atr' : 'personal_delivery';
-            const idCol = type === 'atr' ? 'atr_id' : 'pd_id';
-            const { error } = await supabase
-                .from(table)
-                .update({ status: newStatus })
-                .eq(idCol, id);
-
-            if (error) throw error;
-            alert(`Status updated to ${newStatus}!`);
-            if (type === 'atr') loadAtrRequests();
-            else loadPersonalDeliveries();
-        } catch (e) {
-            alert('Error updating status: ' + e.message);
-        }
-    };
-
     // Actuals completion modal
     const handleOpenActualsModal = (atr) => {
         setCompletingAtr(atr);
@@ -826,6 +808,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                             const isAtr = item.type === 'atr';
                             const isPending = item.status === 'Pending';
                             const isApprovedOrAccepted = item.status === 'Approved' || item.status === 'Accepted';
+                            const isCompleted = item.status && (item.status.toLowerCase() === 'completed' || item.status.toLowerCase() === 'delivered');
 
                             // Find assigned rider from fleet list
                             const assignedRiderObj = ridersList.find(r => 
@@ -933,6 +916,35 @@ const StaffDashboard = ({ loggedInUser }) => {
                                             >
                                                 <i className='bx bx-check'></i> {isAtr ? 'Approve ATR' : 'Accept Order'}
                                             </button>
+                                        ) : isCompleted ? (
+                                            /* Step 2c: Trip/Delivery is Completed -> Show completed details, NO unassign option */
+                                            <div style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem',
+                                                background: 'rgba(16, 185, 129, 0.12)',
+                                                border: '1px solid rgba(16, 185, 129, 0.35)',
+                                                padding: '0.4rem 0.75rem',
+                                                borderRadius: '8px'
+                                            }}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
+                                                    <span style={{
+                                                        color: '#10b981',
+                                                        fontSize: '0.72rem',
+                                                        fontWeight: '700',
+                                                        textTransform: 'uppercase',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.3rem'
+                                                    }}>
+                                                        <i className='bx bx-check-double' style={{ fontSize: '1rem', color: '#10b981' }}></i>
+                                                        Trip Completed
+                                                    </span>
+                                                    <span style={{ color: '#fff', fontSize: '0.82rem', fontWeight: '600' }}>
+                                                        {riderDisplayName ? `👤 ${riderDisplayName}` : (item.assignedRiderNic ? `👤 Rider NIC: ${item.assignedRiderNic}` : '👤 Completed by Assigned Rider')}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         ) : riderDisplayName ? (
                                             /* Step 2b: Rider is already assigned */
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', padding: '0.35rem 0.65rem', borderRadius: '8px' }}>
@@ -1012,17 +1024,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                                             </div>
                                         )}
 
-                                        {/* Status Advancement / Actuals */}
-                                        {item.status === 'Assigned' && (
-                                            <button
-                                                onClick={() => handleUpdateStatus(item.type, item.rawId, 'In Transit')}
-                                                className="secondary-btn"
-                                                style={{ padding: '0.35rem 0.6rem', height: '32px', fontSize: '0.75rem', background: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '6px', cursor: 'pointer' }}
-                                            >
-                                                <i className='bx bx-play'></i> Start
-                                            </button>
-                                        )}
-
+                                        {/* Trip Actuals */}
                                         {isAtr && (item.status === 'Assigned' || item.status === 'In Transit' || item.status === 'Completed') && (
                                             <button
                                                 onClick={() => handleOpenActualsModal(item.rawItem)}
