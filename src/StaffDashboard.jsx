@@ -732,7 +732,7 @@ const StaffDashboard = ({ loggedInUser }) => {
     const completedCount = atrRequests.filter(a => a.status === 'Completed').length + personalDeliveries.filter(p => p.status === 'Completed').length;
 
     // Strict unified grid column specification for 100% pixel-perfect alignment
-    const ORDER_GRID_COLUMNS = '130px 1fr 135px 125px 105px 360px';
+    const ORDER_GRID_COLUMNS = '130px 1fr 135px 140px 105px 360px';
 
     return (
         <div className="dashboard-container" style={{ animation: 'fadeIn 0.5s ease', padding: '2rem', width: '100%', maxWidth: '1400px', margin: '0 auto', zIndex: 10 }}>
@@ -1054,12 +1054,18 @@ const StaffDashboard = ({ loggedInUser }) => {
                                     </div>
 
                                     {/* Col 4: Cost / Distance */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem', minWidth: 0, whiteSpace: 'nowrap' }}>
-                                        <span style={{ color: '#10b981', fontWeight: '600' }}>Est: {orderActState.estCost} LKR ({orderActState.estDist} km)</span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem', minWidth: 0, overflowWrap: 'anywhere' }}>
+                                        <span style={{ color: '#10b981', fontWeight: '600' }}>Est: {orderActState.estCost} LKR</span>
+                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{orderActState.estDist} km</span>
                                         {(orderActState.actDist !== null || orderActState.actCost !== null) && (
-                                            <span style={{ color: isActualsLocked ? '#10b981' : '#60a5fa', fontSize: '0.72rem', fontWeight: 600 }}>
-                                                Act: {orderActState.actCost ?? orderActState.estCost} LKR ({orderActState.actDist ?? orderActState.estDist} km) {isActualsLocked ? '🔒' : ''}
-                                            </span>
+                                            <>
+                                                <span style={{ color: isActualsLocked ? '#10b981' : '#60a5fa', fontSize: '0.72rem', fontWeight: 600, marginTop: '0.15rem' }}>
+                                                    Act: {orderActState.actCost ?? orderActState.estCost} LKR {isActualsLocked ? '🔒' : ''}
+                                                </span>
+                                                <span style={{ color: isActualsLocked ? '#6ee7b7' : '#93c5fd', fontSize: '0.7rem' }}>
+                                                    {orderActState.actDist ?? orderActState.estDist} km
+                                                </span>
+                                            </>
                                         )}
                                     </div>
 
