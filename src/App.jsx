@@ -169,6 +169,9 @@ function App({ onNavigate }) {
     const [companyName, setCompanyName] = useState('');
     const [companyAddress, setCompanyAddress] = useState('');
     const [companyPhone, setCompanyPhone] = useState('');
+    const [corpInvoiceFrequency, setCorpInvoiceFrequency] = useState('Monthly');
+    const [corpBillingEmail, setCorpBillingEmail] = useState('');
+    const [corpPaymentTerms, setCorpPaymentTerms] = useState('Net 15 Days');
     const [isRegistering, setIsRegistering] = useState(false);
     const [registerSuccess, setRegisterSuccess] = useState(false);
 
@@ -738,6 +741,28 @@ function App({ onNavigate }) {
 
             if (error) throw error;
 
+            // 3. Save Corporate Customer Invoice Frequency & Billing Configuration
+            if (accountType === 'Corporate') {
+                try {
+                    await fetch('http://localhost:5000/api/corporate-billing/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            cust_email: custEmail.trim(),
+                            company_name: companyName.trim(),
+                            billing_email: (corpBillingEmail.trim() || custEmail.trim()),
+                            billing_address: companyAddress.trim(),
+                            customer_phone: companyPhone.trim() || custPhone.trim(),
+                            invoice_frequency: corpInvoiceFrequency,
+                            payment_terms: corpPaymentTerms,
+                            preferred_invoice_day: 1
+                        })
+                    });
+                } catch (cfgErr) {
+                    console.warn('Corporate billing config save note:', cfgErr);
+                }
+            }
+
             setIsRegistering(false);
             setRegisterSuccess(true);
 
@@ -1130,6 +1155,35 @@ function App({ onNavigate }) {
                                                             onChange={(e) => setCompanyAddress(e.target.value)}
                                                             placeholder="e.g. No. 45, Galle Road, Colombo 03"
                                                             required
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="atr-form-row" style={{ marginTop: '0.6rem' }}>
+                                                <div className="atr-form-group">
+                                                    <label>Invoice Frequency (Billing Cycle) <span className="required">*</span></label>
+                                                    <div className="atr-input-with-icon">
+                                                        <i className='bx bx-calendar-check'></i>
+                                                        <select
+                                                            value={corpInvoiceFrequency}
+                                                            onChange={(e) => setCorpInvoiceFrequency(e.target.value)}
+                                                            style={{ width: '100%', padding: '0.75rem 0.9rem 0.75rem 2.5rem', background: 'rgba(20,20,25,0.9)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', color: '#fff', fontSize: '0.9rem' }}
+                                                        >
+                                                            <option value="Every 15 Days">Every 15 Days (1st–15th &amp; 16th–End of Month)</option>
+                                                            <option value="Monthly">Monthly (1st–Last Day of Month)</option>
+                                                            <option value="Per Service">Per Service / Shipment (Individual Invoice)</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div className="atr-form-group">
+                                                    <label>Registered Billing Email</label>
+                                                    <div className="atr-input-with-icon">
+                                                        <i className='bx bx-envelope-open'></i>
+                                                        <input
+                                                            type="email"
+                                                            value={corpBillingEmail}
+                                                            onChange={(e) => setCorpBillingEmail(e.target.value)}
+                                                            placeholder="finance@company.com (optional)"
                                                         />
                                                     </div>
                                                 </div>

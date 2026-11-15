@@ -1,0 +1,89 @@
+{
+  "invoices": [
+    {
+      "invoice_id": "inv_corp_1794709905453_irgt",
+      "invoice_number": "INV-CORP-2026-0001",
+      "customer_type": "Corporate",
+      "customer_email": "vigneshlu@gmail.com",
+      "billing_email": "vigneshlu@gmail.com",
+      "customer_name": "Vigneswaran",
+      "company_name": "Hayles Fabric",
+      "department_name": "Operations Department",
+      "billing_address": "Colombo, Sri Lanka",
+      "customer_phone": "+94 11 234 5678",
+      "invoice_frequency": "Monthly",
+      "billing_period_start": "2026-11-01",
+      "billing_period_end": "2026-11-15",
+      "billing_period_label": "2026-11-01 to 2026-11-15",
+      "issue_date": "2026-11-15",
+      "total_shipments": 2,
+      "subtotal": 25568,
+      "tax_amount": 0,
+      "additional_charges": 0,
+      "total_payable": 25568,
+      "amount_paid": 25568,
+      "payment_terms": "Net 15 Days",
+      "payment_status": "Paid",
+      "email_status": "Sent",
+      "email_sent_at": "2026-11-15T02:31:51.115Z",
+      "email_error": null,
+      "line_items": [
+        {
+          "request_id": "atr-43",
+          "ref_number": "ATR-2026-2562059",
+          "source_type": "atr",
+          "department_name": "Operations Dept",
+          "shipment_date": "2026-11-08",
+          "pickup_details": "Hayles Fabric (Operations Dept)",
+          "delivery_details": "Sample (Destination: kandy)",
+          "parcel_or_vehicle": "Lorry (Wanith)",
+          "distance_km": 114.4,
+          "rate_lkr": 220,
+          "amount_lkr": 25168,
+          "status": "Approved"
+        },
+        {
+          "request_id": "atr-44",
+          "ref_number": "AP 2026 20624",
+          "source_type": "atr",
+          "department_name": "Operations Dept",
+          "shipment_date": "2026-11-15",
+          "pickup_details": "Hayles Fabric (Operations Dept)",
+          "delivery_details": "Sample (Destination: galle)",
+          "parcel_or_vehicle": "Bike (Vignesh)",
+          "distance_km": 122.7,
+          "rate_lkr": 50,
+          "amount_lkr": 400,
+          "status": "Approved"
+        }
+      ],
+      "audit_log": [
+        {
+          "timestamp": "2026-11-15T02:31:45.453Z",
+          "action": "CONSOLIDATED_INVOICE_GENERATED",
+          "actor": "admin@sccourier.com",
+          "note": "Generated corporate invoice (2 shipment(s)) for billing period 2026-11-01 to 2026-11-15"
+        },
+        {
+          "timestamp": "2026-11-15T02:31:51.115Z",
+          "action": "EMAIL_SENT",
+          "actor": "System Mailer",
+          "note": "PDF Invoice emailed to vigneshlu@gmail.com (250 2.0.0 OK  1794709911 a92af1059eb24-1b5031bc518sm18790945c88.15 - gsmtp)"
+        },
+        {
+          "timestamp": "2026-11-15T02:33:18.699Z",
+          "action": "PAYMENT_STATUS_UPDATED",
+          "actor": "admin@sccourier.com",
+          "note": "Payment status set to Paid (Paid: LKR 25568)"
+        }
+      ],
+      "created_at": "2026-11-15T02:31:45.453Z"
+    }
+  ],
+  "corporateConfigs": {},
+  "invoicedRequestKeys": {
+    "atr-43": "inv_corp_1794709905453_irgt",
+    "atr-44": "inv_corp_1794709905453_irgt"
+  },
+  "lastSchedulerRun": "2026-11-15T02:53:38.980Z"
+}

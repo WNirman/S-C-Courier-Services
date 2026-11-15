@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { generateMonthlyExcelReport } from './utils/reportGenerator';
 import { DEFAULT_PRICING_RATES, getCachedPricingRates, fetchPricingRates, savePricingRates } from './utils/pricingRates';
+import InvoiceManagementPanel from './InvoiceManagementPanel';
 
 const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, loggedInUser }) => {
     const [showAssignForm, setShowAssignForm] = useState(false);
@@ -176,9 +177,11 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 if (deptData) {
                     const dMap = {};
                     deptData.forEach(d => {
+                        const rawComp = d.company?.comp_name;
+                        const cleanComp = rawComp && rawComp.toLowerCase() !== 'sc courier services' ? rawComp : null;
                         dMap[d.dep_id] = {
                             dep_name: d.dep_name,
-                            comp_name: d.company?.comp_name || 'SC Courier Services',
+                            comp_name: cleanComp,
                             comp_address: d.company?.comp_address || ''
                         };
                     });
@@ -191,7 +194,9 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 if (custData) {
                     const cMap = {};
                     custData.forEach(c => {
-                        cMap[c.cust_email] = c.cust_name || (c.cust_type === 'Corporate' ? 'Corporate Client' : null);
+                        const rawName = c.cust_name || '';
+                        const parenMatch = rawName.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+                        cMap[c.cust_email] = parenMatch ? parenMatch[2].trim() : (rawName || (c.cust_type === 'Corporate' ? 'Corporate Client' : null));
                     });
                     setCustomerCompMap(cMap);
                 }
@@ -459,7 +464,9 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    if (data.invoiceNo) {
+                    if (data.message) {
+                        invoiceNote = `\n\n${data.message}`;
+                    } else if (data.invoiceNo) {
                         invoiceNote = `\nInvoice #${data.invoiceNo} has been sent to ${data.email}.`;
                     }
                 }
@@ -1150,6 +1157,25 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     }}
                 >
                     <i className='bx bx-buildings'></i> Corporate Deliveries
+                </button>
+                <button
+                    onClick={() => setActiveTab('invoices')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'invoices' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'invoices' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-receipt'></i> Invoices &amp; Billing
                 </button>
                 <button
                     onClick={() => setActiveTab('pricing')}
@@ -2467,6 +2493,16 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                         )}
                     </div>
                 </div>
+            )}
+
+            {activeTab === 'invoices' && (
+                <InvoiceManagementPanel
+                    atrRequests={atrRequests}
+                    personalDeliveries={personalDeliveries}
+                    customerCompMap={customerCompMap}
+                    deptCompMap={deptCompMap}
+                    loggedInUser={loggedInUser}
+                />
             )}
 
             {activeTab === 'pricing' && (

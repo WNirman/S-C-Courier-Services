@@ -4,6 +4,21 @@ require('dotenv').config({ path: path.join(__dirname, '.env'), override: true })
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const { generateInvoicePdfBuffer } = require('./pdfInvoiceGenerator');
+const {
+  loadStore,
+  saveStore,
+  getLastDayOfMonth,
+  computeBillingPeriod,
+  ensureInvoiceTables,
+  syncInvoiceToDb,
+  getCorporateBillingConfig,
+  saveCorporateBillingConfig,
+  sendCorporateAcceptanceEmail,
+  sendInvoiceEmailWithPdf,
+  createOrGetPersonalInvoice,
+  generateCorporateInvoiceForRequests
+} = require('./invoiceService');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -30,6 +45,7 @@ pool.connect((err, client, release) => {
   } else {
     console.log('Connected to PostgreSQL successfully!');
     release();
+    ensureInvoiceTables(pool);
   }
 });
 
@@ -1214,10 +1230,13 @@ app.put('/api/pricing-rates', (req, res) => {
 });
 
 // -------------------------------------------------------
-// 0. POST /api/atr/approve-invoice — Admin/Staff approves an ATR request & emails Invoice to customer
+// 0. POST /api/atr/approve-invoice — Admin/Staff approves an ATR request
+//    Sends Corporate Request Acceptance Email & handles Corporate Billing Policy:
+//    - 'Per Service': Immediately generates PDF invoice + emails attachment
+//    - 'Every 15 Days' / 'Monthly': Queues request for consolidated billing cycle
 // -------------------------------------------------------
 app.post('/api/atr/approve-invoice', async (req, res) => {
-  const { atrId, approvedBy, overrideEmail } = req.body;
+  const { atrId, approvedBy, overrideEmail, forceInvoice } = req.body;
   if (!atrId) {
     return res.status(400).json({ error: 'atrId is required' });
   }
@@ -1246,6 +1265,7 @@ app.post('/api/atr/approve-invoice', async (req, res) => {
           approval_date: new Date().toISOString()
         })
       });
+      atr.status = 'Approved';
     }
 
     const customerEmail = (overrideEmail && overrideEmail.trim()) || atr.cust_email;
@@ -1253,23 +1273,25 @@ app.post('/api/atr/approve-invoice', async (req, res) => {
       return res.status(400).json({ error: 'No customer email associated with this ATR request' });
     }
 
-    // 2. Fetch customer & department/company info for the invoice
+    // 2. Fetch customer & department/company info
     let custName = atr.principal_passenger_name || 'Valued Corporate Client';
     let custPhone = 'N/A';
+    let custAddr = 'Sri Lanka';
     try {
       const custRes = await fetch(
-        `${sbUrl}/rest/v1/customer?cust_email=eq.${encodeURIComponent(customerEmail)}&select=cust_name,cust_phoneno,cust_address`,
+        `${sbUrl}/rest/v1/customer?cust_email=eq.${encodeURIComponent(atr.cust_email || customerEmail)}&select=cust_name,cust_phoneno,cust_address`,
         { headers: sbHeaders }
       );
       const custRows = await custRes.json();
       if (Array.isArray(custRows) && custRows.length > 0) {
         custName = custRows[0].cust_name || custName;
         custPhone = custRows[0].cust_phoneno || custPhone;
+        custAddr = custRows[0].cust_address || custAddr;
       }
     } catch (e) { /* ignore */ }
 
     let depName = 'Operations';
-    let compName = 'Corporate Client';
+    let compName = custName;
     if (atr.dep_id) {
       try {
         const depRes = await fetch(
@@ -1280,182 +1302,92 @@ app.post('/api/atr/approve-invoice', async (req, res) => {
         if (Array.isArray(depRows) && depRows.length > 0) {
           depName = depRows[0].dep_name || depName;
           compName = depRows[0].company?.comp_name || compName;
+          if (depRows[0].company?.comp_address) custAddr = depRows[0].company.comp_address;
         }
       } catch (e) { /* ignore */ }
     }
 
-    // 3. Calculate invoice numbers and amounts
-    const invoiceNo = `INV-ATR-${new Date().getFullYear()}-${String(atr.atr_id).padStart(4, '0')}`;
-    const issueDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    const reqDate = atr.required_date
-      ? new Date(atr.required_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-      : 'N/A';
-    const reqTime = atr.required_time || 'N/A';
-
     const livePricing = getPricingRates();
     const rateMap = livePricing.vehicleRates;
-    const vehicleType = atr.vehicle_type || 'Standard Vehicle';
-    const ratePerKm = rateMap[vehicleType] || 100;
-    const distanceKm = Number(atr.actual_distance || atr.estimated_distance || 0);
+    const vehicleType = atr.vehicle_type || 'Car';
+    const ratePerKm = Number(rateMap[vehicleType]) || 110;
+    const distanceKm = Number(atr.actual_distance || atr.estimated_distance || 10);
     const totalCostNum = Number(atr.actual_cost || atr.estimated_cost || (distanceKm * ratePerKm));
-    const formattedRate = ratePerKm.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const formattedTotal = totalCostNum.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-      </head>
-      <body style="font-family: Arial, Helvetica, sans-serif; background-color: #f3f4f6; padding: 24px; color: #1f2937; margin: 0;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 640px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0;">
-          <!-- Header -->
-          <tr>
-            <td bgcolor="#1e3a8a" style="background-color: #1e3a8a; color: #ffffff; padding: 28px 28px;">
-              <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td>
-                    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff;">S&amp;C COURIER SERVICES</h1>
-                    <p style="margin: 4px 0 0 0; font-size: 13px; color: #bfdbfe;">Corporate Transport &amp; Logistics Division</p>
-                  </td>
-                  <td align="right">
-                    <span style="display: inline-block; background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">
-                      APPROVED INVOICE
-                    </span>
-                    <p style="margin: 6px 0 0 0; font-size: 13px; color: #e0f2fe; font-weight: 600;">#${invoiceNo}</p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- Body -->
-          <tr>
-            <td style="padding: 28px;">
-              <p style="font-size: 16px; font-weight: 600; color: #111827; margin: 0 0 8px 0;">Hello ${custName},</p>
-              <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px 0;">
-                Your Corporate Authorization to Request (<strong>${atr.atr_number || `ATR-${atr.atr_id}`}</strong>) has been <strong>approved</strong> by our operations team. Below is your official invoice and booking summary.
-              </p>
-
-              <!-- Billed To & Invoice Meta -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;">
-                <tr>
-                  <td width="50%" valign="top" style="padding: 16px; border-right: 1px solid #e2e8f0;">
-                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Billed To</div>
-                    <div style="font-size: 14px; font-weight: 700; color: #0f172a;">${compName}</div>
-                    <div style="font-size: 13px; color: #334155; margin-top: 2px;">Dept: ${depName}</div>
-                    <div style="font-size: 13px; color: #475569; margin-top: 2px;">${custName} (${customerEmail})</div>
-                  </td>
-                  <td width="50%" valign="top" style="padding: 16px;">
-                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Invoice Details</div>
-                    <div style="font-size: 13px; color: #334155;"><strong>Invoice No:</strong> ${invoiceNo}</div>
-                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Issue Date:</strong> ${issueDate}</div>
-                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>ATR Ref:</strong> ${atr.atr_number || `ATR-${atr.atr_id}`}</div>
-                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Approved By:</strong> ${approvedBy || 'Admin'}</div>
-                  </td>
-                </tr>
-              </table>
-
-              <!-- Trip Schedule & Passenger Details -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px; border-collapse: collapse;">
-                <tr>
-                  <td colspan="2" style="padding: 10px 12px; background-color: #f1f5f9; font-size: 12px; font-weight: 700; text-transform: uppercase; color: #334155; border-radius: 6px 6px 0 0;">
-                    Trip &amp; Requisition Summary
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b; width: 40%;">Principal Passenger</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">
-                    ${atr.principal_passenger_name || 'N/A'}${atr.principal_passenger_designation ? ` (${atr.principal_passenger_designation})` : ''}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Purpose / Destination</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${atr.purpose_of_travel || 'Corporate Travel'}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Required Date &amp; Time</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${reqDate} at ${reqTime}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Vehicle Category</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${vehicleType}</td>
-                </tr>
-              </table>
-
-              <!-- Itemized Invoice Breakdown -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 24px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden;">
-                <tr bgcolor="#0f172a" style="background-color: #0f172a; color: #ffffff;">
-                  <th align="left" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Description</th>
-                  <th align="center" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Distance</th>
-                  <th align="right" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Rate / km</th>
-                  <th align="right" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Amount (LKR)</th>
-                </tr>
-                <tr>
-                  <td style="padding: 14px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">
-                    <strong>Corporate ATR Transport (${vehicleType})</strong><br/>
-                    <span style="font-size: 12px; color: #64748b;">Ref: ${atr.atr_number || `ATR-${atr.atr_id}`} — ${atr.purpose_of_travel || 'Corporate Dispatch'}</span>
-                  </td>
-                  <td align="center" style="padding: 14px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">${distanceKm} km</td>
-                  <td align="right" style="padding: 14px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">LKR ${formattedRate}</td>
-                  <td align="right" style="padding: 14px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: 700; color: #0f172a;">LKR ${formattedTotal}</td>
-                </tr>
-                <tr bgcolor="#f8fafc" style="background-color: #f8fafc;">
-                  <td colspan="3" align="right" style="padding: 14px 12px; font-size: 15px; font-weight: 700; color: #0f172a;">Total Invoice Amount:</td>
-                  <td align="right" style="padding: 14px 12px; font-size: 16px; font-weight: 700; color: #ea580c;">LKR ${formattedTotal}</td>
-                </tr>
-              </table>
-
-              <p style="font-size: 13px; color: #475569; line-height: 1.5; margin: 0;">
-                A fleet rider will be assigned to your request shortly, and you will receive rider contact details as soon as dispatch is finalized. Thank you for partnering with <strong>S&amp;C Courier Services</strong>!
-              </p>
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td bgcolor="#f8fafc" style="background-color: #f8fafc; padding: 18px 28px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0;">
-              This is an official computer-generated invoice from S&amp;C Courier Services.<br/>
-              &copy; ${new Date().getFullYear()} S&amp;C Courier Services. All rights reserved.
-            </td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
 
     if (!transporter) {
       await setupTransporter();
     }
 
-    const info = await transporter.sendMail({
-      from: `"SC Courier Services" <${process.env.SMTP_USER || 'sccourier369@gmail.com'}>`,
-      to: customerEmail,
-      subject: `Invoice #${invoiceNo} — Corporate ATR Approved (${atr.atr_number || `ATR-${atr.atr_id}`})`,
-      html: htmlContent
+    // 3. Check Corporate Customer's Billing Configuration
+    const billingConfig = getCorporateBillingConfig(atr.cust_email || customerEmail, {
+      cust_name: custName,
+      dept_comp_name: compName,
+      department_name: depName,
+      billing_email: customerEmail,
+      billing_address: custAddr,
+      customer_phone: custPhone
     });
 
-    const previewUrl = nodemailer.getTestMessageUrl(info);
-    console.log(`ATR Invoice email sent to ${customerEmail} (${invoiceNo}) | SMTP response: ${info.response}`);
+    // Always send the Request Acceptance Email (Section 1)
+    const acceptInfo = await sendCorporateAcceptanceEmail({
+      transporter,
+      atr,
+      customerName: billingConfig.customer_name || custName,
+      companyName: `${billingConfig.company_name} (${billingConfig.department_name})`,
+      customerEmail,
+      billingConfig,
+      approvedBy: approvedBy || 'Admin',
+      ratePerKm,
+      distanceKm,
+      estimatedCharge: totalCostNum
+    });
+
+    let generatedInvoice = null;
+    if (billingConfig.invoice_frequency === 'Per Service' || forceInvoice) {
+      const todayIso = new Date().toISOString().split('T')[0];
+      const genRes = await generateCorporateInvoiceForRequests({
+        pool,
+        transporter,
+        custEmail: atr.cust_email || customerEmail,
+        companyName: billingConfig.company_name,
+        departmentName: billingConfig.department_name,
+        customerName: billingConfig.customer_name || custName,
+        billingConfig: { ...billingConfig, billing_email: customerEmail },
+        atrRows: [atr],
+        deptMap: atr.dep_id ? { [atr.dep_id]: { dep_name: depName } } : {},
+        pricingRates: livePricing,
+        billingPeriodStart: atr.required_date || todayIso,
+        billingPeriodEnd: atr.required_date || todayIso,
+        billingPeriodLabel: `Per-Service (${atr.atr_number || `ATR-${atr.atr_id}`})`,
+        triggeredBy: approvedBy || 'Admin'
+      });
+      if (genRes.generated) {
+        generatedInvoice = genRes.invoice;
+      }
+    }
 
     return res.json({
       success: true,
-      invoiceNo,
+      acceptanceEmailSent: true,
+      billingFrequency: billingConfig.invoice_frequency,
+      invoiceNo: generatedInvoice ? generatedInvoice.invoice_number : null,
+      invoice: generatedInvoice,
       email: customerEmail,
-      smtpResponse: info.response,
-      accepted: info.accepted,
+      smtpResponse: acceptInfo?.response,
       totalAmount: totalCostNum,
-      previewUrl: previewUrl || null,
-      message: `ATR approved and Invoice #${invoiceNo} sent to ${customerEmail}`
+      message: generatedInvoice
+        ? `Corporate request accepted! Acceptance email and Per-Service PDF Invoice #${generatedInvoice.invoice_number} sent to ${customerEmail}.`
+        : `Corporate request accepted! Acceptance notification sent to ${customerEmail}. Shipment queued for ${billingConfig.invoice_frequency} consolidated invoice.`
     });
   } catch (err) {
-    console.error('Error sending ATR invoice email:', err);
-    return res.status(500).json({ error: 'Server error while sending ATR invoice email: ' + err.message });
+    console.error('Error in /api/atr/approve-invoice:', err);
+    return res.status(500).json({ error: 'Server error while approving corporate request: ' + err.message });
   }
 });
 
 // -------------------------------------------------------
-// 1. POST /api/delivery/accept — Staff/Admin accepts a personal delivery & sends Invoice email
+// 1. POST /api/delivery/accept — Staff/Admin accepts a personal delivery
+//    Generates an individual Personal Customer Invoice (once per request) with PDF attachment
 // -------------------------------------------------------
 app.post('/api/delivery/accept', async (req, res) => {
   const { pdId, acceptedBy, status: targetStatus, overrideEmail } = req.body;
@@ -1481,27 +1413,23 @@ app.post('/api/delivery/accept', async (req, res) => {
     const scheduleToken = pd.schedule_token || generateToken();
 
     // Use pinned coordinates if present
-    let pickupLat = pd.pickup_lat ? Number(pd.pickup_lat) : null;
-    let pickupLng = pd.pickup_lng ? Number(pd.pickup_lng) : null;
-    let dropLat = pd.drop_lat ? Number(pd.drop_lat) : null;
-    let dropLng = pd.drop_lng ? Number(pd.drop_lng) : null;
+    const pickupLat = pd.pickup_lat ? Number(pd.pickup_lat) : null;
+    const pickupLng = pd.pickup_lng ? Number(pd.pickup_lng) : null;
+    const dropLat = pd.drop_lat ? Number(pd.drop_lat) : null;
+    const dropLng = pd.drop_lng ? Number(pd.drop_lng) : null;
 
     // Calculate route distance and invoice amounts
-    let distanceKm = 5.0; // default standard distance in km when coordinates aren't pinned
+    let distanceKm = 5.0;
     if (pickupLat && pickupLng && dropLat && dropLng) {
       const straightDist = haversineDistance(pickupLat, pickupLng, dropLat, dropLng);
       distanceKm = Math.max(1.5, parseFloat((straightDist * 1.25).toFixed(1)));
     }
 
     const livePricing = getPricingRates();
-    const baseFee = Number(livePricing.personalBaseFee) || 250; // Base pickup & handling fee in LKR
-    const perKmRate = Number(livePricing.personalPerKmRate) || 60; // LKR per km
+    const baseFee = Number(livePricing.personalBaseFee) || 250;
+    const perKmRate = Number(livePricing.personalPerKmRate) || 60;
     const distanceCharge = Math.round(distanceKm * perKmRate);
     const calculatedTotal = pd.cost ? Number(pd.cost) : (baseFee + distanceCharge);
-
-    const formattedBaseFee = baseFee.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const formattedDistCharge = distanceCharge.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const formattedTotal = calculatedTotal.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     // Update the delivery status in Supabase
     const updateBody = {
@@ -1520,195 +1448,440 @@ app.post('/api/delivery/accept', async (req, res) => {
       }
     );
 
-    // Construct Gmail-clickable scheduling link (127.0.0.1.nip.io avoids Gmail stripping localhost links)
     const scheduleUrl = `http://127.0.0.1.nip.io:${port}/api/delivery/schedule/${scheduleToken}`;
-    const invoiceNo = `INV-PD-${new Date().getFullYear()}-${String(pd.pd_id).padStart(4, '0')}`;
-    const issueDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    const formattedDate = pd.requested_date
-      ? new Date(pd.requested_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-      : 'N/A';
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-      </head>
-      <body style="font-family: Arial, Helvetica, sans-serif; background-color: #f3f4f6; padding: 24px; color: #1f2937; margin: 0;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 640px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0;">
-          <!-- Header -->
-          <tr>
-            <td bgcolor="#ea580c" style="background-color: #ea580c; color: #ffffff; padding: 28px;">
-              <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td>
-                    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff;">S&amp;C COURIER SERVICES</h1>
-                    <p style="margin: 4px 0 0 0; font-size: 13px; color: #ffedd5;">Personal Package Delivery Invoice</p>
-                  </td>
-                  <td align="right">
-                    <span style="display: inline-block; background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">
-                      ACCEPTED &amp; INVOICED
-                    </span>
-                    <p style="margin: 6px 0 0 0; font-size: 13px; color: #ffffff; font-weight: 600;">#${invoiceNo}</p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- Content -->
-          <tr>
-            <td style="padding: 28px;">
-              <p style="font-size: 16px; font-weight: 600; color: #111827; margin: 0 0 8px 0;">Hello ${pd.sender_name || 'Valued Customer'},</p>
-              <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px 0;">
-                Great news! Your personal delivery request (<strong>PD-${pd.pd_id}</strong>) has been <strong>accepted</strong>. Please find your official delivery invoice and order breakdown below.
-              </p>
-
-              <!-- Billed To & Invoice Meta -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;">
-                <tr>
-                  <td width="50%" valign="top" style="padding: 16px; border-right: 1px solid #e2e8f0;">
-                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Billed To (Sender)</div>
-                    <div style="font-size: 14px; font-weight: 700; color: #0f172a;">${pd.sender_name || 'Customer'}</div>
-                    <div style="font-size: 13px; color: #334155; margin-top: 2px;">Phone: ${pd.sender_phone || 'N/A'}</div>
-                    <div style="font-size: 13px; color: #475569; margin-top: 2px;">${pd.cust_email}</div>
-                  </td>
-                  <td width="50%" valign="top" style="padding: 16px;">
-                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Invoice Details</div>
-                    <div style="font-size: 13px; color: #334155;"><strong>Invoice No:</strong> ${invoiceNo}</div>
-                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Issue Date:</strong> ${issueDate}</div>
-                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Order Ref:</strong> PD-${pd.pd_id}</div>
-                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Approved By:</strong> ${acceptedBy}</div>
-                  </td>
-                </tr>
-              </table>
-
-              <!-- Shipment Details -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px; border-collapse: collapse;">
-                <tr>
-                  <td colspan="2" style="padding: 10px 12px; background-color: #f1f5f9; font-size: 12px; font-weight: 700; text-transform: uppercase; color: #334155; border-radius: 6px 6px 0 0;">
-                    Shipment &amp; Route Details
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b; width: 35%;">Pickup Location</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${pd.pickup_address}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Drop-off Location</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${pd.drop_address}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Receiver</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${pd.receiver_name} (${pd.receiver_phone || 'N/A'})</td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Package Type &amp; Weight</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">
-                    ${pd.item_type || 'Standard Parcel'}${pd.item_weight ? ` (${pd.item_weight})` : ''}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Requested Date</td>
-                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${formattedDate} ${pd.requested_time ? `at ${pd.requested_time}` : ''}</td>
-                </tr>
-              </table>
-
-              <!-- Itemized Invoice Breakdown -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 28px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden;">
-                <tr bgcolor="#0f172a" style="background-color: #0f172a; color: #ffffff;">
-                  <th align="left" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Description</th>
-                  <th align="center" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Qty / Dist</th>
-                  <th align="right" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Rate</th>
-                  <th align="right" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Amount (LKR)</th>
-                </tr>
-                <tr>
-                  <td style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">
-                    <strong>Base Courier Pickup &amp; Handling Fee</strong>
-                  </td>
-                  <td align="center" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">1</td>
-                  <td align="right" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">LKR ${formattedBaseFee}</td>
-                  <td align="right" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: 600; color: #0f172a;">LKR ${formattedBaseFee}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">
-                    <strong>Route Distance Charge (${pd.item_type || 'Parcel'})</strong>
-                  </td>
-                  <td align="center" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">${distanceKm} km</td>
-                  <td align="right" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">LKR ${perKmRate}.00/km</td>
-                  <td align="right" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: 600; color: #0f172a;">LKR ${formattedDistCharge}</td>
-                </tr>
-                <tr bgcolor="#f8fafc" style="background-color: #f8fafc;">
-                  <td colspan="3" align="right" style="padding: 14px 12px; font-size: 15px; font-weight: 700; color: #0f172a;">Total Invoice Amount:</td>
-                  <td align="right" style="padding: 14px 12px; font-size: 16px; font-weight: 700; color: #ea580c;">LKR ${formattedTotal}</td>
-                </tr>
-              </table>
-
-              <!-- Optional Schedule CTA -->
-              <div style="text-align: center; margin: 20px 0 10px 0;">
-                <p style="font-size: 13px; color: #475569; margin: 0 0 14px 0;">
-                  Need to confirm or adjust your preferred delivery time slot?
-                </p>
-                <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
-                  <tr>
-                    <td align="center" bgcolor="#7c3aed" style="background-color: #7c3aed; border-radius: 8px;">
-                      <a href="${scheduleUrl}" target="_blank" style="display: inline-block; padding: 12px 28px; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; color: #ffffff !important; text-decoration: none; border-radius: 8px; background-color: #7c3aed;">
-                        Confirm / Schedule Delivery Slot
-                      </a>
-                    </td>
-                  </tr>
-                </table>
-              </div>
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td bgcolor="#f8fafc" style="background-color: #f8fafc; padding: 18px 28px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0;">
-              This is an official computer-generated invoice from S&amp;C Courier Services.<br/>
-              &copy; ${new Date().getFullYear()} S&amp;C Courier Services. All rights reserved.
-            </td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
-
-    const recipientEmail = (overrideEmail && overrideEmail.trim()) || pd.cust_email;
-    const mailOptions = {
-      from: `"SC Courier Services" <${process.env.SMTP_USER || 'sccourier369@gmail.com'}>`,
-      to: recipientEmail,
-      subject: `Invoice #${invoiceNo} — Personal Delivery Accepted (PD-${pd.pd_id})`,
-      html: htmlContent,
-    };
 
     if (!transporter) {
       await setupTransporter();
     }
-    const info = await transporter.sendMail(mailOptions);
-    const previewUrl = nodemailer.getTestMessageUrl(info);
-    if (previewUrl) {
-      console.log(`Invoice & Scheduling Email Preview URL: ${previewUrl}`);
-    }
 
-    console.log(`Personal Delivery Invoice email sent to ${recipientEmail} (${invoiceNo}) | SMTP response: ${info.response}`);
+    // Generate individual Personal Customer Invoice (once per request) + attach PDF + send email
+    const { invoice, alreadyExisted, emailResult } = await createOrGetPersonalInvoice({
+      pool,
+      transporter,
+      pd: { ...pd, status: updateBody.status },
+      customerObj: null,
+      baseFee,
+      perKmRate,
+      distanceKm,
+      totalAmount: calculatedTotal,
+      acceptedBy,
+      scheduleUrl,
+      overrideEmail
+    });
 
     res.json({
       success: true,
-      invoiceNo,
-      email: recipientEmail,
-      smtpResponse: info.response,
-      accepted: info.accepted,
+      invoiceNo: invoice.invoice_number,
+      invoice,
+      alreadyExisted,
+      email: invoice.billing_email,
+      emailStatus: invoice.email_status,
       totalAmount: calculatedTotal,
-      message: `Delivery accepted and Invoice #${invoiceNo} sent to ${recipientEmail}!`,
-      scheduleUrl,
-      previewUrl
+      message: `Delivery accepted and PDF Invoice #${invoice.invoice_number} sent to ${invoice.billing_email}!`,
+      scheduleUrl
     });
   } catch (err) {
     console.error('Error accepting delivery:', err);
-    res.status(500).json({ error: 'Server error while accepting delivery' });
+    res.status(500).json({ error: 'Server error while accepting delivery: ' + err.message });
   }
 });
+
+// -------------------------------------------------------
+// INVOICE MANAGEMENT & AUTOMATED CORPORATE BILLING ENDPOINTS
+// -------------------------------------------------------
+
+// GET /api/invoices — List all generated invoices with optional filters + summary metrics
+app.get('/api/invoices', async (req, res) => {
+  try {
+    const store = loadStore();
+    const { customer, customerType, paymentStatus, emailStatus, billingPeriod, date } = req.query;
+
+    let list = [...store.invoices];
+
+    if (customerType && customerType !== 'all') {
+      list = list.filter(i => String(i.customer_type || '').toLowerCase() === customerType.toLowerCase());
+    }
+    if (paymentStatus && paymentStatus !== 'all') {
+      list = list.filter(i => String(i.payment_status || '').toLowerCase() === paymentStatus.toLowerCase());
+    }
+    if (emailStatus && emailStatus !== 'all') {
+      list = list.filter(i => String(i.email_status || '').toLowerCase() === emailStatus.toLowerCase());
+    }
+    if (customer && customer.trim()) {
+      const q = customer.trim().toLowerCase();
+      list = list.filter(i =>
+        String(i.customer_name || '').toLowerCase().includes(q) ||
+        String(i.company_name || '').toLowerCase().includes(q) ||
+        String(i.customer_email || '').toLowerCase().includes(q) ||
+        String(i.billing_email || '').toLowerCase().includes(q) ||
+        String(i.invoice_number || '').toLowerCase().includes(q)
+      );
+    }
+    if (billingPeriod && billingPeriod.trim()) {
+      const bp = billingPeriod.trim().toLowerCase();
+      list = list.filter(i => String(i.billing_period_label || '').toLowerCase().includes(bp));
+    }
+    if (date && date.trim()) {
+      list = list.filter(i => i.issue_date === date.trim());
+    }
+
+    res.json({
+      invoices: list,
+      corporateConfigs: Object.values(store.corporateConfigs),
+      invoicedRequestKeys: store.invoicedRequestKeys,
+      lastSchedulerRun: store.lastSchedulerRun
+    });
+  } catch (err) {
+    console.error('Error fetching invoices:', err);
+    res.status(500).json({ error: 'Failed to load invoices: ' + err.message });
+  }
+});
+
+// GET /api/invoices/:invoiceId/pdf — Download PDF Invoice
+app.get('/api/invoices/:invoiceId/pdf', (req, res) => {
+  try {
+    const { invoiceId } = req.params;
+    const store = loadStore();
+    const invoice = store.invoices.find(
+      i => i.invoice_id === invoiceId || i.invoice_number === invoiceId
+    );
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const pdfBuffer = generateInvoicePdfBuffer(invoice);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Invoice-${invoice.invoice_number}.pdf"`);
+    return res.send(pdfBuffer);
+  } catch (err) {
+    console.error('Error generating PDF download:', err);
+    return res.status(500).json({ error: 'Failed to generate PDF: ' + err.message });
+  }
+});
+
+// POST /api/invoices/:invoiceId/resend — Resend or retry emailing a PDF invoice
+app.post('/api/invoices/:invoiceId/resend', async (req, res) => {
+  try {
+    const { invoiceId } = req.params;
+    const { overrideEmail } = req.body || {};
+    const store = loadStore();
+    const invoice = store.invoices.find(
+      i => i.invoice_id === invoiceId || i.invoice_number === invoiceId
+    );
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    if (overrideEmail && overrideEmail.trim()) {
+      invoice.billing_email = overrideEmail.trim();
+    }
+
+    if (!transporter) {
+      await setupTransporter();
+    }
+
+    const sendRes = await sendInvoiceEmailWithPdf(transporter, pool, invoice);
+    if (!sendRes.success) {
+      return res.status(500).json({ error: sendRes.error || 'Failed to resend invoice email', invoice: sendRes.invoice });
+    }
+
+    return res.json({
+      success: true,
+      invoice: sendRes.invoice,
+      message: `Invoice #${invoice.invoice_number} PDF emailed to ${invoice.billing_email}`
+    });
+  } catch (err) {
+    console.error('Error resending invoice:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/invoices/:invoiceId/payment — Update payment status (Unpaid, Partially Paid, Paid)
+app.patch('/api/invoices/:invoiceId/payment', async (req, res) => {
+  try {
+    const { invoiceId } = req.params;
+    const { payment_status, amount_paid, updatedBy } = req.body || {};
+    const store = loadStore();
+    const idx = store.invoices.findIndex(
+      i => i.invoice_id === invoiceId || i.invoice_number === invoiceId
+    );
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const inv = store.invoices[idx];
+    const validStatuses = ['Unpaid', 'Partially Paid', 'Paid'];
+    if (payment_status && validStatuses.includes(payment_status)) {
+      inv.payment_status = payment_status;
+    }
+    if (amount_paid !== undefined) {
+      inv.amount_paid = Number(amount_paid);
+    } else if (payment_status === 'Paid') {
+      inv.amount_paid = Number(inv.total_payable);
+    } else if (payment_status === 'Unpaid') {
+      inv.amount_paid = 0;
+    }
+
+    inv.audit_log = inv.audit_log || [];
+    inv.audit_log.push({
+      timestamp: new Date().toISOString(),
+      action: 'PAYMENT_STATUS_UPDATED',
+      actor: updatedBy || 'Admin',
+      note: `Payment status set to ${inv.payment_status} (Paid: LKR ${inv.amount_paid})`
+    });
+
+    store.invoices[idx] = inv;
+    saveStore(store);
+    await syncInvoiceToDb(pool, inv);
+
+    return res.json({ success: true, invoice: inv });
+  } catch (err) {
+    console.error('Error updating payment status:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET & POST /api/corporate-billing/config — Configure Corporate Customer Invoice Frequency & Billing Details
+app.get('/api/corporate-billing/configs', async (req, res) => {
+  try {
+    const store = loadStore();
+    return res.json({ configs: Object.values(store.corporateConfigs) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/corporate-billing/config', async (req, res) => {
+  try {
+    const config = await saveCorporateBillingConfig(pool, req.body || {});
+    return res.json({ success: true, config });
+  } catch (err) {
+    console.error('Error saving corporate billing config:', err);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Helper to run Automated Corporate Invoice Generation across all Corporate Customers
+async function runCorporateBillingCycleEngine({
+  targetCustomerEmail = null,
+  periodMode = 'auto', // 'first_half' (1st-15th), 'second_half' (16th-end), 'full_month' (1st-end), 'all_uninvoiced', 'auto'
+  yearMonth = null,
+  triggeredBy = 'Automated Scheduler'
+} = {}) {
+  const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
+  const livePricing = getPricingRates();
+  const store = loadStore();
+
+  // 1. Fetch all ATR requests, corporate customers, and departments
+  const [atrRes, custRes, depRes] = await Promise.all([
+    fetch(`${sbUrl}/rest/v1/atr?select=*&order=atr_id.asc`, { headers: sbHeaders }),
+    fetch(`${sbUrl}/rest/v1/customer?select=*`, { headers: sbHeaders }),
+    fetch(`${sbUrl}/rest/v1/department?select=dep_id,dep_name,company(comp_name,comp_address,comp_phoneno)`, { headers: sbHeaders })
+  ]);
+
+  const allAtrs = atrRes.ok ? await atrRes.json() : [];
+  const allCustomers = custRes.ok ? await custRes.json() : [];
+  const allDepts = depRes.ok ? await depRes.json() : [];
+
+  const deptMap = {};
+  if (Array.isArray(allDepts)) {
+    allDepts.forEach(d => {
+      deptMap[d.dep_id] = {
+        dep_name: d.dep_name,
+        comp_name: d.company?.comp_name,
+        comp_address: d.company?.comp_address,
+        comp_phoneno: d.company?.comp_phoneno
+      };
+    });
+  }
+
+  const custMap = {};
+  if (Array.isArray(allCustomers)) {
+    allCustomers.forEach(c => {
+      if (c.cust_email) custMap[c.cust_email.toLowerCase()] = c;
+    });
+  }
+
+  // Group billable uninvoiced ATRs by corporate customer email
+  const billableStatuses = ['approved', 'accepted', 'assigned', 'in transit', 'completed', 'delivered'];
+  const groupedByEmail = {};
+
+  for (const atr of (Array.isArray(allAtrs) ? allAtrs : [])) {
+    const email = (atr.cust_email || '').trim();
+    if (!email) continue;
+    if (targetCustomerEmail && email.toLowerCase() !== targetCustomerEmail.toLowerCase()) continue;
+
+    const reqKey = `atr-${atr.atr_id}`;
+    if (store.invoicedRequestKeys[reqKey]) continue;
+
+    const st = String(atr.status || '').toLowerCase();
+    if (!billableStatuses.includes(st)) continue;
+
+    const key = email.toLowerCase();
+    if (!groupedByEmail[key]) groupedByEmail[key] = [];
+    groupedByEmail[key].push(atr);
+  }
+
+  if (!transporter) {
+    await setupTransporter();
+  }
+
+  const generatedInvoices = [];
+  const skippedCustomers = [];
+
+  for (const [emailKey, atrs] of Object.entries(groupedByEmail)) {
+    const sampleAtr = atrs[0];
+    const custRow = custMap[emailKey];
+    const deptInfo = deptMap[sampleAtr.dep_id];
+    const customerName = custRow?.cust_name || sampleAtr.principal_passenger_name || 'Corporate Partner';
+
+    const config = getCorporateBillingConfig(sampleAtr.cust_email, {
+      cust_name: customerName,
+      dept_comp_name: deptInfo?.comp_name || '',
+      department_name: deptInfo?.dep_name || 'Operations',
+      billing_email: sampleAtr.cust_email,
+      billing_address: custRow?.cust_address || deptInfo?.comp_address || 'Colombo, Sri Lanka',
+      customer_phone: custRow?.cust_phoneno || deptInfo?.comp_phoneno || 'N/A'
+    });
+
+    // Determine if today is this customer's scheduled cycle day when running in 'auto' mode
+    const now = new Date();
+    const todayDay = now.getDate();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
+    const lastDayOfCurrentMonth = getLastDayOfMonth(currentYear, currentMonth);
+    const freq = config.invoice_frequency || 'Monthly';
+    const prefDay = Number(config.preferred_invoice_day) || 1;
+
+    let period;
+    if (periodMode === 'first_half') {
+      period = computeBillingPeriod('Every 15 Days', yearMonth, 'first');
+    } else if (periodMode === 'second_half') {
+      period = computeBillingPeriod('Every 15 Days', yearMonth, 'second');
+    } else if (periodMode === 'full_month') {
+      period = computeBillingPeriod('Monthly', yearMonth);
+    } else if (periodMode === 'auto') {
+      // Automatic Cycle-Day Check per Customer's Configured Frequency
+      if (freq === 'Every 15 Days') {
+        if (todayDay === 15 || todayDay === 16) {
+          // End of First 15-Day Billing Period (1st–15th)
+          period = computeBillingPeriod('Every 15 Days', yearMonth, 'first');
+        } else if (todayDay === lastDayOfCurrentMonth) {
+          // End of Second 15-Day Billing Period (16th–Last Day of current month)
+          period = computeBillingPeriod('Every 15 Days', yearMonth, 'second');
+        } else if (todayDay === 1) {
+          // 1st of new month -> bill previous month's 16th–Last Day
+          const prevDate = new Date(currentYear, currentMonth - 2, 1);
+          const prevYm = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+          period = computeBillingPeriod('Every 15 Days', prevYm, 'second');
+        } else {
+          skippedCustomers.push({ email: sampleAtr.cust_email, reason: `Next 15-day cycle date not reached yet (Today: ${todayDay})` });
+          continue;
+        }
+      } else if (freq === 'Monthly') {
+        if (todayDay === lastDayOfCurrentMonth || todayDay === prefDay) {
+          // If running on the 1st (or early preferred day <= 5), bill the just-completed month if requests are from previous month, or current month
+          period = computeBillingPeriod('Monthly', yearMonth);
+        } else {
+          skippedCustomers.push({ email: sampleAtr.cust_email, reason: `Monthly billing day (${prefDay} or month-end ${lastDayOfCurrentMonth}) not reached yet` });
+          continue;
+        }
+      } else {
+        // 'Per Service' — bill immediately
+        period = computeBillingPeriod('Per Service', yearMonth);
+      }
+    } else {
+      period = computeBillingPeriod(freq, yearMonth, 'auto');
+    }
+
+    // Filter ATRs by date window unless periodMode === 'all_uninvoiced'
+    let matchingAtrs = atrs;
+    if (periodMode !== 'all_uninvoiced' && periodMode !== 'auto') {
+      matchingAtrs = atrs.filter(a => {
+        const d = a.required_date || (a.created_at ? a.created_at.split('T')[0] : '');
+        if (!d) return true;
+        return d >= period.startDate && d <= period.endDate;
+      });
+      // If none matched the strict date window but admin triggered for this period, fall back to all uninvoiced for convenience
+      if (matchingAtrs.length === 0 && triggeredBy !== 'Automated Scheduler') {
+        matchingAtrs = atrs;
+      }
+    }
+
+    if (matchingAtrs.length === 0) {
+      skippedCustomers.push({ email: sampleAtr.cust_email, reason: 'No matching requests in period' });
+      continue;
+    }
+
+    const genRes = await generateCorporateInvoiceForRequests({
+      pool,
+      transporter,
+      custEmail: sampleAtr.cust_email,
+      companyName: config.company_name,
+      departmentName: config.department_name,
+      customerName: config.customer_name || customerName,
+      billingConfig: config,
+      atrRows: matchingAtrs,
+      deptMap,
+      pricingRates: livePricing,
+      billingPeriodStart: period.startDate,
+      billingPeriodEnd: period.endDate,
+      billingPeriodLabel: `${period.startDate} to ${period.endDate}`,
+      triggeredBy
+    });
+
+    if (genRes.generated) {
+      generatedInvoices.push(genRes.invoice);
+    } else {
+      skippedCustomers.push({ email: sampleAtr.cust_email, reason: genRes.reason });
+    }
+  }
+
+  const latestStore = loadStore();
+  latestStore.lastSchedulerRun = new Date().toISOString();
+  saveStore(latestStore);
+
+  return {
+    success: true,
+    generatedCount: generatedInvoices.length,
+    generatedInvoices,
+    skippedCustomers,
+    lastSchedulerRun: latestStore.lastSchedulerRun
+  };
+}
+
+// POST /api/corporate-billing/run-cycle — Trigger Automated Corporate Invoice Generation
+app.post('/api/corporate-billing/run-cycle', async (req, res) => {
+  try {
+    const { customerEmail, periodMode, yearMonth, triggeredBy } = req.body || {};
+    const result = await runCorporateBillingCycleEngine({
+      targetCustomerEmail: customerEmail || null,
+      periodMode: periodMode || 'all_uninvoiced',
+      yearMonth: yearMonth || null,
+      triggeredBy: triggeredBy || 'Admin Manual Trigger'
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('Error running corporate billing cycle:', err);
+    return res.status(500).json({ error: 'Failed to run corporate billing cycle: ' + err.message });
+  }
+});
+
+// Background Scheduled Check for Corporate Billing Cycles:
+// Runs automatically on startup (after 10s) and every 1 hour to check if today matches any Corporate Customer's billing cycle date (15th, 16th, Month-End, 1st, or customer's preferred_invoice_day).
+const runScheduledCycleCheck = async () => {
+  try {
+    await runCorporateBillingCycleEngine({
+      periodMode: 'auto',
+      triggeredBy: 'Automated Billing Cycle Scheduler'
+    });
+  } catch (schedErr) {
+    console.warn('Scheduled billing check note:', schedErr.message);
+  }
+};
+
+setTimeout(runScheduledCycleCheck, 10 * 1000);
+setInterval(runScheduledCycleCheck, 60 * 60 * 1000);
 
 // -------------------------------------------------------
 // 2. GET /api/delivery/schedule/:token — Serve the scheduling page
