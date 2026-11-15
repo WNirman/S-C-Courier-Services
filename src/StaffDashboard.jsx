@@ -972,6 +972,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                             const pricing = getCachedPricingRates();
                             const orderActState = resolveOrderActualsState(isAtr ? 'atr' : 'pd', item.rawItem, lockedActualsMap, pricing);
                             const isActualsLocked = orderActState.isLocked;
+                            const hasActuals = isActualsLocked || orderActState.actDist !== null || orderActState.actCost !== null;
                             const canRecordActuals = !isActualsLocked && (
                                 isCompleted ||
                                 (isAtr
