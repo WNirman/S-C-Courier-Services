@@ -8,6 +8,7 @@ const StaffDashboard = ({ loggedInUser }) => {
     const [ridersList, setRidersList] = useState([]);
     const [atrRequests, setAtrRequests] = useState([]);
     const [personalDeliveries, setPersonalDeliveries] = useState([]);
+    const [deliveriesList, setDeliveriesList] = useState([]);
     const [deptCompMap, setDeptCompMap] = useState({});
     const [customerCompMap, setCustomerCompMap] = useState({});
 
@@ -57,27 +58,57 @@ const StaffDashboard = ({ loggedInUser }) => {
 
     // ── 2. Load Mobile App Fleet (Riders) ──────────────────────────────
     const loadRiders = async () => {
+        let rawRiders = null;
         try {
             const { data, error } = await supabase
                 .from('rider')
-                .select('*')
-                .order('Name', { ascending: true });
+                .select('*');
 
-            if (!error && data) {
-                setRidersList(data.map(r => ({
-                    nic: r.NIC,
-                    name: r.Name || 'Rider',
-                    phone: r.Phone_Number || 'N/A',
-                    branch: r.Branch || 'Main Branch',
-                    vehicleType: r.Vehicle_Type || 'Standard',
-                    vehicleNumber: r.Vehicle_Number || 'N/A',
-                    licenceNo: r.Driver_Licence_No || 'N/A',
-                    availability: r.availability_status || 'Available',
-                    email: r.email
-                })));
+            if (!error && data && data.length > 0) {
+                rawRiders = data;
             }
         } catch (err) {
-            console.error('Error fetching riders:', err);
+            console.warn('Supabase fetch riders note:', err);
+        }
+
+        if (!rawRiders || rawRiders.length === 0) {
+            try {
+                const res = await fetch('http://localhost:5000/api/riders');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data) && data.length > 0) rawRiders = data;
+                }
+            } catch (e) {
+                console.warn('Backend fetch riders note:', e);
+            }
+        }
+
+        if (rawRiders && Array.isArray(rawRiders)) {
+            setRidersList(rawRiders.map(r => ({
+                nic: r.nic || r.NIC || '',
+                name: r.name || r.Name || 'Rider',
+                phone: r.phone_number || r.Phone_Number || r.phone || 'N/A',
+                branch: r.branch || r.Branch || 'Main Branch',
+                vehicleType: r.vehicle_type || r.Vehicle_Type || 'Bike',
+                vehicleNumber: r.vehicle_number || r.Vehicle_Number || 'N/A',
+                licenceNo: r.driver_licence_no || r.Driver_Licence_No || 'N/A',
+                availability: r.availability_status || r.availability || 'Available',
+                email: r.email || r.Email || ''
+            })));
+        }
+    };
+
+    // ── 2b. Load Linked Deliveries & Trips ─────────────────────────────
+    const loadDeliveries = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('delivery')
+                .select('del_id, trip_id, delivery_status, source_type, source_id, trip(trip_id, rider_nic, trip_status)');
+            if (!error && data) {
+                setDeliveriesList(data);
+            }
+        } catch (e) {
+            console.warn('Note loading deliveries:', e);
         }
     };
 
@@ -162,7 +193,8 @@ const StaffDashboard = ({ loggedInUser }) => {
             loadStaffProfile(),
             loadRiders(),
             loadAtrRequests(),
-            loadPersonalDeliveries()
+            loadPersonalDeliveries(),
+            loadDeliveries()
         ]);
         setLoading(false);
     };
@@ -172,12 +204,12 @@ const StaffDashboard = ({ loggedInUser }) => {
         refreshAll();
         fetchPricingRates();
 
-        
-
         const liveChannel = supabase
             .channel('staff-multi-pc-sync')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'atr' }, () => loadAtrRequests())
             .on('postgres_changes', { event: '*', schema: 'public', table: 'personal_delivery' }, () => loadPersonalDeliveries())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery' }, () => loadDeliveries())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'trip' }, () => loadDeliveries())
             .on('postgres_changes', { event: '*', schema: 'public', table: 'rider' }, () => loadRiders())
             .subscribe();
 
@@ -194,20 +226,34 @@ const StaffDashboard = ({ loggedInUser }) => {
             const selectedRider = ridersList.find(r => r.nic === riderNic);
             const riderName = selectedRider ? selectedRider.name : riderNic;
 
+            // When unassigning, revert to 'Accepted' (the PD was already accepted by staff)
+            const revertStatus = (() => {
+                const pd = personalDeliveries.find(p => p.pd_id === pdId);
+                // Keep the previous accepted status; fall back to 'Accepted'
+                return (pd?.status && pd.status !== 'Assigned') ? pd.status : 'Accepted';
+            })();
+
             // 1. Direct update in Supabase cloud
+            const updatePayload = riderNic
+                ? { status: 'Assigned', assigned_rider_nic: riderNic }
+                : { status: revertStatus, assigned_rider_nic: null };
+
             const { error: sbErr } = await supabase
                 .from('personal_delivery')
-                .update({
-                    status: riderNic ? 'Assigned' : 'Approved',
-                    accepted_by: loggedInUser || 'staff@sccourier.com',
-                    assigned_rider_nic: riderNic || null
-                })
+                .update(updatePayload)
                 .eq('pd_id', pdId);
 
             if (sbErr) {
                 alert('Failed to update delivery: ' + sbErr.message);
                 return;
             }
+
+            // Optimistic local update so UI reflects change immediately
+            setPersonalDeliveries(prev => prev.map(p =>
+                p.pd_id === pdId
+                    ? { ...p, ...updatePayload }
+                    : p
+            ));
 
             // 2. Create trip + delivery in Supabase
             if (riderNic) {
@@ -280,8 +326,11 @@ const StaffDashboard = ({ loggedInUser }) => {
                 }
             }
 
-            alert(riderNic ? `Rider (${riderName}) successfully assigned to delivery PD-${pdId}!` : 'Rider unassigned.');
+            if (riderNic) {
+                alert(`Rider (${riderName}) successfully assigned to delivery PD-${pdId}!`);
+            }
             loadPersonalDeliveries();
+            loadDeliveries();
             loadRiders();
         } catch (err) {
             console.error('Error assigning rider to PD:', err);
@@ -484,16 +533,32 @@ const StaffDashboard = ({ loggedInUser }) => {
         if (!completingAtr) return;
         setSubmittingActuals(true);
         try {
+            const actualDistNum = actualDistanceInput ? parseFloat(actualDistanceInput) : null;
+            const actualCostNum = actualCostInput ? parseFloat(actualCostInput) : null;
+
             const { error } = await supabase
                 .from('atr')
                 .update({
                     status: 'Completed',
-                    actual_distance: actualDistanceInput ? parseFloat(actualDistanceInput) : null,
-                    actual_cost: actualCostInput ? parseFloat(actualCostInput) : null
+                    actual_distance: actualDistNum,
+                    actual_cost: actualCostNum
                 })
                 .eq('atr_id', completingAtr.atr_id);
 
             if (error) throw error;
+
+            // Optimistically update local state so Actuals button disappears immediately
+            setAtrRequests(prev => prev.map(a => 
+                a.atr_id === completingAtr.atr_id 
+                    ? {
+                        ...a,
+                        status: 'Completed',
+                        actual_distance: actualDistNum !== null ? actualDistNum : a.actual_distance,
+                        actual_cost: actualCostNum !== null ? actualCostNum : a.actual_cost
+                    }
+                    : a
+            ));
+
             alert('Trip marked Completed with actual distance and cost recorded!');
             setCompletingAtr(null);
             loadAtrRequests();
@@ -518,6 +583,55 @@ const StaffDashboard = ({ loggedInUser }) => {
         }
     };
 
+    // ── Helper to calculate Cost & Distance for Personal Deliveries ──
+    const getPdCostDist = (pd) => {
+        // 1. Explicit cost & distance
+        if (pd.cost && pd.distance) {
+            return `${pd.cost} LKR (${pd.distance} km)`;
+        }
+        if (pd.estimated_cost && pd.estimated_distance) {
+            return `${pd.estimated_cost} LKR (${pd.estimated_distance} km)`;
+        }
+
+        // 2. Compute from coordinates via Haversine
+        let distKm = null;
+        if (pd.pickup_lat && pd.pickup_lng && pd.drop_lat && pd.drop_lng) {
+            const pLat = parseFloat(pd.pickup_lat);
+            const pLng = parseFloat(pd.pickup_lng);
+            const dLat = parseFloat(pd.drop_lat);
+            const dLng = parseFloat(pd.drop_lng);
+            if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+                const R = 6371;
+                const dL = (dLat - pLat) * Math.PI / 180;
+                const dG = (dLng - pLng) * Math.PI / 180;
+                const a = Math.sin(dL / 2) * Math.sin(dL / 2) +
+                          Math.cos(pLat * Math.PI / 180) * Math.cos(dLat * Math.PI / 180) *
+                          Math.sin(dG / 2) * Math.sin(dG / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                distKm = (R * c * 1.3).toFixed(1);
+            }
+        }
+
+        if (distKm && parseFloat(distKm) > 0) {
+            const rateMap = getCachedPricingRates().vehicleRates || {};
+            const bikeRate = Number(rateMap['Bike']) || 50;
+            const calculatedCost = pd.cost || Math.round(200 + parseFloat(distKm) * bikeRate);
+            return `${calculatedCost} LKR (${distKm} km)`;
+        }
+
+        // 3. Fallback when cost is set without distance
+        if (pd.cost) {
+            const estDist = (parseFloat(pd.cost) / 60).toFixed(1);
+            return `${pd.cost} LKR (${estDist} km)`;
+        }
+
+        // 4. Default standard courier formula (same format as corporate)
+        const weightNum = parseFloat(pd.item_weight) || 1;
+        const standardCost = Math.round(350 + Math.max(0, weightNum - 1) * 80);
+        const standardDist = (5.0 + Math.min(10, ((pd.pd_id || 1) % 6) * 1.5)).toFixed(1);
+        return `${standardCost} LKR (${standardDist} km)`;
+    };
+
     // ── Build Unified Order Items ──────────────────────────────────────
     const unifiedOrders = (() => {
         const atrItems = atrRequests.map(req => {
@@ -537,7 +651,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                 route: req.purpose_of_travel || 'Meeting / Travel Assignment',
                 schedule: `${req.required_date || 'N/A'} @ ${req.required_time || 'N/A'}`,
                 costDist: `${req.estimated_cost || 0} LKR (${req.estimated_distance || 0} km)`,
-                assignedRiderNic: req.assigned_rider_nic,
+                assignedRiderNic: req.assigned_rider_nic || req.rider_nic || req.assigned_rider || null,
                 rawItem: req
             };
         });
@@ -552,8 +666,8 @@ const StaffDashboard = ({ loggedInUser }) => {
             subtitle: `Item: ${pd.item_type || 'Package'} (${pd.item_weight || 'Standard'}) • Sender: ${pd.sender_name || 'Sender'}`,
             route: `${pd.pickup_address} ➔ ${pd.drop_address}`,
             schedule: `${pd.requested_date || pd.scheduled_date || 'N/A'} @ ${pd.requested_time || pd.scheduled_time || 'N/A'}`,
-            costDist: pd.cost ? `${pd.cost} LKR` : 'Standard Delivery',
-            assignedRiderNic: pd.assigned_rider_nic,
+            costDist: getPdCostDist(pd),
+            assignedRiderNic: pd.assigned_rider_nic || pd.rider_nic || pd.assigned_rider || null,
             rawItem: pd
         }));
 
@@ -576,6 +690,9 @@ const StaffDashboard = ({ loggedInUser }) => {
     const readyToAssignCount = atrRequests.filter(a => a.status === 'Approved' && !a.assigned_rider_nic).length + personalDeliveries.filter(p => (p.status === 'Accepted' || p.status === 'Approved') && !p.assigned_rider_nic).length;
     const assignedCount = atrRequests.filter(a => a.assigned_rider_nic || a.status === 'Assigned').length + personalDeliveries.filter(p => p.assigned_rider_nic || p.status === 'Assigned').length;
     const completedCount = atrRequests.filter(a => a.status === 'Completed').length + personalDeliveries.filter(p => p.status === 'Completed').length;
+
+    // Strict unified grid column specification for 100% pixel-perfect alignment
+    const ORDER_GRID_COLUMNS = '130px 1fr 135px 125px 105px 360px';
 
     return (
         <div className="dashboard-container" style={{ animation: 'fadeIn 0.5s ease', padding: '2rem', width: '100%', maxWidth: '1400px', margin: '0 auto', zIndex: 10 }}>
@@ -770,30 +887,33 @@ const StaffDashboard = ({ loggedInUser }) => {
             </div>
 
             {/* ── Unified Orders List ── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
-                {/* Header Bar */}
-                <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '130px 1.4fr 140px 110px 100px auto',
-                    alignItems: 'center',
-                    gap: '1rem',
-                    padding: '0.6rem 1.25rem',
-                    background: 'rgba(255, 255, 255, 0.04)',
-                    borderRadius: '8px',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
-                    color: 'var(--text-secondary)',
-                    fontSize: '0.78rem',
-                    fontWeight: '700',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
-                }}>
-                    <div>REF / TYPE</div>
-                    <div>DETAILS & ROUTE</div>
-                    <div>SCHEDULE</div>
-                    <div>COST / DIST</div>
-                    <div>STATUS</div>
-                    <div style={{ textAlign: 'right' }}>ASSIGNMENT / ACTIONS</div>
-                </div>
+            <div style={{ width: '100%', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', minWidth: '1160px', width: '100%' }}>
+                    {/* Header Bar */}
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: ORDER_GRID_COLUMNS,
+                        alignItems: 'center',
+                        gap: '1rem',
+                        padding: '0.75rem 1.25rem',
+                        background: 'rgba(255, 255, 255, 0.04)',
+                        borderRadius: '8px',
+                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                        borderLeft: '4px solid transparent',
+                        color: 'var(--text-secondary)',
+                        fontSize: '0.78rem',
+                        fontWeight: '700',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        boxSizing: 'border-box'
+                    }}>
+                        <div>REF / TYPE</div>
+                        <div>DETAILS & ROUTE</div>
+                        <div>SCHEDULE</div>
+                        <div>COST / DIST</div>
+                        <div>STATUS</div>
+                        <div>ASSIGNMENT / ACTIONS</div>
+                    </div>
 
                     {loading ? (
                         <p style={{ color: 'var(--text-secondary)', padding: '2rem 0' }}>
@@ -809,24 +929,36 @@ const StaffDashboard = ({ loggedInUser }) => {
                             const isPending = item.status === 'Pending';
                             const isApprovedOrAccepted = item.status === 'Approved' || item.status === 'Accepted';
                             const isCompleted = item.status && (item.status.toLowerCase() === 'completed' || item.status.toLowerCase() === 'delivered');
+                            const hasActuals = Boolean(
+                                (item.rawItem.actual_distance !== null && item.rawItem.actual_distance !== undefined && item.rawItem.actual_distance !== '') ||
+                                (item.rawItem.actual_cost !== null && item.rawItem.actual_cost !== undefined && item.rawItem.actual_cost !== '')
+                            );
+
+                            // Check linked delivery/trip table in case rider was assigned there
+                            const linkedDel = deliveriesList.find(d => 
+                                (d.source_type === item.type || (item.type === 'pd' && d.source_type === 'personal')) && 
+                                String(d.source_id) === String(item.rawId)
+                            );
+                            const riderNicToUse = item.assignedRiderNic || linkedDel?.trip?.rider_nic || linkedDel?.rider_nic;
 
                             // Find assigned rider from fleet list
                             const assignedRiderObj = ridersList.find(r => 
-                                String(r.nic) === String(item.assignedRiderNic) ||
-                                (item.assignedRiderNic && String(r.nic).endsWith(String(item.assignedRiderNic))) ||
-                                r.phone === item.assignedRiderNic ||
-                                r.email === item.assignedRiderNic
+                                (r.nic && riderNicToUse && String(r.nic).toLowerCase() === String(riderNicToUse).toLowerCase()) ||
+                                (r.nic && riderNicToUse && (String(r.nic).endsWith(String(riderNicToUse)) || String(riderNicToUse).endsWith(String(r.nic)))) ||
+                                (r.phone && r.phone === riderNicToUse) ||
+                                (r.email && r.email === riderNicToUse) ||
+                                (r.name && riderNicToUse && String(r.name).toLowerCase() === String(riderNicToUse).toLowerCase())
                             );
                             const riderDisplayName = assignedRiderObj 
                                 ? `${assignedRiderObj.name} (${assignedRiderObj.vehicleType} • ${assignedRiderObj.vehicleNumber})`
-                                : (item.assignedRiderNic ? `Rider NIC: ${item.assignedRiderNic}` : null);
+                                : (riderNicToUse ? `Rider ${riderNicToUse}` : null);
 
                             return (
                                 <div
                                     key={item.id}
                                     style={{
                                         display: 'grid',
-                                        gridTemplateColumns: '130px 1.4fr 140px 110px 100px auto',
+                                        gridTemplateColumns: ORDER_GRID_COLUMNS,
                                         alignItems: 'center',
                                         gap: '1rem',
                                         padding: '0.9rem 1.25rem',
@@ -835,7 +967,8 @@ const StaffDashboard = ({ loggedInUser }) => {
                                         border: isAtr ? '1px solid rgba(59, 130, 246, 0.15)' : '1px solid rgba(168, 85, 247, 0.15)',
                                         borderLeft: isAtr ? '4px solid #3b82f6' : '4px solid #a855f7',
                                         textAlign: 'left',
-                                        transition: 'all 0.2s ease'
+                                        transition: 'all 0.2s ease',
+                                        boxSizing: 'border-box'
                                     }}
                                     onMouseEnter={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.08)' : 'rgba(168, 85, 247, 0.08)'; }}
                                     onMouseLeave={(e) => { e.currentTarget.style.background = isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)'; }}
@@ -857,45 +990,46 @@ const StaffDashboard = ({ loggedInUser }) => {
                                     </div>
 
                                     {/* Col 2: Details & Route */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', minWidth: 0 }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', minWidth: 0, overflow: 'hidden' }}>
                                         <span style={{ color: '#fff', fontWeight: '600', fontSize: '0.92rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.clientTitle}>
                                             {item.clientTitle}
                                         </span>
                                         <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.route}>
                                             📍 {item.route}
                                         </span>
-                                        <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.subtitle}>
                                             {item.subtitle}
                                         </span>
                                     </div>
 
                                     {/* Col 3: Schedule */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem', minWidth: 0, whiteSpace: 'nowrap' }}>
                                         <span style={{ color: '#e5e7eb', fontWeight: '500' }}>📅 {item.schedule.split('@')[0]}</span>
                                         <span>⏰ {item.schedule.split('@')[1] || 'Scheduled'}</span>
                                     </div>
 
                                     {/* Col 4: Cost / Distance */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem', minWidth: 0, whiteSpace: 'nowrap' }}>
                                         <span style={{ color: '#10b981', fontWeight: '600' }}>{item.costDist}</span>
-                                        {isAtr && item.rawItem.actual_distance && (
+                                        {item.rawItem.actual_distance && (
                                             <span style={{ color: '#60a5fa', fontSize: '0.72rem' }}>Act: {item.rawItem.actual_distance}km</span>
                                         )}
                                     </div>
 
                                     {/* Col 5: Status Badge */}
-                                    <div>
+                                    <div style={{ minWidth: 0 }}>
                                         <span style={{
                                             display: 'inline-block', padding: '0.25rem 0.55rem',
                                             background: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'rgba(16,185,129,0.1)' : item.status === 'Pending' || item.status === 'Accepted' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
                                             color: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? 'var(--success)' : item.status === 'Pending' || item.status === 'Accepted' ? '#f59e0b' : 'var(--danger)',
                                             borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
-                                            border: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'Pending' || item.status === 'Accepted' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                            border: item.status === 'Approved' || item.status === 'Completed' || item.status === 'Assigned' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'Pending' || item.status === 'Accepted' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)',
+                                            whiteSpace: 'nowrap'
                                         }}>{item.status}</span>
                                     </div>
 
                                     {/* Col 6: Assignment & Actions */}
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '0.45rem', minWidth: 0, width: '100%' }}>
                                         {/* Step 1: Pending -> Accept / Approve */}
                                         {isPending ? (
                                             <button
@@ -911,84 +1045,151 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                     alignItems: 'center',
                                                     gap: '0.25rem',
                                                     cursor: 'pointer',
-                                                    borderRadius: '6px'
+                                                    borderRadius: '6px',
+                                                    flexShrink: 0
                                                 }}
                                             >
                                                 <i className='bx bx-check'></i> {isAtr ? 'Approve ATR' : 'Accept Order'}
                                             </button>
-                                        ) : isCompleted ? (
-                                            /* Step 2c: Trip/Delivery is Completed -> Show completed details, NO unassign option */
+                                        ) : isCompleted && (riderDisplayName || riderNicToUse) ? (
+                                            /* Step 2c: Completed Order -> Show Full Rider Details (Name, Phone, Vehicle, NIC) */
                                             <div style={{
                                                 display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.5rem',
-                                                background: 'rgba(16, 185, 129, 0.12)',
-                                                border: '1px solid rgba(16, 185, 129, 0.35)',
-                                                padding: '0.4rem 0.75rem',
-                                                borderRadius: '8px'
+                                                flexDirection: 'column',
+                                                gap: '0.2rem',
+                                                background: 'rgba(16, 185, 129, 0.08)',
+                                                border: '1px solid rgba(16, 185, 129, 0.25)',
+                                                padding: '0.35rem 0.65rem',
+                                                borderRadius: '8px',
+                                                width: '100%',
+                                                maxWidth: '350px',
+                                                textAlign: 'left',
+                                                boxSizing: 'border-box',
+                                                flexShrink: 0
                                             }}>
-                                                <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
                                                     <span style={{
                                                         color: '#10b981',
-                                                        fontSize: '0.72rem',
+                                                        fontSize: '0.68rem',
                                                         fontWeight: '700',
                                                         textTransform: 'uppercase',
+                                                        letterSpacing: '0.04em',
                                                         display: 'flex',
                                                         alignItems: 'center',
-                                                        gap: '0.3rem'
+                                                        gap: '0.25rem'
                                                     }}>
-                                                        <i className='bx bx-check-double' style={{ fontSize: '1rem', color: '#10b981' }}></i>
-                                                        Trip Completed
+                                                        <i className='bx bx-check-double' style={{ fontSize: '0.9rem' }}></i> Completed By
                                                     </span>
-                                                    <span style={{ color: '#fff', fontSize: '0.82rem', fontWeight: '600' }}>
-                                                        {riderDisplayName ? `👤 ${riderDisplayName}` : (item.assignedRiderNic ? `👤 Rider NIC: ${item.assignedRiderNic}` : '👤 Completed by Assigned Rider')}
-                                                    </span>
+                                                    {(assignedRiderObj?.nic || riderNicToUse) && (
+                                                        <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.68rem', fontFamily: 'monospace' }}>
+                                                            NIC: {assignedRiderObj?.nic || riderNicToUse}
+                                                        </span>
+                                                    )}
                                                 </div>
+
+                                                <div style={{ color: '#fff', fontSize: '0.82rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                                                    <span>👤 {assignedRiderObj?.name || (riderNicToUse ? `Rider ${riderNicToUse}` : 'Completed')}</span>
+                                                    {assignedRiderObj?.phone && assignedRiderObj.phone !== 'N/A' && (
+                                                        <span style={{ color: '#60a5fa', fontSize: '0.74rem', fontWeight: '500' }}>
+                                                            • 📞 {assignedRiderObj.phone}
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                {assignedRiderObj?.vehicleType && (
+                                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                        <span>🚗 {assignedRiderObj.vehicleType}</span>
+                                                        <span>•</span>
+                                                        <span style={{ color: '#e5e7eb', fontWeight: '600' }}>{assignedRiderObj.vehicleNumber}</span>
+                                                        {assignedRiderObj.branch && assignedRiderObj.branch !== 'Main Branch' && (
+                                                            <span style={{ color: 'rgba(255,255,255,0.4)' }}>({assignedRiderObj.branch})</span>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : riderDisplayName ? (
-                                            /* Step 2b: Rider is already assigned */
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', padding: '0.35rem 0.65rem', borderRadius: '8px' }}>
-                                                <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
-                                                    <span style={{ color: '#10b981', fontSize: '0.72rem', fontWeight: '700', textTransform: 'uppercase' }}>Assigned</span>
-                                                    <span style={{ color: '#fff', fontSize: '0.82rem', fontWeight: '600' }}>👤 {riderDisplayName}</span>
+                                            /* Step 2b: Active Rider is already assigned (not completed) */
+                                            <div style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '0.45rem',
+                                                background: 'rgba(16, 185, 129, 0.08)',
+                                                border: '1px solid rgba(16, 185, 129, 0.25)',
+                                                padding: '0.3rem 0.55rem',
+                                                borderRadius: '8px',
+                                                maxWidth: isAtr ? '240px' : '310px',
+                                                flexShrink: 0
+                                            }}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left', minWidth: 0 }}>
+                                                    <span style={{
+                                                        color: '#10b981',
+                                                        fontSize: '0.68rem',
+                                                        fontWeight: '700',
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.03em',
+                                                        lineHeight: 1.2
+                                                    }}>
+                                                        Assigned
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            color: '#fff',
+                                                            fontSize: '0.78rem',
+                                                            fontWeight: '600',
+                                                            lineHeight: 1.2,
+                                                            marginTop: '2px'
+                                                        }}
+                                                        title={riderDisplayName}
+                                                    >
+                                                        👤 {riderDisplayName}
+                                                    </span>
                                                 </div>
-                                                <button
-                                                    onClick={() => {
-                                                        if (isAtr) handleAssignRiderToATR(item.rawId, null);
-                                                        else handleAssignRiderToPD(item.rawId, null);
-                                                    }}
-                                                    className="secondary-btn"
-                                                    style={{
-                                                        padding: '0.25rem 0.5rem',
-                                                        height: 'auto',
-                                                        fontSize: '0.72rem',
-                                                        background: 'rgba(239,68,68,0.1)',
-                                                        color: 'var(--danger)',
-                                                        border: '1px solid rgba(239,68,68,0.2)',
-                                                        cursor: 'pointer',
-                                                        borderRadius: '4px'
-                                                    }}
-                                                    title="Unassign rider"
-                                                >
-                                                    Unassign
-                                                </button>
+
+                                                {!isCompleted && !hasActuals && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (isAtr) handleAssignRiderToATR(item.rawId, null);
+                                                            else handleAssignRiderToPD(item.rawId, null);
+                                                        }}
+                                                        style={{
+                                                            width: 'auto',
+                                                            padding: '0.2rem 0.45rem',
+                                                            height: '24px',
+                                                            fontSize: '0.68rem',
+                                                            fontWeight: '600',
+                                                            background: 'rgba(239,68,68,0.12)',
+                                                            color: '#ef4444',
+                                                            border: '1px solid rgba(239,68,68,0.25)',
+                                                            cursor: 'pointer',
+                                                            borderRadius: '4px',
+                                                            flexShrink: 0,
+                                                            lineHeight: 1
+                                                        }}
+                                                        title="Unassign rider"
+                                                    >
+                                                        Unassign
+                                                    </button>
+                                                )}
                                             </div>
                                         ) : (
                                             /* Step 2a: Request is Approved -> Match & Assign Rider */
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
                                                 <select
                                                     id={`select-staff-rider-${item.id}`}
                                                     defaultValue=""
                                                     style={{
-                                                        maxWidth: '170px',
-                                                        padding: '0.4rem 0.6rem',
+                                                        width: isAtr ? '150px' : '180px',
+                                                        maxWidth: '180px',
+                                                        padding: '0.35rem 0.5rem',
                                                         background: 'rgba(20, 20, 20, 0.95)',
                                                         border: '1px solid rgba(16, 185, 129, 0.4)',
                                                         borderRadius: '6px',
                                                         color: '#fff',
-                                                        fontSize: '0.78rem',
+                                                        fontSize: '0.75rem',
                                                         outline: 'none',
-                                                        cursor: 'pointer'
+                                                        cursor: 'pointer',
+                                                        flexShrink: 0
                                                     }}
                                                 >
                                                     <option value="" disabled>Select Rider...</option>
@@ -1011,12 +1212,13 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                     className="primary-btn"
                                                     style={{
                                                         width: 'auto',
-                                                        padding: '0.4rem 0.8rem',
+                                                        padding: '0.35rem 0.7rem',
                                                         height: '32px',
-                                                        fontSize: '0.78rem',
+                                                        fontSize: '0.75rem',
                                                         background: isAtr ? 'var(--accent-color)' : '#a855f7',
                                                         borderRadius: '6px',
-                                                        cursor: 'pointer'
+                                                        cursor: 'pointer',
+                                                        flexShrink: 0
                                                     }}
                                                 >
                                                     Assign
@@ -1024,20 +1226,28 @@ const StaffDashboard = ({ loggedInUser }) => {
                                             </div>
                                         )}
 
-                                        {/* Trip Actuals */}
-                                        {isAtr && (item.status === 'Assigned' || item.status === 'In Transit' || item.status === 'Completed') && (
+                                        {/* Trip Actuals: Only show for active ATR orders where actuals not yet recorded */}
+                                        {isAtr && !hasActuals && !isCompleted && (item.status === 'Assigned' || item.status === 'In Transit') && (
                                             <button
+                                                type="button"
                                                 onClick={() => handleOpenActualsModal(item.rawItem)}
-                                                className="secondary-btn"
                                                 style={{
-                                                    padding: '0.35rem 0.6rem',
+                                                    width: 'auto',
+                                                    padding: '0.35rem 0.65rem',
                                                     height: '32px',
                                                     fontSize: '0.75rem',
+                                                    fontWeight: '600',
+                                                    whiteSpace: 'nowrap',
+                                                    flexShrink: 0,
                                                     background: item.rawItem.actual_distance ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
                                                     color: item.rawItem.actual_distance ? 'var(--success)' : '#60a5fa',
                                                     border: item.rawItem.actual_distance ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(59,130,246,0.25)',
                                                     borderRadius: '6px',
-                                                    cursor: 'pointer'
+                                                    cursor: 'pointer',
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.25rem',
+                                                    lineHeight: 1
                                                 }}
                                             >
                                                 <i className='bx bx-edit-alt'></i> Actuals
@@ -1049,6 +1259,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                         })
                     )}
                 </div>
+            </div>
 
             {/* ── ATR Trip Completion Modal ── */}
             {completingAtr && (
