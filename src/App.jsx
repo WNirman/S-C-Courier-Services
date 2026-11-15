@@ -258,7 +258,7 @@ function App({ onNavigate }) {
     const [forgotEmail, setForgotEmail] = useState('');
     const [forgotError, setForgotError] = useState('');
     const [resetEmailSent, setResetEmailSent] = useState(false);
-    const [resetSentInfo, setResetSentInfo] = useState(null); // { email, maskedEmail, role, previewUrl, fallbackUrl }
+    const [resetSentInfo, setResetSentInfo] = useState(null); // { email, maskedEmail, role }
 
     // Step 2 (from email link ?reset_token=...)
     const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') || '');
@@ -307,96 +307,35 @@ function App({ onNavigate }) {
         setResetSentInfo(null);
 
         try {
-            // 1. Try backend endpoint first (checks DB + sends email via Nodemailer)
-            let handledByBackend = false;
-            try {
-                const res = await fetch('http://localhost:5000/api/auth/forgot-password', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        identifier,
-                        frontendOrigin: window.location.origin
-                    })
-                });
-                const data = await res.json();
-                if (res.status === 404) {
-                    setForgotError(data.error || 'No existing account found with that email, username, or phone number.');
-                    setIsResetting(false);
-                    return;
-                }
-                if (res.ok && data.success) {
-                    handledByBackend = true;
-                    setResetEmailSent(true);
-                    setResetSentInfo({
-                        email: data.email,
-                        maskedEmail: data.maskedEmail || data.email,
-                        role: data.role || 'customer',
-                        previewUrl: data.previewUrl || null,
-                        fallbackUrl: null
-                    });
-                }
-            } catch (backendErr) {
-                console.warn('Backend forgot-password unreachable, checking Supabase directly:', backendErr);
+            const res = await fetch('http://localhost:5000/api/auth/forgot-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    identifier,
+                    frontendOrigin: window.location.origin
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                setForgotError(
+                    data.error ||
+                    'Could not send the password reset email. Please verify your account details and try again.'
+                );
+                return;
             }
 
-            // 2. Fallback: Check Supabase directly if backend wasn't running
-            if (!handledByBackend) {
-                let foundEmail = null;
-                let foundRole = null;
-
-                // Check customer table by email, name (username), or phone
-                const { data: custRows } = await supabase
-                    .from('customer')
-                    .select('cust_email, cust_name, cust_phoneno')
-                    .or(`cust_email.ilike.${identifier},cust_name.ilike.${identifier},cust_phoneno.eq.${identifier}`)
-                    .limit(1);
-
-                if (custRows && custRows.length > 0) {
-                    foundEmail = custRows[0].cust_email;
-                    foundRole = 'customer';
-                }
-
-                // Check staff table if not found in customer
-                if (!foundEmail) {
-                    const { data: staffRows } = await supabase
-                        .from('staff')
-                        .select('staff_email, staff_name, staff_phone')
-                        .or(`staff_email.ilike.${identifier},staff_name.ilike.${identifier},staff_phone.eq.${identifier}`)
-                        .limit(1);
-
-                    if (staffRows && staffRows.length > 0) {
-                        foundEmail = staffRows[0].staff_email;
-                        foundRole = 'staff';
-                    }
-                }
-
-                if (!foundEmail) {
-                    setForgotError('No existing account found with that email, username, or phone number.');
-                    setIsResetting(false);
-                    return;
-                }
-
-                const token = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-                    .map(b => b.toString(16).padStart(2, '0')).join('');
-                const resetLink = `${window.location.origin}/?reset_token=${token}&email=${encodeURIComponent(foundEmail)}&role=${foundRole}`;
-
-                const [localPart, domainPart] = foundEmail.split('@');
-                const maskedEmail = localPart.length > 2
-                    ? `${localPart.slice(0, 2)}***@${domainPart}`
-                    : `${localPart[0]}***@${domainPart}`;
-
-                setResetEmailSent(true);
-                setResetSentInfo({
-                    email: foundEmail,
-                    maskedEmail,
-                    role: foundRole,
-                    previewUrl: null,
-                    fallbackUrl: resetLink
-                });
-            }
+            setResetEmailSent(true);
+            setResetSentInfo({
+                email: data.email,
+                maskedEmail: data.maskedEmail || data.email,
+                role: data.role || 'customer'
+            });
         } catch (err) {
             console.error('Error requesting password reset:', err);
-            setForgotError('Something went wrong. Please try again.');
+            setForgotError(
+                'Unable to reach the email server (http://localhost:5000). Please make sure the local backend server is running so the reset link can be sent to your Gmail.'
+            );
         } finally {
             setIsResetting(false);
         }
@@ -1885,26 +1824,10 @@ function App({ onNavigate }) {
                                                     <i className='bx bx-check-circle' style={{ fontSize: '1.3rem' }}></i>
                                                     Reset Link Sent!
                                                 </div>
-                                                <p style={{ margin: '0 0 0.6rem 0', color: 'var(--text-secondary)' }}>
+                                                <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
                                                     We verified your account and sent a password reset link to <strong style={{ color: '#fff' }}>{resetSentInfo?.maskedEmail || resetSentInfo?.email}</strong>.
-                                                    Please check your inbox and click the link in the email to set your new password.
+                                                    Please check your Gmail inbox (and spam folder) and click the link in that email to set your new password.
                                                 </p>
-
-                                                {resetSentInfo?.previewUrl && (
-                                                    <div style={{ marginTop: '0.75rem', paddingTop: '0.65rem', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '0.82rem' }}>
-                                                        <a href={resetSentInfo.previewUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-color)', fontWeight: 600, textDecoration: 'underline' }}>
-                                                            <i className='bx bx-link-external'></i> Open Test Email Preview
-                                                        </a>
-                                                    </div>
-                                                )}
-
-                                                {resetSentInfo?.fallbackUrl && (
-                                                    <div style={{ marginTop: '0.75rem', paddingTop: '0.65rem', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '0.82rem' }}>
-                                                        <a href={resetSentInfo.fallbackUrl} style={{ color: 'var(--accent-color)', fontWeight: 600, textDecoration: 'underline' }}>
-                                                            <i className='bx bx-key'></i> Click here to open your Reset Password Link
-                                                        </a>
-                                                    </div>
-                                                )}
                                             </div>
                                         )}
 
