@@ -1837,6 +1837,29 @@ async function runCorporateBillingCycleEngine({
     }
   }
 
+  // If manually triggered by Admin and all eligible ATRs were already combined into an existing corporate invoice,
+  // re-render the updated PDF and re-email the existing corporate invoice(s) so Admin can test/resend immediately without creating duplicates.
+  if (generatedInvoices.length === 0 && triggeredBy !== 'Automated Billing Cycle Scheduler') {
+    const checkStore = loadStore();
+    const matchingExisting = checkStore.invoices.filter(inv => {
+      if (inv.customer_type !== 'Corporate') return false;
+      if (targetCustomerEmail) {
+        return (
+          String(inv.customer_email || '').toLowerCase() === targetCustomerEmail.toLowerCase() ||
+          String(inv.billing_email || '').toLowerCase() === targetCustomerEmail.toLowerCase()
+        );
+      }
+      return true;
+    });
+
+    for (const existingCorpInv of matchingExisting) {
+      const resendRes = await sendInvoiceEmailWithPdf(transporter, pool, existingCorpInv);
+      if (resendRes.success) {
+        generatedInvoices.push(resendRes.invoice);
+      }
+    }
+  }
+
   const latestStore = loadStore();
   latestStore.lastSchedulerRun = new Date().toISOString();
   saveStore(latestStore);

@@ -1,6 +1,64 @@
 {
   "invoices": [
     {
+      "invoice_id": "inv_pd_7_1794722734071",
+      "invoice_number": "INV-PD-2026-0007-0001",
+      "customer_type": "Personal",
+      "customer_email": "wanithnirmanbc@gmail.com",
+      "billing_email": "wanithnirmanbc@gmail.com",
+      "customer_name": "Wanith Nirman",
+      "company_name": null,
+      "billing_address": "34/2 Nikawala Pugoda",
+      "customer_phone": "0762069840",
+      "invoice_frequency": "Per Request",
+      "billing_period_start": "2026-11-17",
+      "billing_period_end": "2026-11-17",
+      "billing_period_label": "2026-11-17",
+      "issue_date": "2026-11-15",
+      "total_shipments": 1,
+      "subtotal": 550,
+      "tax_amount": 0,
+      "additional_charges": 0,
+      "total_payable": 550,
+      "amount_paid": 0,
+      "payment_terms": "Due on Receipt",
+      "payment_status": "Unpaid",
+      "email_status": "Sent",
+      "email_sent_at": "2026-11-15T06:05:39.366Z",
+      "email_error": null,
+      "line_items": [
+        {
+          "request_id": "pd-7",
+          "ref_number": "PD-7",
+          "source_type": "personal",
+          "shipment_date": "2026-11-17",
+          "pickup_details": "34/2 Nikawala Pugoda",
+          "delivery_details": "kandy",
+          "parcel_or_vehicle": "Parcel (Base 250 + 5km @ 60/km)",
+          "distance_km": 5,
+          "rate_lkr": 60,
+          "base_fee_lkr": 250,
+          "amount_lkr": 550,
+          "status": "Approved"
+        }
+      ],
+      "audit_log": [
+        {
+          "timestamp": "2026-11-15T06:05:34.072Z",
+          "action": "INVOICE_CREATED",
+          "actor": "admin@sccourier.com",
+          "note": "Personal delivery invoice generated for PD-7"
+        },
+        {
+          "timestamp": "2026-11-15T06:05:39.366Z",
+          "action": "EMAIL_SENT",
+          "actor": "System Mailer",
+          "note": "PDF Invoice emailed to wanithnirmanbc@gmail.com (250 2.0.0 OK  1794722739 5a478bee46e88-3795378d7e5sm21871731eec.3 - gsmtp)"
+        }
+      ],
+      "created_at": "2026-11-15T06:05:34.072Z"
+    },
+    {
       "invoice_id": "inv_corp_1794709905453_irgt",
       "invoice_number": "INV-CORP-2026-0001",
       "customer_type": "Corporate",
@@ -25,7 +83,7 @@
       "payment_terms": "Net 15 Days",
       "payment_status": "Paid",
       "email_status": "Sent",
-      "email_sent_at": "2026-11-15T02:31:51.115Z",
+      "email_sent_at": "2026-11-15T06:01:22.380Z",
       "email_error": null,
       "line_items": [
         {
@@ -75,6 +133,18 @@
           "action": "PAYMENT_STATUS_UPDATED",
           "actor": "admin@sccourier.com",
           "note": "Payment status set to Paid (Paid: LKR 25568)"
+        },
+        {
+          "timestamp": "2026-11-15T05:58:43.838Z",
+          "action": "EMAIL_SENT",
+          "actor": "System Mailer",
+          "note": "PDF Invoice emailed to vigneshlu@gmail.com (250 2.0.0 OK  1794722324 a92af1059eb24-1b5031bc518sm19783948c88.15 - gsmtp)"
+        },
+        {
+          "timestamp": "2026-11-15T06:01:22.380Z",
+          "action": "EMAIL_SENT",
+          "actor": "System Mailer",
+          "note": "PDF Invoice emailed to vigneshlu@gmail.com (250 2.0.0 OK  1794722482 5a478bee46e88-379558231eesm21569146eec.12 - gsmtp)"
         }
       ],
       "created_at": "2026-11-15T02:31:45.453Z"
@@ -83,7 +153,8 @@
   "corporateConfigs": {},
   "invoicedRequestKeys": {
     "atr-43": "inv_corp_1794709905453_irgt",
-    "atr-44": "inv_corp_1794709905453_irgt"
+    "atr-44": "inv_corp_1794709905453_irgt",
+    "pd-7": "inv_pd_7_1794722734071"
   },
-  "lastSchedulerRun": "2026-11-15T02:53:38.980Z"
+  "lastSchedulerRun": "2026-11-15T05:57:32.140Z"
 }

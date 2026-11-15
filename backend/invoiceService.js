@@ -690,19 +690,16 @@ async function createOrGetPersonalInvoice({
   const reqKey = `pd-${pd.pd_id}`;
 
   // Anti-duplication check: Has this PD request already been invoiced?
+  // Reuse the same invoice (never create a duplicate invoice number), and re-send the PDF email when requested.
   const existingInvId = store.invoicedRequestKeys[reqKey];
   if (existingInvId) {
     const existingInv = store.invoices.find(i => i.invoice_id === existingInvId);
     if (existingInv) {
-      if (overrideEmail) {
-        existingInv.billing_email = overrideEmail;
+      if (overrideEmail && overrideEmail.trim()) {
+        existingInv.billing_email = overrideEmail.trim();
       }
-      // If email previously failed or overrideEmail requested, resend
-      if (existingInv.email_status !== 'Sent' || overrideEmail) {
-        const sendRes = await sendInvoiceEmailWithPdf(transporter, pool, existingInv, scheduleUrl);
-        return { invoice: sendRes.invoice, alreadyExisted: true, emailResult: sendRes };
-      }
-      return { invoice: existingInv, alreadyExisted: true, emailResult: { success: true } };
+      const sendRes = await sendInvoiceEmailWithPdf(transporter, pool, existingInv, scheduleUrl);
+      return { invoice: sendRes.invoice, alreadyExisted: true, emailResult: sendRes };
     }
   }
 
