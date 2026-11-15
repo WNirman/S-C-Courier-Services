@@ -393,17 +393,36 @@ const StaffDashboard = ({ loggedInUser }) => {
     // Approve / Accept Handlers
     const handleAcceptPD = async (pdId) => {
         try {
+            const acceptedByEmail = loggedInUser || 'staff@sccourier.com';
             const { error } = await supabase
                 .from('personal_delivery')
                 .update({
                     status: 'Accepted',
-                    accepted_by: loggedInUser,
+                    accepted_by: acceptedByEmail,
                     accepted_at: new Date().toISOString()
                 })
                 .eq('pd_id', pdId);
 
             if (error) throw error;
-            alert('Delivery order accepted! You can now match a rider.');
+
+            let invoiceNote = '';
+            try {
+                const res = await fetch('http://localhost:5000/api/delivery/accept', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail, status: 'Accepted' })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.invoiceNo) {
+                        invoiceNote = `\nInvoice #${data.invoiceNo} has been emailed to the customer.`;
+                    }
+                }
+            } catch (emailErr) {
+                console.warn('PD invoice email note:', emailErr);
+            }
+
+            alert('Delivery order accepted! You can now match a rider.' + invoiceNote);
             loadPersonalDeliveries();
         } catch (e) {
             alert('Error accepting delivery: ' + e.message);
@@ -412,6 +431,7 @@ const StaffDashboard = ({ loggedInUser }) => {
 
     const handleApproveATR = async (atrId) => {
         try {
+            const approvedByEmail = loggedInUser || 'staff@sccourier.com';
             const { error } = await supabase
                 .from('atr')
                 .update({
@@ -421,7 +441,25 @@ const StaffDashboard = ({ loggedInUser }) => {
                 .eq('atr_id', atrId);
 
             if (error) throw error;
-            alert('ATR request approved! You can now match a rider.');
+
+            let invoiceNote = '';
+            try {
+                const res = await fetch('http://localhost:5000/api/atr/approve-invoice', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ atrId, approvedBy: approvedByEmail })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.invoiceNo) {
+                        invoiceNote = `\nInvoice #${data.invoiceNo} has been sent to ${data.email}.`;
+                    }
+                }
+            } catch (emailErr) {
+                console.warn('ATR invoice email note:', emailErr);
+            }
+
+            alert('ATR request approved! You can now match a rider.' + invoiceNote);
             loadAtrRequests();
         } catch (e) {
             alert('Error approving ATR: ' + e.message);

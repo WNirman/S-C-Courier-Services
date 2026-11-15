@@ -224,17 +224,19 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             } : pd);
             localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
 
-            // 3. Try sending acceptance & scheduling email via Express backend (if running)
+            // 3. Send acceptance & official Invoice email via Express backend
             let emailMsg = '';
             try {
                 const res = await fetch('http://localhost:5000/api/delivery/accept', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail })
+                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail, status: 'Accepted' })
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    emailMsg = ' Scheduling email sent to customer.';
+                    emailMsg = data.invoiceNo
+                        ? ` Invoice #${data.invoiceNo} has been emailed to the customer.`
+                        : ' Invoice & scheduling email sent to customer.';
                     if (data.previewUrl) {
                         console.log('Ethereal Email Preview:', data.previewUrl);
                     }
@@ -392,6 +394,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
     const handleApproveAtr = async (atrId) => {
         try {
+            const approvedByEmail = loggedInUser || 'admin@sccourier.com';
             const { error } = await supabase
                 .from('atr')
                 .update({
@@ -401,7 +404,25 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 .eq('atr_id', atrId);
 
             if (error) throw error;
-            alert('ATR Request Approved successfully! You can now match a rider to it.');
+
+            let invoiceNote = '';
+            try {
+                const res = await fetch('http://localhost:5000/api/atr/approve-invoice', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ atrId, approvedBy: approvedByEmail })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.invoiceNo) {
+                        invoiceNote = `\nInvoice #${data.invoiceNo} has been sent to ${data.email}.`;
+                    }
+                }
+            } catch (emailErr) {
+                console.warn('ATR invoice email note:', emailErr);
+            }
+
+            alert('ATR Request Approved successfully! You can now match a rider to it.' + invoiceNote);
             loadAtrRequests();
         } catch (err) {
             console.error('Error approving ATR:', err);
@@ -454,15 +475,22 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             } : pd);
             localStorage.setItem('local_personal_deliveries', JSON.stringify(updatedLocal));
 
+            let invoiceNote = '';
             try {
-                await fetch('http://localhost:5000/api/delivery/accept', {
+                const res = await fetch('http://localhost:5000/api/delivery/accept', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail })
+                    body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail, status: 'Approved' })
                 });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.invoiceNo) {
+                        invoiceNote = `\nInvoice #${data.invoiceNo} has been sent to ${data.email || 'the customer'}.`;
+                    }
+                }
             } catch (e) { /* ignore backend offline */ }
 
-            alert('Personal Delivery Approved successfully! You can now match a rider to it.');
+            alert('Personal Delivery Approved successfully! You can now match a rider to it.' + invoiceNote);
             loadPersonalDeliveries();
         } catch (err) {
             console.error('Error approving PD:', err);
@@ -1897,6 +1925,11 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                     <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.subtitle}>
                                                         {item.subtitle}
                                                     </span>
+                                                    {item.rawItem.cust_email && (
+                                                        <span style={{ color: '#94a3b8', fontSize: '0.74rem' }}>
+                                                            ✉️ {item.rawItem.cust_email}
+                                                        </span>
+                                                    )}
                                                 </div>
 
                                                 {/* Col 3: Schedule */}

@@ -1136,10 +1136,250 @@ const haversineDistance = (lat1, lng1, lat2, lng2) => {
 };
 
 // -------------------------------------------------------
-// 1. POST /api/delivery/accept — Staff/Admin accepts a personal delivery
+// 0. POST /api/atr/approve-invoice — Admin/Staff approves an ATR request & emails Invoice to customer
+// -------------------------------------------------------
+app.post('/api/atr/approve-invoice', async (req, res) => {
+  const { atrId, approvedBy, overrideEmail } = req.body;
+  if (!atrId) {
+    return res.status(400).json({ error: 'atrId is required' });
+  }
+
+  const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
+
+  try {
+    // 1. Fetch ATR record
+    const atrRes = await fetch(
+      `${sbUrl}/rest/v1/atr?atr_id=eq.${encodeURIComponent(atrId)}&select=*`,
+      { headers: sbHeaders }
+    );
+    const atrRows = await atrRes.json();
+    if (!Array.isArray(atrRows) || atrRows.length === 0) {
+      return res.status(404).json({ error: 'ATR request not found' });
+    }
+    const atr = atrRows[0];
+
+    // Ensure status is marked Approved in Supabase
+    if (atr.status !== 'Approved' && atr.status !== 'Assigned' && atr.status !== 'Completed') {
+      await fetch(`${sbUrl}/rest/v1/atr?atr_id=eq.${encodeURIComponent(atrId)}`, {
+        method: 'PATCH',
+        headers: { ...sbHeaders, 'Prefer': 'return=minimal' },
+        body: JSON.stringify({
+          status: 'Approved',
+          approval_date: new Date().toISOString()
+        })
+      });
+    }
+
+    const customerEmail = (overrideEmail && overrideEmail.trim()) || atr.cust_email;
+    if (!customerEmail) {
+      return res.status(400).json({ error: 'No customer email associated with this ATR request' });
+    }
+
+    // 2. Fetch customer & department/company info for the invoice
+    let custName = atr.principal_passenger_name || 'Valued Corporate Client';
+    let custPhone = 'N/A';
+    try {
+      const custRes = await fetch(
+        `${sbUrl}/rest/v1/customer?cust_email=eq.${encodeURIComponent(customerEmail)}&select=cust_name,cust_phoneno,cust_address`,
+        { headers: sbHeaders }
+      );
+      const custRows = await custRes.json();
+      if (Array.isArray(custRows) && custRows.length > 0) {
+        custName = custRows[0].cust_name || custName;
+        custPhone = custRows[0].cust_phoneno || custPhone;
+      }
+    } catch (e) { /* ignore */ }
+
+    let depName = 'Operations';
+    let compName = 'Corporate Client';
+    if (atr.dep_id) {
+      try {
+        const depRes = await fetch(
+          `${sbUrl}/rest/v1/department?dep_id=eq.${encodeURIComponent(atr.dep_id)}&select=dep_name,company(comp_name,comp_address)`,
+          { headers: sbHeaders }
+        );
+        const depRows = await depRes.json();
+        if (Array.isArray(depRows) && depRows.length > 0) {
+          depName = depRows[0].dep_name || depName;
+          compName = depRows[0].company?.comp_name || compName;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // 3. Calculate invoice numbers and amounts
+    const invoiceNo = `INV-ATR-${new Date().getFullYear()}-${String(atr.atr_id).padStart(4, '0')}`;
+    const issueDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const reqDate = atr.required_date
+      ? new Date(atr.required_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : 'N/A';
+    const reqTime = atr.required_time || 'N/A';
+
+    const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+    const vehicleType = atr.vehicle_type || 'Standard Vehicle';
+    const ratePerKm = rateMap[vehicleType] || 100;
+    const distanceKm = Number(atr.actual_distance || atr.estimated_distance || 0);
+    const totalCostNum = Number(atr.actual_cost || atr.estimated_cost || (distanceKm * ratePerKm));
+    const formattedRate = ratePerKm.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formattedTotal = totalCostNum.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+      </head>
+      <body style="font-family: Arial, Helvetica, sans-serif; background-color: #f3f4f6; padding: 24px; color: #1f2937; margin: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 640px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0;">
+          <!-- Header -->
+          <tr>
+            <td bgcolor="#1e3a8a" style="background-color: #1e3a8a; color: #ffffff; padding: 28px 28px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td>
+                    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff;">S&amp;C COURIER SERVICES</h1>
+                    <p style="margin: 4px 0 0 0; font-size: 13px; color: #bfdbfe;">Corporate Transport &amp; Logistics Division</p>
+                  </td>
+                  <td align="right">
+                    <span style="display: inline-block; background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">
+                      APPROVED INVOICE
+                    </span>
+                    <p style="margin: 6px 0 0 0; font-size: 13px; color: #e0f2fe; font-weight: 600;">#${invoiceNo}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding: 28px;">
+              <p style="font-size: 16px; font-weight: 600; color: #111827; margin: 0 0 8px 0;">Hello ${custName},</p>
+              <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px 0;">
+                Your Corporate Authorization to Request (<strong>${atr.atr_number || `ATR-${atr.atr_id}`}</strong>) has been <strong>approved</strong> by our operations team. Below is your official invoice and booking summary.
+              </p>
+
+              <!-- Billed To & Invoice Meta -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;">
+                <tr>
+                  <td width="50%" valign="top" style="padding: 16px; border-right: 1px solid #e2e8f0;">
+                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Billed To</div>
+                    <div style="font-size: 14px; font-weight: 700; color: #0f172a;">${compName}</div>
+                    <div style="font-size: 13px; color: #334155; margin-top: 2px;">Dept: ${depName}</div>
+                    <div style="font-size: 13px; color: #475569; margin-top: 2px;">${custName} (${customerEmail})</div>
+                  </td>
+                  <td width="50%" valign="top" style="padding: 16px;">
+                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Invoice Details</div>
+                    <div style="font-size: 13px; color: #334155;"><strong>Invoice No:</strong> ${invoiceNo}</div>
+                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Issue Date:</strong> ${issueDate}</div>
+                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>ATR Ref:</strong> ${atr.atr_number || `ATR-${atr.atr_id}`}</div>
+                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Approved By:</strong> ${approvedBy || 'Admin'}</div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Trip Schedule & Passenger Details -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px; border-collapse: collapse;">
+                <tr>
+                  <td colspan="2" style="padding: 10px 12px; background-color: #f1f5f9; font-size: 12px; font-weight: 700; text-transform: uppercase; color: #334155; border-radius: 6px 6px 0 0;">
+                    Trip &amp; Requisition Summary
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b; width: 40%;">Principal Passenger</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">
+                    ${atr.principal_passenger_name || 'N/A'}${atr.principal_passenger_designation ? ` (${atr.principal_passenger_designation})` : ''}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Purpose / Destination</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${atr.purpose_of_travel || 'Corporate Travel'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Required Date &amp; Time</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${reqDate} at ${reqTime}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Vehicle Category</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${vehicleType}</td>
+                </tr>
+              </table>
+
+              <!-- Itemized Invoice Breakdown -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 24px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden;">
+                <tr bgcolor="#0f172a" style="background-color: #0f172a; color: #ffffff;">
+                  <th align="left" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Description</th>
+                  <th align="center" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Distance</th>
+                  <th align="right" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Rate / km</th>
+                  <th align="right" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Amount (LKR)</th>
+                </tr>
+                <tr>
+                  <td style="padding: 14px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">
+                    <strong>Corporate ATR Transport (${vehicleType})</strong><br/>
+                    <span style="font-size: 12px; color: #64748b;">Ref: ${atr.atr_number || `ATR-${atr.atr_id}`} — ${atr.purpose_of_travel || 'Corporate Dispatch'}</span>
+                  </td>
+                  <td align="center" style="padding: 14px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">${distanceKm} km</td>
+                  <td align="right" style="padding: 14px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">LKR ${formattedRate}</td>
+                  <td align="right" style="padding: 14px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: 700; color: #0f172a;">LKR ${formattedTotal}</td>
+                </tr>
+                <tr bgcolor="#f8fafc" style="background-color: #f8fafc;">
+                  <td colspan="3" align="right" style="padding: 14px 12px; font-size: 15px; font-weight: 700; color: #0f172a;">Total Invoice Amount:</td>
+                  <td align="right" style="padding: 14px 12px; font-size: 16px; font-weight: 700; color: #ea580c;">LKR ${formattedTotal}</td>
+                </tr>
+              </table>
+
+              <p style="font-size: 13px; color: #475569; line-height: 1.5; margin: 0;">
+                A fleet rider will be assigned to your request shortly, and you will receive rider contact details as soon as dispatch is finalized. Thank you for partnering with <strong>S&amp;C Courier Services</strong>!
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#f8fafc" style="background-color: #f8fafc; padding: 18px 28px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0;">
+              This is an official computer-generated invoice from S&amp;C Courier Services.<br/>
+              &copy; ${new Date().getFullYear()} S&amp;C Courier Services. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    if (!transporter) {
+      await setupTransporter();
+    }
+
+    const info = await transporter.sendMail({
+      from: `"SC Courier Services" <${process.env.SMTP_USER || 'sccourier369@gmail.com'}>`,
+      to: customerEmail,
+      subject: `Invoice #${invoiceNo} — Corporate ATR Approved (${atr.atr_number || `ATR-${atr.atr_id}`})`,
+      html: htmlContent
+    });
+
+    const previewUrl = nodemailer.getTestMessageUrl(info);
+    console.log(`ATR Invoice email sent to ${customerEmail} (${invoiceNo}) | SMTP response: ${info.response}`);
+
+    return res.json({
+      success: true,
+      invoiceNo,
+      email: customerEmail,
+      smtpResponse: info.response,
+      accepted: info.accepted,
+      totalAmount: totalCostNum,
+      previewUrl: previewUrl || null,
+      message: `ATR approved and Invoice #${invoiceNo} sent to ${customerEmail}`
+    });
+  } catch (err) {
+    console.error('Error sending ATR invoice email:', err);
+    return res.status(500).json({ error: 'Server error while sending ATR invoice email: ' + err.message });
+  }
+});
+
+// -------------------------------------------------------
+// 1. POST /api/delivery/accept — Staff/Admin accepts a personal delivery & sends Invoice email
 // -------------------------------------------------------
 app.post('/api/delivery/accept', async (req, res) => {
-  const { pdId, acceptedBy } = req.body;
+  const { pdId, acceptedBy, status: targetStatus, overrideEmail } = req.body;
   if (!pdId || !acceptedBy) {
     return res.status(400).json({ error: 'pdId and acceptedBy are required' });
   }
@@ -1158,39 +1398,38 @@ app.post('/api/delivery/accept', async (req, res) => {
     }
     const pd = pdRows[0];
 
-    if (pd.status !== 'Pending') {
-      return res.status(400).json({ error: `Delivery is already ${pd.status}` });
+    // Generate or reuse scheduling token
+    const scheduleToken = pd.schedule_token || generateToken();
+
+    // Use pinned coordinates if present
+    let pickupLat = pd.pickup_lat ? Number(pd.pickup_lat) : null;
+    let pickupLng = pd.pickup_lng ? Number(pd.pickup_lng) : null;
+    let dropLat = pd.drop_lat ? Number(pd.drop_lat) : null;
+    let dropLng = pd.drop_lng ? Number(pd.drop_lng) : null;
+
+    // Calculate route distance and invoice amounts
+    let distanceKm = 5.0; // default standard distance in km when coordinates aren't pinned
+    if (pickupLat && pickupLng && dropLat && dropLng) {
+      const straightDist = haversineDistance(pickupLat, pickupLng, dropLat, dropLng);
+      distanceKm = Math.max(1.5, parseFloat((straightDist * 1.25).toFixed(1)));
     }
 
-    // Generate a unique scheduling token
-    const scheduleToken = generateToken();
+    const baseFee = 250; // Base pickup & handling fee in LKR
+    const perKmRate = 60; // LKR per km
+    const distanceCharge = Math.round(distanceKm * perKmRate);
+    const calculatedTotal = pd.cost ? Number(pd.cost) : (baseFee + distanceCharge);
 
-    // Geocode pickup and drop addresses (for later rider assignment)
-    let pickupCoords = null;
-    let dropCoords = null;
-    if (pd.pickup_address) {
-      pickupCoords = await geocodeAddress(pd.pickup_address);
-    }
-    if (pd.drop_address) {
-      dropCoords = await geocodeAddress(pd.drop_address);
-    }
+    const formattedBaseFee = baseFee.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formattedDistCharge = distanceCharge.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formattedTotal = calculatedTotal.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-    // Update the delivery status to Accepted
+    // Update the delivery status in Supabase
     const updateBody = {
-      status: 'Accepted',
+      status: targetStatus || (pd.status === 'Approved' ? 'Approved' : 'Accepted'),
       accepted_by: acceptedBy,
       accepted_at: new Date().toISOString(),
       schedule_token: scheduleToken
     };
-    // Also store geocoded coordinates if we got them
-    if (pickupCoords) {
-      updateBody.pickup_lat = pickupCoords.lat;
-      updateBody.pickup_lng = pickupCoords.lng;
-    }
-    if (dropCoords) {
-      updateBody.drop_lat = dropCoords.lat;
-      updateBody.drop_lng = dropCoords.lng;
-    }
 
     await fetch(
       `${sbUrl}/rest/v1/personal_delivery?pd_id=eq.${pdId}`,
@@ -1201,96 +1440,165 @@ app.post('/api/delivery/accept', async (req, res) => {
       }
     );
 
-    // Construct scheduling link
-    const scheduleUrl = `http://localhost:${port}/api/delivery/schedule/${scheduleToken}`;
-
-    // Send acceptance email with scheduling link to the customer
-    const formattedDate = pd.requested_date ? new Date(pd.requested_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A';
+    // Construct Gmail-clickable scheduling link (127.0.0.1.nip.io avoids Gmail stripping localhost links)
+    const scheduleUrl = `http://127.0.0.1.nip.io:${port}/api/delivery/schedule/${scheduleToken}`;
+    const invoiceNo = `INV-PD-${new Date().getFullYear()}-${String(pd.pd_id).padStart(4, '0')}`;
+    const issueDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const formattedDate = pd.requested_date
+      ? new Date(pd.requested_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : 'N/A';
 
     const htmlContent = `
       <!DOCTYPE html>
       <html>
       <head>
         <meta charset="utf-8">
-        <style>
-          body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f3f4f6; padding: 20px; color: #1f2937; margin: 0; }
-          .container { max-width: 600px; background-color: #ffffff; margin: 0 auto; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
-          .header { background: linear-gradient(135deg, #7c3aed, #a855f7, #c084fc); color: #ffffff; padding: 35px 30px; text-align: center; }
-          .header h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
-          .header p { margin: 8px 0 0 0; font-size: 14px; opacity: 0.9; }
-          .content { padding: 35px 30px; }
-          .greeting { font-size: 17px; font-weight: 600; margin-bottom: 16px; color: #1f2937; }
-          .details-card { background: linear-gradient(135deg, #f8fafc, #f1f5f9); border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 24px 0; }
-          .details-card h3 { margin: 0 0 14px 0; font-size: 15px; color: #475569; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-          .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e2e8f0; font-size: 14px; }
-          .detail-row:last-child { border-bottom: none; }
-          .detail-label { color: #64748b; font-weight: 500; }
-          .detail-value { color: #1e293b; font-weight: 600; text-align: right; max-width: 60%; }
-          .cta-section { text-align: center; margin: 32px 0 20px 0; }
-          .cta-section p { font-size: 15px; color: #475569; margin-bottom: 20px; line-height: 1.6; }
-          .cta-btn { display: inline-block; background: linear-gradient(135deg, #7c3aed, #9333ea); color: #ffffff !important; text-decoration: none; padding: 16px 40px; border-radius: 12px; font-size: 16px; font-weight: 700; letter-spacing: 0.3px; box-shadow: 0 4px 14px rgba(124, 58, 237, 0.4); }
-          .footer { background-color: #f8fafc; padding: 20px 30px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
-          .emoji { font-size: 20px; margin-right: 6px; }
-        </style>
       </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>📦 Delivery Accepted!</h1>
-            <p>Your personal delivery request has been approved</p>
-          </div>
-          <div class="content">
-            <div class="greeting">Hello ${pd.sender_name},</div>
-            <p style="font-size: 15px; line-height: 1.6; color: #475569;">
-              Great news! Your personal delivery request has been <strong style="color: #7c3aed;">accepted</strong> and is ready to be scheduled.
-              Please choose your preferred delivery date and time using the button below.
-            </p>
+      <body style="font-family: Arial, Helvetica, sans-serif; background-color: #f3f4f6; padding: 24px; color: #1f2937; margin: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 640px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0;">
+          <!-- Header -->
+          <tr>
+            <td bgcolor="#ea580c" style="background-color: #ea580c; color: #ffffff; padding: 28px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td>
+                    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff;">S&amp;C COURIER SERVICES</h1>
+                    <p style="margin: 4px 0 0 0; font-size: 13px; color: #ffedd5;">Personal Package Delivery Invoice</p>
+                  </td>
+                  <td align="right">
+                    <span style="display: inline-block; background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">
+                      ACCEPTED &amp; INVOICED
+                    </span>
+                    <p style="margin: 6px 0 0 0; font-size: 13px; color: #ffffff; font-weight: 600;">#${invoiceNo}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
 
-            <div class="details-card">
-              <h3>📋 Delivery Details</h3>
-              <div class="detail-row">
-                <span class="detail-label">Pickup</span>
-                <span class="detail-value">${pd.pickup_address}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Drop-off</span>
-                <span class="detail-value">${pd.drop_address}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Item Type</span>
-                <span class="detail-value">${pd.item_type}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Receiver</span>
-                <span class="detail-value">${pd.receiver_name}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Requested Date</span>
-                <span class="detail-value">${formattedDate}</span>
-              </div>
-            </div>
-
-            <div class="cta-section">
-              <p>
-                <span class="emoji">📅</span> Pick a convenient time slot for your delivery.
-                We'll assign the closest available rider to ensure fast, efficient service.
+          <!-- Content -->
+          <tr>
+            <td style="padding: 28px;">
+              <p style="font-size: 16px; font-weight: 600; color: #111827; margin: 0 0 8px 0;">Hello ${pd.sender_name || 'Valued Customer'},</p>
+              <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px 0;">
+                Great news! Your personal delivery request (<strong>PD-${pd.pd_id}</strong>) has been <strong>accepted</strong>. Please find your official delivery invoice and order breakdown below.
               </p>
-              <a href="${scheduleUrl}" class="cta-btn">Schedule My Delivery</a>
-            </div>
-          </div>
-          <div class="footer">
-            <p>This is an automated message from SC Courier Services.</p>
-            <p>&copy; 2026 SC Courier Services. All rights reserved.</p>
-          </div>
-        </div>
+
+              <!-- Billed To & Invoice Meta -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;">
+                <tr>
+                  <td width="50%" valign="top" style="padding: 16px; border-right: 1px solid #e2e8f0;">
+                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Billed To (Sender)</div>
+                    <div style="font-size: 14px; font-weight: 700; color: #0f172a;">${pd.sender_name || 'Customer'}</div>
+                    <div style="font-size: 13px; color: #334155; margin-top: 2px;">Phone: ${pd.sender_phone || 'N/A'}</div>
+                    <div style="font-size: 13px; color: #475569; margin-top: 2px;">${pd.cust_email}</div>
+                  </td>
+                  <td width="50%" valign="top" style="padding: 16px;">
+                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Invoice Details</div>
+                    <div style="font-size: 13px; color: #334155;"><strong>Invoice No:</strong> ${invoiceNo}</div>
+                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Issue Date:</strong> ${issueDate}</div>
+                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Order Ref:</strong> PD-${pd.pd_id}</div>
+                    <div style="font-size: 13px; color: #334155; margin-top: 3px;"><strong>Approved By:</strong> ${acceptedBy}</div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Shipment Details -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px; border-collapse: collapse;">
+                <tr>
+                  <td colspan="2" style="padding: 10px 12px; background-color: #f1f5f9; font-size: 12px; font-weight: 700; text-transform: uppercase; color: #334155; border-radius: 6px 6px 0 0;">
+                    Shipment &amp; Route Details
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b; width: 35%;">Pickup Location</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${pd.pickup_address}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Drop-off Location</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${pd.drop_address}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Receiver</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${pd.receiver_name} (${pd.receiver_phone || 'N/A'})</td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Package Type &amp; Weight</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">
+                    ${pd.item_type || 'Standard Parcel'}${pd.item_weight ? ` (${pd.item_weight})` : ''}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Requested Date</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #0f172a; font-weight: 600;">${formattedDate} ${pd.requested_time ? `at ${pd.requested_time}` : ''}</td>
+                </tr>
+              </table>
+
+              <!-- Itemized Invoice Breakdown -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 28px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden;">
+                <tr bgcolor="#0f172a" style="background-color: #0f172a; color: #ffffff;">
+                  <th align="left" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Description</th>
+                  <th align="center" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Qty / Dist</th>
+                  <th align="right" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Rate</th>
+                  <th align="right" style="padding: 12px; font-size: 12px; text-transform: uppercase;">Amount (LKR)</th>
+                </tr>
+                <tr>
+                  <td style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">
+                    <strong>Base Courier Pickup &amp; Handling Fee</strong>
+                  </td>
+                  <td align="center" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">1</td>
+                  <td align="right" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">LKR ${formattedBaseFee}</td>
+                  <td align="right" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: 600; color: #0f172a;">LKR ${formattedBaseFee}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">
+                    <strong>Route Distance Charge (${pd.item_type || 'Parcel'})</strong>
+                  </td>
+                  <td align="center" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">${distanceKm} km</td>
+                  <td align="right" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #1e293b;">LKR ${perKmRate}.00/km</td>
+                  <td align="right" style="padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: 600; color: #0f172a;">LKR ${formattedDistCharge}</td>
+                </tr>
+                <tr bgcolor="#f8fafc" style="background-color: #f8fafc;">
+                  <td colspan="3" align="right" style="padding: 14px 12px; font-size: 15px; font-weight: 700; color: #0f172a;">Total Invoice Amount:</td>
+                  <td align="right" style="padding: 14px 12px; font-size: 16px; font-weight: 700; color: #ea580c;">LKR ${formattedTotal}</td>
+                </tr>
+              </table>
+
+              <!-- Optional Schedule CTA -->
+              <div style="text-align: center; margin: 20px 0 10px 0;">
+                <p style="font-size: 13px; color: #475569; margin: 0 0 14px 0;">
+                  Need to confirm or adjust your preferred delivery time slot?
+                </p>
+                <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+                  <tr>
+                    <td align="center" bgcolor="#7c3aed" style="background-color: #7c3aed; border-radius: 8px;">
+                      <a href="${scheduleUrl}" target="_blank" style="display: inline-block; padding: 12px 28px; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; color: #ffffff !important; text-decoration: none; border-radius: 8px; background-color: #7c3aed;">
+                        Confirm / Schedule Delivery Slot
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#f8fafc" style="background-color: #f8fafc; padding: 18px 28px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0;">
+              This is an official computer-generated invoice from S&amp;C Courier Services.<br/>
+              &copy; ${new Date().getFullYear()} S&amp;C Courier Services. All rights reserved.
+            </td>
+          </tr>
+        </table>
       </body>
       </html>
     `;
 
+    const recipientEmail = (overrideEmail && overrideEmail.trim()) || pd.cust_email;
     const mailOptions = {
-      from: `"SC Courier Services" <${process.env.SMTP_USER || 'no-reply@sccourier.com'}>`,
-      to: pd.cust_email,
-      subject: '✅ Delivery Accepted — Schedule Your Preferred Time',
+      from: `"SC Courier Services" <${process.env.SMTP_USER || 'sccourier369@gmail.com'}>`,
+      to: recipientEmail,
+      subject: `Invoice #${invoiceNo} — Personal Delivery Accepted (PD-${pd.pd_id})`,
       html: htmlContent,
     };
 
@@ -1300,13 +1608,19 @@ app.post('/api/delivery/accept', async (req, res) => {
     const info = await transporter.sendMail(mailOptions);
     const previewUrl = nodemailer.getTestMessageUrl(info);
     if (previewUrl) {
-      console.log(`Scheduling Email Preview URL: ${previewUrl}`);
+      console.log(`Invoice & Scheduling Email Preview URL: ${previewUrl}`);
     }
 
-    console.log(`Acceptance email sent to ${pd.cust_email} (PD: ${pd.pd_id})`);
+    console.log(`Personal Delivery Invoice email sent to ${recipientEmail} (${invoiceNo}) | SMTP response: ${info.response}`);
 
     res.json({
-      message: 'Delivery accepted and scheduling email sent!',
+      success: true,
+      invoiceNo,
+      email: recipientEmail,
+      smtpResponse: info.response,
+      accepted: info.accepted,
+      totalAmount: calculatedTotal,
+      message: `Delivery accepted and Invoice #${invoiceNo} sent to ${recipientEmail}!`,
       scheduleUrl,
       previewUrl
     });
