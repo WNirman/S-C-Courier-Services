@@ -252,10 +252,10 @@ const Chatbot = () => {
                 return "📝 **ලියාපදිංචි වන්නේ කෙසේද:**\n\n1. මුල් පිටුවේ ඇති **'Login to Account'** මත ක්ලික් කරන්න.\n2. **'Register Now'** බොත්තම ක්ලික් කරන්න.\n3. ඔබේ විස්තර (නම, ඊමේල්, ලිපිනය, දුරකථන අංකය, මුරපදය) ඇතුළත් කර **'Create Account'** ක්ලික් කරන්න.";
             }
             if (cleanQuery.includes('දුරකථන') || cleanQuery.includes('ඊමේල්') || cleanQuery.includes('කතා') || cleanQuery.includes('සහාය') || cleanQuery.includes('support') || cleanQuery.includes('contact')) {
-                return "📞 **සහාය සේවා සම්බන්ධතා:**\n\n• **දුරකථන**: +94 77 123 4567\n• **ඊමේල්**: support@sccourier.com\n• **ලිපිනය**: 123 Logistics Way, NY 10001\n\nඕනෑම විමසීමක් සඳහා අපගේ පාරිභෝගික සහාය සේවාව 24/7 විවෘතව පවතී.";
+                return "📞 **S C Courier Service සහාය සේවා සම්බන්ධතා:**\n\n• **දුරකථන**: 077-6719470 / 076-9772797\n• **ඊමේල්**: sccourier369@gmail.com\n• **ලිපිනය**: No. 425/A, Nasewana Waththa, Mandawala Road, Radawana, Sri Lanka\n\nඕනෑම විමසීමක් සඳහා අපගේ පාරිභෝගික සහාය සේවාව 24/7 විවෘතව පවතී.";
             }
             if (cleanQuery.includes('ශාඛා') || cleanQuery.includes('ස්ථානය') || cleanQuery.includes('කොහෙද') || cleanQuery.includes('location') || cleanQuery.includes('branch')) {
-                return "📍 අපගේ ප්‍රධාන බෙදාහැරීමේ කාර්යාලය **123 Logistics Way, NY 10001** හි පිහිටා ඇත.";
+                return "📍 අපගේ ප්‍රධාන කාර්යාලය **No. 425/A, Nasewana Waththa, Mandawala Road, Radawana, Sri Lanka** හි පිහිටා ඇත.";
             }
             if (cleanQuery.includes('atr') || cleanQuery.includes('පෝරමය')) {
                 return "📋 **ATR (Activity Travel Request) පෝරමය:**\n\nලියාපදිංචි පාරිභෝගිකයින්ට ඔවුන්ගේ උපකරණ පුවරුවෙන් (Dashboard) **'Deliver Now'** ක්ලික් කිරීමෙන් ATR පෝරමය පුරවා වාහන අවශ්‍යතා සහ ගමන් විස්තර ඉදිරිපත් කළ හැකිය.";
@@ -278,10 +278,10 @@ const Chatbot = () => {
                 return "📝 **பதிவு செய்வது எப்படி:**\n\n1. முகப்புப் பக்கத்தில் **'Login to Account'** என்பதைக் கிளிக் செய்யவும்.\n2. **'Register Now'** பொத்தானைக் கிளிக் செய்யவும்.\n3. உங்கள் விவரங்களை (பெயர், மின்னஞ்சல், முகவரி, தொலைபேசி, கடவுச்சொல்) உள்ளிட்டு **'Create Account'** என்பதைக் கிளிக் செய்யவும்.";
             }
             if (cleanQuery.includes('தொடர்பு') || cleanQuery.includes('தொலை') || cleanQuery.includes('மின்ன') || cleanQuery.includes('ஆதரவு') || cleanQuery.includes('support') || cleanQuery.includes('contact')) {
-                return "📞 **ஆதரவு தொடர்பு விவரங்கள்:**\n\n• **தொலைபேசி**: +94 77 123 4567\n• **மின்னஞ்சல்**: support@sccourier.com\n• **முகவரி**: 123 Logistics Way, NY 10001\n\nஎங்கள் வாடிக்கையாளர் ஆதரவு சேவை 24/7 திறந்திருக்கும்.";
+                return "📞 **S C Courier Service ஆதரவு தொடர்பு விவரங்கள்:**\n\n• **தொலைபேசி**: 077-6719470 / 076-9772797\n• **மின்னஞ்சல்**: sccourier369@gmail.com\n• **முகவரி**: No. 425/A, Nasewana Waththa, Mandawala Road, Radawana, Sri Lanka\n\nஎங்கள் வாடிக்கையாளர் ஆதரவு சேவை 24/7 திறந்திருக்கும்.";
             }
             if (cleanQuery.includes('கிளை') || cleanQuery.includes('இடம்') || cleanQuery.includes('எங்கு') || cleanQuery.includes('location') || cleanQuery.includes('branch')) {
-                return "📍 எங்கள் முக்கிய விநியோக அலுவலகம் **123 Logistics Way, NY 10001** இல் அமைந்துள்ளது.";
+                return "📍 எங்கள் முக்கிய அலுவலகம் **No. 425/A, Nasewana Waththa, Mandawala Road, Radawana, Sri Lanka** இல் அமைந்துள்ளது.";
             }
             if (cleanQuery.includes('atr') || cleanQuery.includes('படிவம்')) {
                 return "📋 **ATR (Activity Travel Request) படிவம்:**\n\nபதிவுசெய்த வாடிக்கையாளர்கள் தங்கள் டாஷ்போர்டில் **'Deliver Now'** என்பதைக் கிளிக் செய்து, பயணத் தகவல்களை வழங்கலாம்.";
@@ -305,10 +305,10 @@ const Chatbot = () => {
                 return "📝 **How to Register:**\n\n1. Click **'Login to Account'** on the homepage.\n2. Click the **'Register Now'** button below the login form.\n3. Fill in your details (Name, Email, Address, Phone, Password) and click **'Create Account'**.\n\nOnce registered, you can log in to view active packages, track delivery history, and submit delivery requests!";
             }
             if (cleanQuery.includes('contact') || cleanQuery.includes('phone') || cleanQuery.includes('email') || cleanQuery.includes('support') || cleanQuery.includes('number')) {
-                return "📞 **Support Channels:**\n\n• **Phone**: +94 77 123 4567\n• **Email**: support@sccourier.com\n• **Office**: 123 Logistics Way, NY 10001\n\nOur customer support line is open 24/7 for delivery inquiries.";
+                return "📞 **S C Courier Service Support Channels:**\n\n• **Telephone**: 077-6719470 / 076-9772797\n• **Email**: sccourier369@gmail.com\n• **Address**: No. 425/A, Nasewana Waththa, Mandawala Road, Radawana, Sri Lanka\n\nOur customer support line is open 24/7 for delivery inquiries.";
             }
             if (cleanQuery.includes('branch') || cleanQuery.includes('location') || cleanQuery.includes('where are you')) {
-                return "📍 Our primary distribution office is located at **123 Logistics Way, NY 10001**.\n\nAll package dispatches are handled through this branch.";
+                return "📍 **S C Courier Service** is located at **No. 425/A, Nasewana Waththa, Mandawala Road, Radawana, Sri Lanka**.\n\nAll package dispatches are handled through our main branch.";
             }
             if (cleanQuery.includes('atr') || cleanQuery.includes('form') || cleanQuery.includes('deliver now')) {
                 return "📋 **ATR (Activity Travel Request) Form:**\n\nRegistered customers can request shipments by logging in, navigating to their Dashboard, and clicking **'Deliver Now'**. This opens the ATR form to specify vehicle requirements and trip details.";

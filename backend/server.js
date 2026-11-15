@@ -16,14 +16,20 @@ app.use(express.json());
 const isLocal = !process.env.DATABASE_URL || process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: isLocal ? false : { rejectUnauthorized: false }
+  ssl: isLocal ? false : { rejectUnauthorized: false },
+  keepAlive: true
 });
 
-pool.connect((err) => {
+pool.on('error', (err) => {
+  console.warn('Idle PostgreSQL pool client error (automatically recovered):', err.message);
+});
+
+pool.connect((err, client, release) => {
   if (err) {
     console.error('Database connection error (Check your password in .env!):', err.stack);
   } else {
     console.log('Connected to PostgreSQL successfully!');
+    release();
   }
 });
 
@@ -1135,6 +1141,78 @@ const haversineDistance = (lat1, lng1, lat2, lng2) => {
   return R * c;
 };
 
+// ============================================================
+// ADMIN PRICING & PER-KM RATE CONFIGURATION
+// ============================================================
+const fs = require('fs');
+const PRICING_FILE_PATH = path.join(__dirname, 'pricing_rates.json');
+
+const DEFAULT_PRICING_RATES = {
+  vehicleRates: {
+    'Bike': 50,
+    'Three-Wheeler': 75,
+    'Car': 110,
+    'Van': 150,
+    'Lorry': 220
+  },
+  personalBaseFee: 250,
+  personalPerKmRate: 60,
+  updatedAt: null,
+  updatedBy: 'admin@sccourier.com'
+};
+
+const getPricingRates = () => {
+  try {
+    if (fs.existsSync(PRICING_FILE_PATH)) {
+      const raw = fs.readFileSync(PRICING_FILE_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_PRICING_RATES,
+        ...parsed,
+        vehicleRates: {
+          ...DEFAULT_PRICING_RATES.vehicleRates,
+          ...(parsed.vehicleRates || {})
+        }
+      };
+    }
+  } catch (err) {
+    console.warn('Error reading pricing_rates.json, using defaults:', err.message);
+  }
+  return DEFAULT_PRICING_RATES;
+};
+
+// GET /api/pricing-rates — Fetch current Admin-configured per-km and base rates
+app.get('/api/pricing-rates', (req, res) => {
+  res.json(getPricingRates());
+});
+
+// PUT /api/pricing-rates — Admin updates per-km vehicle rates & personal delivery rates
+app.put('/api/pricing-rates', (req, res) => {
+  try {
+    const body = req.body || {};
+    const current = getPricingRates();
+    const updated = {
+      vehicleRates: {
+        'Bike': Number(body.vehicleRates?.['Bike']) || current.vehicleRates['Bike'],
+        'Three-Wheeler': Number(body.vehicleRates?.['Three-Wheeler']) || current.vehicleRates['Three-Wheeler'],
+        'Car': Number(body.vehicleRates?.['Car']) || current.vehicleRates['Car'],
+        'Van': Number(body.vehicleRates?.['Van']) || current.vehicleRates['Van'],
+        'Lorry': Number(body.vehicleRates?.['Lorry']) || current.vehicleRates['Lorry']
+      },
+      personalBaseFee: body.personalBaseFee !== undefined ? Number(body.personalBaseFee) : current.personalBaseFee,
+      personalPerKmRate: body.personalPerKmRate !== undefined ? Number(body.personalPerKmRate) : current.personalPerKmRate,
+      updatedAt: new Date().toISOString(),
+      updatedBy: body.updatedBy || 'admin@sccourier.com'
+    };
+    fs.writeFileSync(PRICING_FILE_PATH, JSON.stringify(updated, null, 2), 'utf8');
+    console.log('Pricing rates updated by', updated.updatedBy, updated.vehicleRates);
+    res.json({ success: true, rates: updated });
+  } catch (err) {
+    console.error('Error saving pricing rates:', err);
+    res.status(500).json({ error: 'Failed to save pricing rates: ' + err.message });
+  }
+});
+
 // -------------------------------------------------------
 // 0. POST /api/atr/approve-invoice — Admin/Staff approves an ATR request & emails Invoice to customer
 // -------------------------------------------------------
@@ -1214,7 +1292,8 @@ app.post('/api/atr/approve-invoice', async (req, res) => {
       : 'N/A';
     const reqTime = atr.required_time || 'N/A';
 
-    const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+    const livePricing = getPricingRates();
+    const rateMap = livePricing.vehicleRates;
     const vehicleType = atr.vehicle_type || 'Standard Vehicle';
     const ratePerKm = rateMap[vehicleType] || 100;
     const distanceKm = Number(atr.actual_distance || atr.estimated_distance || 0);
@@ -1414,8 +1493,9 @@ app.post('/api/delivery/accept', async (req, res) => {
       distanceKm = Math.max(1.5, parseFloat((straightDist * 1.25).toFixed(1)));
     }
 
-    const baseFee = 250; // Base pickup & handling fee in LKR
-    const perKmRate = 60; // LKR per km
+    const livePricing = getPricingRates();
+    const baseFee = Number(livePricing.personalBaseFee) || 250; // Base pickup & handling fee in LKR
+    const perKmRate = Number(livePricing.personalPerKmRate) || 60; // LKR per km
     const distanceCharge = Math.round(distanceKm * perKmRate);
     const calculatedTotal = pd.cost ? Number(pd.cost) : (baseFee + distanceCharge);
 

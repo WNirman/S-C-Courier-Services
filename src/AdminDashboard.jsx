@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { generateMonthlyExcelReport } from './utils/reportGenerator';
+import { DEFAULT_PRICING_RATES, getCachedPricingRates, fetchPricingRates, savePricingRates } from './utils/pricingRates';
 
 const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, loggedInUser }) => {
     const [showAssignForm, setShowAssignForm] = useState(false);
@@ -28,6 +29,50 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     const [loadingPD, setLoadingPD] = useState(false);
     const [acceptingPD, setAcceptingPD] = useState(null);
 
+    // Admin Pricing & Per-KM Rates State
+    const [pricingConfig, setPricingConfig] = useState(() => getCachedPricingRates());
+    const [savingPricing, setSavingPricing] = useState(false);
+
+    useEffect(() => {
+        fetchPricingRates().then(rates => setPricingConfig(rates));
+    }, []);
+
+    const handleVehicleRateChange = (vehicle, value) => {
+        setPricingConfig(prev => ({
+            ...prev,
+            vehicleRates: {
+                ...prev.vehicleRates,
+                [vehicle]: value
+            }
+        }));
+    };
+
+    const handleSavePricing = async (e) => {
+        e.preventDefault();
+        setSavingPricing(true);
+        try {
+            const saved = await savePricingRates(pricingConfig, loggedInUser || 'admin@sccourier.com');
+            setPricingConfig(saved);
+            alert('Per-KM vehicle rates & delivery pricing updated successfully! All new ATR requests, Personal Deliveries, and Invoices will now use these rates.');
+        } catch (err) {
+            alert('Failed to save pricing rates: ' + err.message);
+        } finally {
+            setSavingPricing(false);
+        }
+    };
+
+    const handleResetDefaultPricing = async () => {
+        if (!window.confirm('Reset all vehicle & delivery per-km rates to system defaults?')) return;
+        setSavingPricing(true);
+        try {
+            const saved = await savePricingRates(DEFAULT_PRICING_RATES, loggedInUser || 'admin@sccourier.com');
+            setPricingConfig(saved);
+            alert('Pricing rates reset to defaults.');
+        } finally {
+            setSavingPricing(false);
+        }
+    };
+
     // Admin ATR Actual Distance Modal State
     const [adminEditingAtr, setAdminEditingAtr] = useState(null);
     const [adminActualDist, setAdminActualDist] = useState('');
@@ -38,8 +83,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         setAdminEditingAtr(atrItem);
         const suggested = atrItem.actual_distance || atrItem.estimated_distance || '';
         setAdminActualDist(suggested ? String(suggested) : '');
-        const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
-        const rate = rateMap[atrItem.vehicle_type] || 100;
+        const rateMap = pricingConfig.vehicleRates || DEFAULT_PRICING_RATES.vehicleRates;
+        const rate = Number(rateMap[atrItem.vehicle_type]) || 100;
         const calculatedCost = suggested ? (parseFloat(suggested) * rate).toFixed(2) : (atrItem.actual_cost || atrItem.estimated_cost || '');
         setAdminActualCost(calculatedCost ? String(calculatedCost) : '');
     };
@@ -47,8 +92,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
     const handleAdminActualDistChange = (val) => {
         setAdminActualDist(val);
         if (adminEditingAtr && val && !isNaN(parseFloat(val))) {
-            const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
-            const rate = rateMap[adminEditingAtr.vehicle_type] || 100;
+            const rateMap = pricingConfig.vehicleRates || DEFAULT_PRICING_RATES.vehicleRates;
+            const rate = Number(rateMap[adminEditingAtr.vehicle_type]) || 100;
             setAdminActualCost((parseFloat(val) * rate).toFixed(2));
         }
     };
@@ -1086,6 +1131,44 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                     }}
                 >
                     <i className='bx bx-package'></i> Personal Deliveries
+                </button>
+                <button
+                    onClick={() => setActiveTab('corporate')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'corporate' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'corporate' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-buildings'></i> Corporate Deliveries
+                </button>
+                <button
+                    onClick={() => setActiveTab('pricing')}
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: activeTab === 'pricing' ? 'var(--accent-color)' : 'var(--text-secondary)',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        padding: '0.5rem 1.5rem',
+                        cursor: 'pointer',
+                        borderBottom: activeTab === 'pricing' ? '3px solid var(--accent-color)' : '3px solid transparent',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}
+                >
+                    <i className='bx bx-Purchase-tag-alt bx-dollar-circle'></i> Pricing &amp; Per-KM Rates
                 </button>
             </div>
 
@@ -2211,6 +2294,359 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 })}
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'corporate' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem', animation: 'fadeIn 0.4s ease', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.5rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
+                                    <i className='bx bx-buildings' style={{ color: '#3b82f6' }}></i> Corporate Delivery &amp; ATR Requests
+                                </h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>Accept corporate travel &amp; delivery requests, send automated invoices to corporate clients, and record trip actuals.</p>
+                            </div>
+                            <button onClick={loadAtrRequests} className="secondary-btn" style={{ width: 'auto', padding: '0.5rem 1rem', height: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)' }}>
+                                <i className='bx bx-refresh'></i> Refresh
+                            </button>
+                        </div>
+
+                        {loadingAtr ? (
+                            <p style={{ color: 'var(--text-secondary)' }}><i className="bx bx-loader-alt bx-spin" style={{ marginRight: '0.5rem' }}></i> Loading corporate requests...</p>
+                        ) : atrRequests.length === 0 ? (
+                            <p style={{ color: 'var(--text-secondary)' }}>No corporate delivery / ATR requests found.</p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                                {atrRequests.map((req) => {
+                                    const deptInfo = deptCompMap[req.dep_id];
+                                    const custCompName = customerCompMap[req.cust_email];
+                                    const companyDisplayName = deptInfo?.comp_name || custCompName || 'SC Courier Corporate Client';
+                                    const deptDisplayName = deptInfo?.dep_name || 'Operations';
+
+                                    const statusColors = {
+                                        'Pending': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                        'Approved': { bg: 'rgba(59, 130, 246, 0.1)', text: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.2)' },
+                                        'Accepted': { bg: 'rgba(59, 130, 246, 0.1)', text: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.2)' },
+                                        'Assigned': { bg: 'rgba(16, 185, 129, 0.1)', text: '#10b981', border: '1px solid rgba(16, 185, 129, 0.2)' },
+                                        'In Transit': { bg: 'rgba(245, 158, 11, 0.1)', text: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' },
+                                        'Completed': { bg: 'rgba(16, 185, 129, 0.15)', text: '#059669', border: '1px solid rgba(16, 185, 129, 0.3)' },
+                                        'Rejected': { bg: 'rgba(239, 68, 68, 0.1)', text: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' },
+                                    };
+                                    const currentStatus = req.status || 'Pending';
+                                    const sc = statusColors[currentStatus] || statusColors['Pending'];
+                                    const isPending = currentStatus.toLowerCase() === 'pending';
+                                    const isCompleted = currentStatus.toLowerCase() === 'completed';
+
+                                    return (
+                                        <div key={req.atr_id} style={{
+                                            padding: '1.5rem',
+                                            background: 'rgba(255, 255, 255, 0.02)',
+                                            borderRadius: '16px',
+                                            border: '1px solid var(--card-border)',
+                                            transition: 'all 0.3s ease',
+                                            textAlign: 'left'
+                                        }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                                                <div style={{ flex: '1 1 300px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                                                        <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#fff' }}>
+                                                            {req.atr_number || `ATR-${req.atr_id}`}
+                                                        </span>
+                                                        <span style={{
+                                                            display: 'inline-block', padding: '0.25rem 0.65rem',
+                                                            background: sc.bg, color: sc.text,
+                                                            borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
+                                                            border: sc.border
+                                                        }}>{currentStatus}</span>
+                                                        <span style={{
+                                                            display: 'inline-block', padding: '0.22rem 0.6rem',
+                                                            background: 'rgba(59, 130, 246, 0.1)', color: '#60a5fa',
+                                                            borderRadius: '8px', fontSize: '0.75rem', fontWeight: '600',
+                                                            border: '1px solid rgba(59, 130, 246, 0.2)'
+                                                        }}>
+                                                            🚘 {req.vehicle_type || 'Standard'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                                        <div><strong>🏢 Client:</strong> {companyDisplayName} ({deptDisplayName})</div>
+                                                        <div><strong>👤 Passenger:</strong> {req.principal_passenger_name} {req.principal_passenger_designation ? `(${req.principal_passenger_designation})` : ''}</div>
+                                                        <div><strong>📍 Route / Purpose:</strong> {req.purpose_of_travel || 'Corporate Dispatch'}</div>
+                                                        <div><strong>📅 Required:</strong> {req.required_date} @ {req.required_time}</div>
+                                                        <div><strong>📏 Est. Distance:</strong> {req.estimated_distance || 0} km</div>
+                                                        <div><strong>💰 Est. Cost:</strong> LKR {Number(req.estimated_cost || 0).toLocaleString()}</div>
+                                                        {req.cust_email && (
+                                                            <div><strong>✉️ Client Email:</strong> {req.cust_email}</div>
+                                                        )}
+                                                        {req.authorizer_name && (
+                                                            <div><strong>✍️ Authorized by:</strong> {req.authorizer_name} {req.authorizer_designation ? `(${req.authorizer_designation})` : ''}</div>
+                                                        )}
+                                                        {req.assigned_rider_nic && (
+                                                            <div style={{ color: '#10b981' }}><strong>🏍️ Rider NIC:</strong> {req.assigned_rider_nic}</div>
+                                                        )}
+                                                        {(req.actual_distance || req.actual_cost) && (
+                                                            <div style={{ color: '#10b981' }}>
+                                                                <strong>🏁 Actuals:</strong> {req.actual_distance || req.estimated_distance || 0} km / LKR {Number(req.actual_cost || req.estimated_cost || 0).toLocaleString()}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                                    {isPending && (
+                                                        <>
+                                                            <button
+                                                                onClick={() => handleApproveAtr(req.atr_id)}
+                                                                className="primary-btn pulse-effect"
+                                                                style={{
+                                                                    width: 'auto',
+                                                                    background: 'linear-gradient(135deg, #2563eb, #3b82f6)',
+                                                                    display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                    height: '40px', padding: '0 1.25rem',
+                                                                    boxShadow: '0 4px 14px rgba(59, 130, 246, 0.3)',
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                            >
+                                                                <i className='bx bx-check-circle'></i> Accept &amp; Send Invoice
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleRejectAtr(req.atr_id)}
+                                                                className="secondary-btn"
+                                                                style={{
+                                                                    width: 'auto',
+                                                                    background: 'rgba(239, 68, 68, 0.1)',
+                                                                    color: '#ef4444',
+                                                                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                                                                    display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                    height: '40px', padding: '0 1rem',
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                            >
+                                                                <i className='bx bx-x-circle'></i> Reject
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {!isPending && !isCompleted && currentStatus !== 'Rejected' && (
+                                                        <button
+                                                            onClick={() => handleOpenAdminAtrModal(req)}
+                                                            className="secondary-btn"
+                                                            style={{
+                                                                width: 'auto',
+                                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                padding: '0.5rem 1rem', height: '38px',
+                                                                background: 'rgba(16, 185, 129, 0.12)',
+                                                                color: '#10b981',
+                                                                border: '1px solid rgba(16, 185, 129, 0.3)',
+                                                                borderRadius: '10px',
+                                                                fontSize: '0.85rem', fontWeight: '600',
+                                                                cursor: 'pointer'
+                                                            }}
+                                                        >
+                                                            <i className='bx bx-check-double'></i> Record Actuals &amp; Complete
+                                                        </button>
+                                                    )}
+                                                    {isCompleted && (
+                                                        <span style={{
+                                                            display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                            color: '#059669', fontSize: '0.9rem', fontWeight: '600'
+                                                        }}>
+                                                            <i className='bx bx-check-double'></i> Completed
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'pricing' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', animation: 'fadeIn 0.4s ease', width: '100%' }}>
+                    <div className="action-card" style={{ padding: '2rem', border: '1px solid var(--card-border)', width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: 0 }}>
+                        <div className="card-header" style={{ marginBottom: '1.75rem', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.45rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', margin: 0 }}>
+                                    <i className='bx bx-dollar-circle' style={{ color: 'var(--accent-color)' }}></i> Vehicle &amp; Delivery Per-KM Rate Configuration
+                                </h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.35rem' }}>
+                                    Configure the per-kilometer tariffs for Corporate ATR vehicles and Personal Package Deliveries. Changes apply immediately to customer booking forms, staff actuals, and automated email invoices.
+                                </p>
+                            </div>
+                            {pricingConfig.updatedAt && (
+                                <span style={{
+                                    background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)',
+                                    color: 'var(--success)', padding: '0.35rem 0.85rem', borderRadius: '999px', fontSize: '0.78rem', fontWeight: 600
+                                }}>
+                                    Last updated: {new Date(pricingConfig.updatedAt).toLocaleString()}
+                                </span>
+                            )}
+                        </div>
+
+                        <form onSubmit={handleSavePricing} style={{ textAlign: 'left' }}>
+                            {/* Section 1: Corporate ATR Vehicle Per-KM Rates */}
+                            <div style={{ marginBottom: '2rem' }}>
+                                <h4 style={{ color: '#fff', fontSize: '1.05rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                    <i className='bx bx-car' style={{ color: '#3b82f6' }}></i> Corporate ATR Vehicle Rates (LKR per KM)
+                                </h4>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                                    {[
+                                        { key: 'Bike', icon: 'bx-cycling', label: 'Bike (Motorcycle)', desc: 'Documents & express light dispatch' },
+                                        { key: 'Three-Wheeler', icon: 'bx-trip', label: 'Three-Wheeler (Tuk)', desc: 'Short-distance urban travel' },
+                                        { key: 'Car', icon: 'bx-car', label: 'Car (Sedan / Hatchback)', desc: 'Executive passenger transport' },
+                                        { key: 'Van', icon: 'bx-bus', label: 'Van (Multi-Passenger)', desc: 'Group travel & medium cargo' },
+                                        { key: 'Lorry', icon: 'bx-truck', label: 'Lorry (Heavy Freight)', desc: 'Bulk corporate logistics' }
+                                    ].map(v => (
+                                        <div key={v.key} style={{
+                                            background: 'rgba(255,255,255,0.03)', border: '1px solid var(--card-border)',
+                                            borderRadius: '14px', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.6rem'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <div style={{
+                                                    width: '36px', height: '36px', borderRadius: '10px',
+                                                    background: 'rgba(59, 130, 246, 0.12)', color: '#60a5fa',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem'
+                                                }}>
+                                                    <i className={`bx ${v.icon}`}></i>
+                                                </div>
+                                                <div>
+                                                    <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.92rem' }}>{v.label}</div>
+                                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{v.desc}</div>
+                                                </div>
+                                            </div>
+                                            <div style={{ position: 'relative', marginTop: '0.25rem' }}>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    step="1"
+                                                    required
+                                                    value={pricingConfig.vehicleRates?.[v.key] ?? ''}
+                                                    onChange={(e) => handleVehicleRateChange(v.key, e.target.value)}
+                                                    style={{
+                                                        width: '100%', padding: '0.65rem 4.5rem 0.65rem 0.85rem',
+                                                        background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)',
+                                                        borderRadius: '10px', color: '#fff', fontSize: '1.05rem', fontWeight: 700, outline: 'none'
+                                                    }}
+                                                />
+                                                <span style={{
+                                                    position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)',
+                                                    color: '#60a5fa', fontSize: '0.78rem', fontWeight: 600, pointerEvents: 'none'
+                                                }}>
+                                                    LKR / km
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Section 2: Personal Package Delivery Rates */}
+                            <div style={{ marginBottom: '2rem' }}>
+                                <h4 style={{ color: '#fff', fontSize: '1.05rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                    <i className='bx bx-package' style={{ color: '#a855f7' }}></i> Personal Package Delivery Rates (LKR)
+                                </h4>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
+                                    <div style={{
+                                        background: 'rgba(255,255,255,0.03)', border: '1px solid var(--card-border)',
+                                        borderRadius: '14px', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.6rem'
+                                    }}>
+                                        <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.95rem' }}>Base Pickup &amp; Handling Fee</div>
+                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>Fixed base fee applied to every personal delivery order</div>
+                                        <div style={{ position: 'relative', marginTop: '0.25rem' }}>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                required
+                                                value={pricingConfig.personalBaseFee ?? ''}
+                                                onChange={(e) => setPricingConfig(prev => ({ ...prev, personalBaseFee: e.target.value }))}
+                                                style={{
+                                                    width: '100%', padding: '0.65rem 3.5rem 0.65rem 0.85rem',
+                                                    background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)',
+                                                    borderRadius: '10px', color: '#fff', fontSize: '1.05rem', fontWeight: 700, outline: 'none'
+                                                }}
+                                            />
+                                            <span style={{
+                                                position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)',
+                                                color: '#c084fc', fontSize: '0.78rem', fontWeight: 600, pointerEvents: 'none'
+                                            }}>
+                                                LKR
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div style={{
+                                        background: 'rgba(255,255,255,0.03)', border: '1px solid var(--card-border)',
+                                        borderRadius: '14px', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.6rem'
+                                    }}>
+                                        <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.95rem' }}>Personal Delivery Route Rate (Per KM)</div>
+                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>Added per kilometer between pinned Pickup and Drop-off locations</div>
+                                        <div style={{ position: 'relative', marginTop: '0.25rem' }}>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                step="1"
+                                                required
+                                                value={pricingConfig.personalPerKmRate ?? ''}
+                                                onChange={(e) => setPricingConfig(prev => ({ ...prev, personalPerKmRate: e.target.value }))}
+                                                style={{
+                                                    width: '100%', padding: '0.65rem 4.5rem 0.65rem 0.85rem',
+                                                    background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)',
+                                                    borderRadius: '10px', color: '#fff', fontSize: '1.05rem', fontWeight: 700, outline: 'none'
+                                                }}
+                                            />
+                                            <span style={{
+                                                position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)',
+                                                color: '#c084fc', fontSize: '0.78rem', fontWeight: 600, pointerEvents: 'none'
+                                            }}>
+                                                LKR / km
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', flexWrap: 'wrap', borderTop: '1px solid var(--card-border)', paddingTop: '1.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={handleResetDefaultPricing}
+                                    disabled={savingPricing}
+                                    className="secondary-btn"
+                                    style={{
+                                        width: 'auto', padding: '0.75rem 1.25rem', height: 'auto',
+                                        background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--card-border)',
+                                        display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer'
+                                    }}
+                                >
+                                    <i className='bx bx-reset'></i> Reset to Defaults
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={savingPricing}
+                                    className="primary-btn pulse-effect"
+                                    style={{
+                                        width: 'auto', padding: '0.75rem 1.75rem', height: 'auto',
+                                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                        display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer',
+                                        boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)'
+                                    }}
+                                >
+                                    {savingPricing ? (
+                                        <><i className='bx bx-loader-alt bx-spin'></i> Saving Rates...</>
+                                    ) : (
+                                        <><i className='bx bx-save'></i> Save Pricing Rates</>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import logoImg from './assets/favicon.png';
 import { supabase } from './supabaseClient';
+import { getCachedPricingRates, fetchPricingRates } from './utils/pricingRates';
 
 const DEFAULT_OFFICE = {
     name: 'Colombo Main Office',
@@ -20,20 +21,19 @@ const KNOWN_BRANCH_COORDS = {
     'matara': { lat: 5.9549, lng: 80.5550 }
 };
 
-const VEHICLE_RATES = {
-    'Bike': 50,
-    'Three-Wheeler': 75,
-    'Car': 110,
-    'Van': 150,
-    'Lorry': 220
-};
-
 function AtrForm({ onBack, loggedInUser }) {
+    const [vehicleRates, setVehicleRates] = useState(() => getCachedPricingRates().vehicleRates);
     const [branches, setBranches] = useState([]);
     const [selectedOffice, setSelectedOffice] = useState('Main Office (Colombo)');
     const [destinationAddress, setDestinationAddress] = useState('');
     const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
     const [distanceStatus, setDistanceStatus] = useState('');
+
+    useEffect(() => {
+        fetchPricingRates().then(r => {
+            if (r?.vehicleRates) setVehicleRates(r.vehicleRates);
+        });
+    }, []);
 
     // Companies and Departments State
     const [companiesList, setCompaniesList] = useState([]);
@@ -322,9 +322,9 @@ function AtrForm({ onBack, loggedInUser }) {
         const { name, value } = e.target;
         setFormData(prev => {
             const updated = { ...prev, [name]: value };
-            // If vehicle type changed and estimatedDistance is present, auto-update estimated cost
-            if (name === 'vehicleType' && updated.estimatedDistance && !isNaN(parseFloat(updated.estimatedDistance))) {
-                const rate = VEHICLE_RATES[value] || 100;
+            // If vehicle type or estimatedDistance changed and both are present, auto-update estimated cost
+            if ((name === 'vehicleType' || name === 'estimatedDistance') && updated.vehicleType && updated.estimatedDistance && !isNaN(parseFloat(updated.estimatedDistance))) {
+                const rate = Number(vehicleRates[updated.vehicleType]) || 100;
                 updated.estimatedCost = (parseFloat(updated.estimatedDistance) * rate).toFixed(2);
             }
             return updated;
@@ -391,7 +391,7 @@ function AtrForm({ onBack, loggedInUser }) {
 
             if (routeData && routeData.routes && routeData.routes.length > 0) {
                 const distanceKm = (routeData.routes[0].distance / 1000).toFixed(2);
-                const rate = VEHICLE_RATES[formData.vehicleType] || 100;
+                const rate = Number(vehicleRates[formData.vehicleType]) || 100;
                 const cost = (parseFloat(distanceKm) * rate).toFixed(2);
 
                 setFormData(prev => ({
@@ -413,7 +413,7 @@ function AtrForm({ onBack, loggedInUser }) {
                 const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
                 const estKm = (R * c * 1.3).toFixed(2);
 
-                const rate = VEHICLE_RATES[formData.vehicleType] || 100;
+                const rate = Number(vehicleRates[formData.vehicleType]) || 100;
                 setFormData(prev => ({
                     ...prev,
                     estimatedDistance: estKm,
@@ -719,11 +719,11 @@ function AtrForm({ onBack, loggedInUser }) {
                                     <i className='bx bx-car'></i>
                                     <select name="vehicleType" value={formData.vehicleType} onChange={handleChange} required>
                                         <option value="" disabled>Select Vehicle Type</option>
-                                        <option value="Van">Van</option>
-                                        <option value="Lorry">Lorry</option>
-                                        <option value="Bike">Motorbike</option>
-                                        <option value="Three-Wheeler">Three-Wheeler</option>
-                                        <option value="Car">Car</option>
+                                        <option value="Van">Van ({vehicleRates['Van']} LKR/km)</option>
+                                        <option value="Lorry">Lorry ({vehicleRates['Lorry']} LKR/km)</option>
+                                        <option value="Bike">Motorbike ({vehicleRates['Bike']} LKR/km)</option>
+                                        <option value="Three-Wheeler">Three-Wheeler ({vehicleRates['Three-Wheeler']} LKR/km)</option>
+                                        <option value="Car">Car ({vehicleRates['Car']} LKR/km)</option>
                                     </select>
                                 </div>
                             </div>

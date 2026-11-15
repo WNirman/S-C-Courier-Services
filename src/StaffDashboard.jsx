@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { generateMonthlyExcelReport } from './utils/reportGenerator';
+import { getCachedPricingRates, fetchPricingRates } from './utils/pricingRates';
 
 const StaffDashboard = ({ loggedInUser }) => {
     const [staffProfile, setStaffProfile] = useState(null);
@@ -169,6 +170,7 @@ const StaffDashboard = ({ loggedInUser }) => {
     // Realtime subscription + 5s background sync for seamless multi-PC updates
     useEffect(() => {
         refreshAll();
+        fetchPricingRates();
 
         
 
@@ -489,8 +491,8 @@ const StaffDashboard = ({ loggedInUser }) => {
         setCompletingAtr(atr);
         const defaultDist = atr.estimated_distance ? String(atr.estimated_distance) : '';
         setActualDistanceInput(defaultDist);
-        const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
-        const rate = rateMap[atr.vehicle_type] || 100;
+        const rateMap = getCachedPricingRates().vehicleRates || { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+        const rate = Number(rateMap[atr.vehicle_type]) || 100;
         const estCost = defaultDist ? (parseFloat(defaultDist) * rate).toFixed(2) : (atr.estimated_cost ? String(atr.estimated_cost) : '');
         setActualCostInput(estCost);
     };
@@ -1084,8 +1086,8 @@ const StaffDashboard = ({ loggedInUser }) => {
                                     value={actualDistanceInput}
                                     onChange={(e) => {
                                         setActualDistanceInput(e.target.value);
-                                        const rateMap = { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
-                                        const rate = rateMap[completingAtr.vehicle_type] || 100;
+                                        const rateMap = getCachedPricingRates().vehicleRates || { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
+                                        const rate = Number(rateMap[completingAtr.vehicle_type]) || 100;
                                         if (e.target.value && !isNaN(parseFloat(e.target.value))) {
                                             setActualCostInput((parseFloat(e.target.value) * rate).toFixed(2));
                                         }

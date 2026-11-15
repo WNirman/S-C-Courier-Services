@@ -1,0 +1,13 @@
+{
+  "vehicleRates": {
+    "Bike": 50,
+    "Three-Wheeler": 75,
+    "Car": 110,
+    "Van": 150,
+    "Lorry": 220
+  },
+  "personalBaseFee": 250,
+  "personalPerKmRate": 60,
+  "updatedAt": "2026-11-15T00:44:00.840Z",
+  "updatedBy": "admin@sccourier.com"
+}
