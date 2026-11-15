@@ -180,6 +180,17 @@
     "atr-44": "inv_corp_1794709905453_irgt",
     "pd-7": "inv_pd_7_1794722734071"
   },
-  "lockedActuals": {},
+  "lockedActuals": {
+    "atr-51": {
+      "key": "atr-51",
+      "source": "atr",
+      "id": 51,
+      "actual_distance": 4000,
+      "actual_cost": 880000,
+      "locked": true,
+      "locked_by": "sarawanan@sccourier.com",
+      "locked_at": "2026-11-15T15:14:43.480Z"
+    }
+  },
   "lastSchedulerRun": "2026-11-15T14:40:45.977Z"
 }

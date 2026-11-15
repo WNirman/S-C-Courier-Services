@@ -731,8 +731,8 @@ const StaffDashboard = ({ loggedInUser }) => {
     const assignedCount = atrRequests.filter(a => a.assigned_rider_nic || a.status === 'Assigned').length + personalDeliveries.filter(p => p.assigned_rider_nic || p.status === 'Assigned').length;
     const completedCount = atrRequests.filter(a => a.status === 'Completed').length + personalDeliveries.filter(p => p.status === 'Completed').length;
 
-    // Strict unified grid column specification for 100% pixel-perfect alignment
-    const ORDER_GRID_COLUMNS = '130px 1fr 135px 140px 105px 360px';
+    // Responsive grid column specification sized to fit without horizontal scrolling
+    const ORDER_GRID_COLUMNS = '120px minmax(170px, 1fr) 115px 132px 96px minmax(295px, 335px)';
 
     return (
         <div className="dashboard-container" style={{ animation: 'fadeIn 0.5s ease', padding: '2rem', width: '100%', maxWidth: '1400px', margin: '0 auto', zIndex: 10 }}>
@@ -927,15 +927,15 @@ const StaffDashboard = ({ loggedInUser }) => {
             </div>
 
             {/* ── Unified Orders List ── */}
-            <div style={{ width: '100%', overflowX: 'auto', paddingBottom: '0.5rem' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', minWidth: '1160px', width: '100%' }}>
+            <div style={{ width: '100%', overflowX: 'hidden', paddingBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
                     {/* Header Bar */}
                     <div style={{
                         display: 'grid',
                         gridTemplateColumns: ORDER_GRID_COLUMNS,
                         alignItems: 'center',
-                        gap: '1rem',
-                        padding: '0.75rem 1.25rem',
+                        gap: '0.75rem',
+                        padding: '0.75rem 1rem',
                         background: 'rgba(255, 255, 255, 0.04)',
                         borderRadius: '8px',
                         border: '1px solid rgba(255, 255, 255, 0.06)',
@@ -1006,8 +1006,8 @@ const StaffDashboard = ({ loggedInUser }) => {
                                         display: 'grid',
                                         gridTemplateColumns: ORDER_GRID_COLUMNS,
                                         alignItems: 'center',
-                                        gap: '1rem',
-                                        padding: '0.9rem 1.25rem',
+                                        gap: '0.75rem',
+                                        padding: '0.9rem 1rem',
                                         background: isAtr ? 'rgba(59, 130, 246, 0.03)' : 'rgba(168, 85, 247, 0.03)',
                                         borderRadius: '10px',
                                         border: isAtr ? '1px solid rgba(59, 130, 246, 0.15)' : '1px solid rgba(168, 85, 247, 0.15)',
@@ -1061,7 +1061,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                                         {(orderActState.actDist !== null || orderActState.actCost !== null) && (
                                             <>
                                                 <span style={{ color: isActualsLocked ? '#10b981' : '#60a5fa', fontSize: '0.72rem', fontWeight: 600, marginTop: '0.15rem' }}>
-                                                    Act: {orderActState.actCost ?? orderActState.estCost} LKR {isActualsLocked ? '🔒' : ''}
+                                                    Act: {orderActState.actCost ?? orderActState.estCost} LKR
                                                 </span>
                                                 <span style={{ color: isActualsLocked ? '#6ee7b7' : '#93c5fd', fontSize: '0.7rem' }}>
                                                     {orderActState.actDist ?? orderActState.estDist} km
@@ -1083,7 +1083,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                                     </div>
 
                                     {/* Col 6: Assignment & Actions */}
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '0.45rem', minWidth: 0, width: '100%' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '0.45rem', minWidth: 0, width: '100%', flexWrap: 'wrap' }}>
                                         {/* Step 1: Pending -> Accept / Approve */}
                                         {isPending ? (
                                             <button
@@ -1116,10 +1116,10 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                 padding: '0.35rem 0.65rem',
                                                 borderRadius: '8px',
                                                 width: '100%',
-                                                maxWidth: '350px',
+                                                maxWidth: '100%',
+                                                minWidth: 0,
                                                 textAlign: 'left',
-                                                boxSizing: 'border-box',
-                                                flexShrink: 0
+                                                boxSizing: 'border-box'
                                             }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
                                                     <span style={{
@@ -1171,8 +1171,9 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                 border: '1px solid rgba(16, 185, 129, 0.25)',
                                                 padding: '0.3rem 0.55rem',
                                                 borderRadius: '8px',
-                                                maxWidth: isAtr ? '240px' : '310px',
-                                                flexShrink: 0
+                                                maxWidth: '100%',
+                                                flex: '1 1 0',
+                                                minWidth: 0
                                             }}>
                                                 <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left', minWidth: 0 }}>
                                                     <span style={{
@@ -1191,7 +1192,8 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                             fontSize: '0.78rem',
                                                             fontWeight: '600',
                                                             lineHeight: 1.2,
-                                                            marginTop: '2px'
+                                                            marginTop: '2px',
+                                                            overflowWrap: 'anywhere'
                                                         }}
                                                         title={riderDisplayName}
                                                     >
@@ -1228,13 +1230,15 @@ const StaffDashboard = ({ loggedInUser }) => {
                                             </div>
                                         ) : (
                                             /* Step 2a: Request is Approved -> Match & Assign Rider */
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0, flex: '1 1 auto' }}>
                                                 <select
                                                     id={`select-staff-rider-${item.id}`}
                                                     defaultValue=""
                                                     style={{
-                                                        width: isAtr ? '150px' : '180px',
-                                                        maxWidth: '180px',
+                                                        width: isAtr ? '140px' : '155px',
+                                                        minWidth: '115px',
+                                                        flex: '1 1 120px',
+                                                        maxWidth: '165px',
                                                         padding: '0.35rem 0.5rem',
                                                         background: 'rgba(20, 20, 20, 0.95)',
                                                         border: '1px solid rgba(16, 185, 129, 0.4)',
@@ -1304,33 +1308,8 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                     lineHeight: 1
                                                 }}
                                             >
-                                                <i className='bx bx-edit-alt'></i> {isCompleted ? 'Enter & Lock Actuals' : 'Actuals'}
+                                                <i className='bx bx-edit-alt'></i> {isCompleted ? 'Enter Actuals' : 'Actuals'}
                                             </button>
-                                        )}
-                                        {isActualsLocked && (
-                                            <span
-                                                title={`Actuals locked${orderActState.lockRecord?.locked_by ? ` by ${orderActState.lockRecord.locked_by}` : ''}`}
-                                                style={{
-                                                    width: 'auto',
-                                                    padding: '0.32rem 0.6rem',
-                                                    height: '32px',
-                                                    fontSize: '0.73rem',
-                                                    fontWeight: '700',
-                                                    whiteSpace: 'nowrap',
-                                                    flexShrink: 0,
-                                                    background: 'rgba(16,185,129,0.12)',
-                                                    color: '#10b981',
-                                                    border: '1px solid rgba(16,185,129,0.3)',
-                                                    borderRadius: '6px',
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.25rem',
-                                                    lineHeight: 1,
-                                                    boxSizing: 'border-box'
-                                                }}
-                                            >
-                                                <i className='bx bxs-lock-alt'></i> Locked
-                                            </span>
                                         )}
                                     </div>
                                 </div>
