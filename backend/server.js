@@ -1,3 +1,5 @@
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
 const path = require('path');
 require('dotenv').config();
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
@@ -17,13 +19,20 @@ const {
   sendCorporateAcceptanceEmail,
   sendInvoiceEmailWithPdf,
   createOrGetPersonalInvoice,
-  generateCorporateInvoiceForRequests
+  generateCorporateInvoiceForRequests,
+  computeAtrBillingValues,
+  applyActualsToInvoicesInStore,
+  reconcileInvoicesWithLiveActuals
 } = require('./invoiceService');
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware
+// Middleware (including Chrome Private Network Access header so https://*.vercel.app can reach localhost:5000)
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  next();
+});
 app.use(cors());
 app.use(express.json());
 
@@ -278,7 +287,7 @@ app.post('/api/admin/send-staff-credentials', async (req, res) => {
     res.json({ message: 'Email sent successfully!', previewUrl });
   } catch (err) {
     console.error('Error sending credentials email:', err);
-    res.status(500).json({ error: 'Failed to send credentials email. Check SMTP configuration.' });
+    res.status(500).json({ error: err.message || 'Failed to send credentials email. Check SMTP configuration.' });
   }
 });
 
@@ -502,31 +511,125 @@ app.put('/api/admin/profile', async (req, res) => {
 // --- ATR EMAIL APPROVALS --- //
 const nodemailer = require('nodemailer');
 
-// Setup Nodemailer Transporter
+// Setup Nodemailer Transporter (IPv4-first + 587 -> 465 failover + optional Port-443 HTTPS relay)
 let transporter;
+const resolveSmtpIpv4 = async (hostname) => {
+  try {
+    const ips = await dns.promises.resolve4(hostname);
+    if (Array.isArray(ips) && ips.length > 0) return ips[0];
+  } catch (_) {
+    /* ignore DNS A lookup error and fall back to hostname */
+  }
+  return hostname;
+};
+
 const setupTransporter = async () => {
-  process.env.SMTP_HOST = 'smtp.gmail.com';
-  process.env.SMTP_PORT = '587';
-  process.env.SMTP_SECURE = 'false';
-  process.env.SMTP_USER = 'sccourier369@gmail.com';
-  process.env.SMTP_PASS = 'safajaukaammdgpb';
+  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+  const smtpUser = (process.env.SMTP_USER || 'sccourier369@gmail.com').trim();
+  const smtpPass = (process.env.SMTP_PASS || 'safajaukaammdgpb').replace(/\s+/g, '');
+  process.env.SMTP_USER = smtpUser;
 
-  const smtpUser = process.env.SMTP_USER.trim();
-  const smtpPass = process.env.SMTP_PASS.replace(/\s+/g, '');
-
-  if (smtpUser && smtpPass) {
-    const host = process.env.SMTP_HOST.trim();
-    const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
-    transporter = nodemailer.createTransport({
-      host,
-      port: smtpPort,
-      secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
+  const createIpv4Transport = async (targetPort, isSecure, timeoutMs = 8000) => {
+    const targetHost = await resolveSmtpIpv4(host);
+    return nodemailer.createTransport({
+      host: targetHost,
+      port: targetPort,
+      secure: isSecure,
+      connectionTimeout: timeoutMs,
+      greetingTimeout: timeoutMs,
+      socketTimeout: 10000,
+      tls: {
+        servername: host
+      },
       auth: {
         user: smtpUser,
         pass: smtpPass,
       },
     });
-    console.log(`SMTP Email transporter configured successfully (${smtpUser}).`);
+  };
+
+  const sendViaHttpsWebhook = async (webhookUrl, mailOptions) => {
+    const payload = {
+      to: mailOptions.to,
+      subject: mailOptions.subject,
+      html: mailOptions.html,
+      text: mailOptions.text,
+      fromName: 'SC Courier Services',
+      attachments: Array.isArray(mailOptions.attachments)
+        ? mailOptions.attachments.map(a => ({
+            filename: a.filename,
+            contentType: a.contentType || 'application/pdf',
+            contentBase64: Buffer.isBuffer(a.content)
+              ? a.content.toString('base64')
+              : (a.content ? Buffer.from(a.content).toString('base64') : '')
+          }))
+        : []
+    };
+    const relayRes = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      redirect: 'follow'
+    });
+    const relayText = await relayRes.text();
+    let relayJson = null;
+    try {
+      relayJson = JSON.parse(relayText);
+    } catch (_) {
+      /* ignore non-JSON body */
+    }
+    if (relayRes.ok && (!relayJson || relayJson.ok !== false) && (relayJson?.ok === true || /"ok"\s*:\s*true/i.test(relayText))) {
+      console.log(`Email sent via HTTPS Webhook relay to ${mailOptions.to}`);
+      return { response: '250 HTTPS_RELAY_OK' };
+    }
+    throw new Error(`HTTPS Email Relay failed (${relayRes.status}): ${relayJson?.error || relayText.slice(0, 180)}`);
+  };
+
+  let smtpBlockedUntil = 0;
+
+  if (smtpUser && smtpPass) {
+    transporter = {
+      async sendMail(mailOptions) {
+        const webhookUrl = (process.env.EMAIL_WEBHOOK_URL || '').trim();
+        if (webhookUrl && Date.now() < smtpBlockedUntil) {
+          return await sendViaHttpsWebhook(webhookUrl, mailOptions);
+        }
+
+        const timeoutMs = webhookUrl ? 3500 : 8000;
+        try {
+          const primaryTransporter = await createIpv4Transport(
+            smtpPort,
+            process.env.SMTP_SECURE === 'true' || smtpPort === 465,
+            timeoutMs
+          );
+          return await primaryTransporter.sendMail(mailOptions);
+        } catch (err) {
+          const isNetworkBlock =
+            ['ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED', 'ENOTFOUND', 'ENETUNREACH', 'EHOSTUNREACH'].includes(err.code) ||
+            /timeout|ENETUNREACH|ETIMEDOUT/i.test(err.message || '');
+
+          if (isNetworkBlock && smtpPort !== 465) {
+            console.warn(`SMTP IPv4 port ${smtpPort} failed (${err.code || err.message}), retrying via port 465 (SMTPS SSL)...`);
+            try {
+              const sslTransporter = await createIpv4Transport(465, true, timeoutMs);
+              return await sslTransporter.sendMail(mailOptions);
+            } catch (sslErr) {
+              if (webhookUrl) {
+                smtpBlockedUntil = Date.now() + 5 * 60 * 1000;
+                console.warn('Outbound SMTP 587 & 465 blocked; failing over to HTTPS EMAIL_WEBHOOK_URL...');
+                return await sendViaHttpsWebhook(webhookUrl, mailOptions);
+              }
+              throw new Error(
+                `Current network/Wi-Fi firewall blocked outbound SMTP ports ${smtpPort} & 465 (${sslErr.code || sslErr.message}). Connect via Mobile Hotspot / open Wi-Fi to send Gmail directly, or configure EMAIL_WEBHOOK_URL in backend/.env.`
+              );
+            }
+          }
+          throw err;
+        }
+      }
+    };
+    console.log(`SMTP Email transporter configured (${smtpUser}) with IPv4 preference & 587->465${(process.env.EMAIL_WEBHOOK_URL || '').trim() ? '->HTTPS-Relay' : ''} failover.`);
   } else {
     // Generate test SMTP service account from ethereal.email
     try {
@@ -1311,8 +1414,10 @@ app.post('/api/atr/approve-invoice', async (req, res) => {
     const rateMap = livePricing.vehicleRates;
     const vehicleType = atr.vehicle_type || 'Car';
     const ratePerKm = Number(rateMap[vehicleType]) || 110;
-    const distanceKm = Number(atr.actual_distance || atr.estimated_distance || 10);
-    const totalCostNum = Number(atr.actual_cost || atr.estimated_cost || (distanceKm * ratePerKm));
+    const storeForLock = loadStore();
+    const atrBilling = computeAtrBillingValues(atr, ratePerKm, storeForLock.lockedActuals?.[`atr-${atr.atr_id}`]);
+    const distanceKm = atrBilling.dist;
+    const totalCostNum = atrBilling.amount;
 
     if (!transporter) {
       await setupTransporter();
@@ -1431,21 +1536,24 @@ app.post('/api/delivery/accept', async (req, res) => {
     const distanceCharge = Math.round(distanceKm * perKmRate);
     const calculatedTotal = pd.cost ? Number(pd.cost) : (baseFee + distanceCharge);
 
-    // Update the delivery status in Supabase
-    const updateBody = {
+    // Update the delivery status in Supabase (also persist estimated distance/cost when schema columns exist)
+    const fallbackUpdateBody = {
       status: targetStatus || (pd.status === 'Approved' ? 'Approved' : 'Accepted'),
       accepted_by: acceptedBy,
       accepted_at: new Date().toISOString(),
       schedule_token: scheduleToken
     };
+    const updateBody = {
+      ...fallbackUpdateBody,
+      estimated_distance: distanceKm,
+      estimated_cost: calculatedTotal
+    };
 
-    await fetch(
+    await safeSupabasePatch(
       `${sbUrl}/rest/v1/personal_delivery?pd_id=eq.${pdId}`,
-      {
-        method: 'PATCH',
-        headers: { ...sbHeaders, 'Prefer': 'return=minimal' },
-        body: JSON.stringify(updateBody)
-      }
+      sbHeaders,
+      updateBody,
+      fallbackUpdateBody
     );
 
     const scheduleUrl = `http://127.0.0.1.nip.io:${port}/api/delivery/schedule/${scheduleToken}`;
@@ -1487,13 +1595,274 @@ app.post('/api/delivery/accept', async (req, res) => {
 });
 
 // -------------------------------------------------------
+// ACTUAL DISTANCE & COST RECORDING + LOCKING + INVOICE SYNC
+// -------------------------------------------------------
+
+async function safeSupabasePatch(url, sbHeaders, primaryBody, fallbackBody = null) {
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { ...sbHeaders, 'Prefer': 'return=representation' },
+    body: JSON.stringify(primaryBody)
+  });
+  if (res.ok) {
+    return { ok: true, usedFallback: false };
+  }
+  const errText = await res.text();
+  if (fallbackBody && (res.status === 400 || /column|schema cache|Could not find/i.test(errText))) {
+    const res2 = await fetch(url, {
+      method: 'PATCH',
+      headers: { ...sbHeaders, 'Prefer': 'return=representation' },
+      body: JSON.stringify(fallbackBody)
+    });
+    if (res2.ok) {
+      return { ok: true, usedFallback: true };
+    }
+    const errText2 = await res2.text();
+    throw new Error(errText2 || `Supabase PATCH failed (${res2.status})`);
+  }
+  throw new Error(errText || `Supabase PATCH failed (${res.status})`);
+}
+
+async function fetchAtrRowsForReconciliation() {
+  try {
+    const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
+    const res = await fetch(
+      `${sbUrl}/rest/v1/atr?select=atr_id,status,vehicle_type,estimated_distance,estimated_cost,actual_distance,actual_cost`,
+      { headers: sbHeaders }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// GET /api/actuals — Return recorded & locked actuals map for ATR and Personal Deliveries
+app.get('/api/actuals', async (req, res) => {
+  try {
+    const store = loadStore();
+    return res.json({ lockedActuals: store.lockedActuals || {} });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/actuals/atr/:atrId — Save actual_distance & actual_cost for Corporate ATR, mark Completed, lock, and update corporate invoices
+app.post('/api/actuals/atr/:atrId', async (req, res) => {
+  try {
+    const atrIdNum = Number(req.params.atrId);
+    if (!atrIdNum || Number.isNaN(atrIdNum)) {
+      return res.status(400).json({ error: 'Valid numeric atrId is required' });
+    }
+    const { actual_distance, actual_cost, recordedBy } = req.body || {};
+    const actDist = Number(actual_distance);
+    const actCost = Number(actual_cost);
+    if (!Number.isFinite(actDist) || actDist < 0 || !Number.isFinite(actCost) || actCost < 0) {
+      return res.status(400).json({ error: 'Valid non-negative numeric actual_distance and actual_cost are required' });
+    }
+
+    const reqKey = `atr-${atrIdNum}`;
+    const store = loadStore();
+    if (store.lockedActuals?.[reqKey]?.locked) {
+      return res.status(409).json({
+        error: `Actual values for ATR-${atrIdNum} are already locked and cannot be edited again.`,
+        lockRecord: store.lockedActuals[reqKey]
+      });
+    }
+
+    const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
+    const fetchRes = await fetch(`${sbUrl}/rest/v1/atr?atr_id=eq.${atrIdNum}&select=*`, { headers: sbHeaders });
+    const rows = fetchRes.ok ? await fetchRes.json() : [];
+    const atr = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    if (!atr) {
+      return res.status(404).json({ error: `ATR-${atrIdNum} not found` });
+    }
+    if (atr.actuals_locked === true) {
+      return res.status(409).json({ error: `Actual values for ATR-${atrIdNum} are already locked in the database.` });
+    }
+
+    const actor = recordedBy || 'Admin/Staff';
+    const nowIso = new Date().toISOString();
+
+    await safeSupabasePatch(
+      `${sbUrl}/rest/v1/atr?atr_id=eq.${atrIdNum}`,
+      sbHeaders,
+      {
+        actual_distance: actDist,
+        actual_cost: actCost,
+        status: 'Completed',
+        actuals_locked: true,
+        actuals_locked_by: actor,
+        actuals_locked_at: nowIso
+      },
+      {
+        actual_distance: actDist,
+        actual_cost: actCost,
+        status: 'Completed'
+      }
+    );
+
+    if (pool) {
+      pool.query(
+        `UPDATE atr SET actual_distance = $1, actual_cost = $2, status = 'Completed' WHERE atr_id = $3`,
+        [actDist, actCost, atrIdNum]
+      ).catch(() => {});
+    }
+
+    const lockRecord = {
+      key: reqKey,
+      source: 'atr',
+      id: atrIdNum,
+      actual_distance: actDist,
+      actual_cost: actCost,
+      locked: true,
+      locked_by: actor,
+      locked_at: nowIso
+    };
+    store.lockedActuals = store.lockedActuals || {};
+    store.lockedActuals[reqKey] = lockRecord;
+
+    const pricingRates = getPricingRates();
+    const modifiedInvoices = applyActualsToInvoicesInStore({
+      store,
+      requestKey: reqKey,
+      actualDistance: actDist,
+      actualCost: actCost,
+      status: 'Completed',
+      pricingRates,
+      actor,
+      note: `Locked Actual Distance (${actDist} km) & Actual Cost (LKR ${actCost.toFixed(2)}) for ATR ${atr.atr_number || atrIdNum}`
+    });
+
+    saveStore(store);
+    for (const inv of modifiedInvoices) {
+      await syncInvoiceToDb(pool, inv);
+    }
+
+    return res.json({
+      success: true,
+      lockRecord,
+      updatedInvoicesCount: modifiedInvoices.length,
+      message: `Actual distance (${actDist} km) and actual cost (LKR ${actCost.toFixed(2)}) saved and locked for ${atr.atr_number || `ATR-${atrIdNum}`}.`
+    });
+  } catch (err) {
+    console.error('Error saving ATR actuals:', err);
+    return res.status(500).json({ error: 'Failed to save ATR actuals: ' + err.message });
+  }
+});
+
+// POST /api/actuals/pd/:pdId — Save actual_distance & actual_cost for Private/Personal Delivery, mark Completed, lock, and update invoice
+app.post('/api/actuals/pd/:pdId', async (req, res) => {
+  try {
+    const pdIdNum = Number(req.params.pdId);
+    if (!pdIdNum || Number.isNaN(pdIdNum)) {
+      return res.status(400).json({ error: 'Valid numeric pdId is required' });
+    }
+    const { actual_distance, actual_cost, estimated_distance, estimated_cost, recordedBy } = req.body || {};
+    const actDist = Number(actual_distance);
+    const actCost = Number(actual_cost);
+    if (!Number.isFinite(actDist) || actDist < 0 || !Number.isFinite(actCost) || actCost < 0) {
+      return res.status(400).json({ error: 'Valid non-negative numeric actual_distance and actual_cost are required' });
+    }
+
+    const reqKey = `pd-${pdIdNum}`;
+    const store = loadStore();
+    if (store.lockedActuals?.[reqKey]?.locked) {
+      return res.status(409).json({
+        error: `Actual values for PD-${pdIdNum} are already locked and cannot be edited again.`,
+        lockRecord: store.lockedActuals[reqKey]
+      });
+    }
+
+    const { url: sbUrl, headers: sbHeaders } = getSupabaseHeaders();
+    const fetchRes = await fetch(`${sbUrl}/rest/v1/personal_delivery?pd_id=eq.${pdIdNum}&select=*`, { headers: sbHeaders });
+    const rows = fetchRes.ok ? await fetchRes.json() : [];
+    const pd = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    if (!pd) {
+      return res.status(404).json({ error: `PD-${pdIdNum} not found` });
+    }
+    if (pd.actuals_locked === true) {
+      return res.status(409).json({ error: `Actual values for PD-${pdIdNum} are already locked in the database.` });
+    }
+
+    const actor = recordedBy || 'Admin/Staff';
+    const nowIso = new Date().toISOString();
+
+    const estDistNum = Number.isFinite(Number(estimated_distance)) ? Number(estimated_distance) : null;
+    const estCostNum = Number.isFinite(Number(estimated_cost)) ? Number(estimated_cost) : null;
+
+    await safeSupabasePatch(
+      `${sbUrl}/rest/v1/personal_delivery?pd_id=eq.${pdIdNum}`,
+      sbHeaders,
+      {
+        status: 'Completed',
+        ...(estDistNum !== null ? { estimated_distance: estDistNum } : {}),
+        ...(estCostNum !== null ? { estimated_cost: estCostNum } : {}),
+        actual_distance: actDist,
+        actual_cost: actCost,
+        actuals_locked: true,
+        actuals_locked_by: actor,
+        actuals_locked_at: nowIso
+      },
+      {
+        status: 'Completed'
+      }
+    );
+
+    const lockRecord = {
+      key: reqKey,
+      source: 'personal',
+      id: pdIdNum,
+      estimated_distance: estDistNum,
+      estimated_cost: estCostNum,
+      actual_distance: actDist,
+      actual_cost: actCost,
+      locked: true,
+      locked_by: actor,
+      locked_at: nowIso
+    };
+    store.lockedActuals = store.lockedActuals || {};
+    store.lockedActuals[reqKey] = lockRecord;
+
+    const pricingRates = getPricingRates();
+    const modifiedInvoices = applyActualsToInvoicesInStore({
+      store,
+      requestKey: reqKey,
+      actualDistance: actDist,
+      actualCost: actCost,
+      status: 'Completed',
+      pricingRates,
+      actor,
+      note: `Locked Actual Distance (${actDist} km) & Actual Cost (LKR ${actCost.toFixed(2)}) for PD-${pdIdNum}`
+    });
+
+    saveStore(store);
+    for (const inv of modifiedInvoices) {
+      await syncInvoiceToDb(pool, inv);
+    }
+
+    return res.json({
+      success: true,
+      lockRecord,
+      updatedInvoicesCount: modifiedInvoices.length,
+      message: `Actual distance (${actDist} km) and actual cost (LKR ${actCost.toFixed(2)}) saved and locked for PD-${pdIdNum}.`
+    });
+  } catch (err) {
+    console.error('Error saving PD actuals:', err);
+    return res.status(500).json({ error: 'Failed to save Personal Delivery actuals: ' + err.message });
+  }
+});
+
+// -------------------------------------------------------
 // INVOICE MANAGEMENT & AUTOMATED CORPORATE BILLING ENDPOINTS
 // -------------------------------------------------------
 
 // GET /api/invoices — List all generated invoices with optional filters + summary metrics
 app.get('/api/invoices', async (req, res) => {
   try {
-    const store = loadStore();
+    const atrRows = await fetchAtrRowsForReconciliation();
+    const store = await reconcileInvoicesWithLiveActuals({ pool, atrRows, pricingRates: getPricingRates() });
     const { customer, customerType, paymentStatus, emailStatus, billingPeriod, date } = req.query;
 
     let list = [...store.invoices];
@@ -1538,10 +1907,11 @@ app.get('/api/invoices', async (req, res) => {
 });
 
 // GET /api/invoices/:invoiceId/pdf — Download PDF Invoice
-app.get('/api/invoices/:invoiceId/pdf', (req, res) => {
+app.get('/api/invoices/:invoiceId/pdf', async (req, res) => {
   try {
     const { invoiceId } = req.params;
-    const store = loadStore();
+    const atrRows = await fetchAtrRowsForReconciliation();
+    const store = await reconcileInvoicesWithLiveActuals({ pool, atrRows, pricingRates: getPricingRates() });
     const invoice = store.invoices.find(
       i => i.invoice_id === invoiceId || i.invoice_number === invoiceId
     );
@@ -1564,7 +1934,8 @@ app.post('/api/invoices/:invoiceId/resend', async (req, res) => {
   try {
     const { invoiceId } = req.params;
     const { overrideEmail } = req.body || {};
-    const store = loadStore();
+    const atrRows = await fetchAtrRowsForReconciliation();
+    const store = await reconcileInvoicesWithLiveActuals({ pool, atrRows, pricingRates: getPricingRates() });
     const invoice = store.invoices.find(
       i => i.invoice_id === invoiceId || i.invoice_number === invoiceId
     );
@@ -1682,6 +2053,8 @@ async function runCorporateBillingCycleEngine({
   const allAtrs = atrRes.ok ? await atrRes.json() : [];
   const allCustomers = custRes.ok ? await custRes.json() : [];
   const allDepts = depRes.ok ? await depRes.json() : [];
+
+  await reconcileInvoicesWithLiveActuals({ pool, atrRows: allAtrs, pricingRates: livePricing });
 
   const deptMap = {};
   if (Array.isArray(allDepts)) {

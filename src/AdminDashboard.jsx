@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { generateMonthlyExcelReport } from './utils/reportGenerator';
 import { DEFAULT_PRICING_RATES, getCachedPricingRates, fetchPricingRates, savePricingRates } from './utils/pricingRates';
+import { fetchLockedActuals, resolveOrderActualsState, calculateCostFromDistance, saveAndLockOrderActuals } from './utils/actualsHelper';
 import InvoiceManagementPanel from './InvoiceManagementPanel';
 
 const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, loggedInUser }) => {
@@ -74,51 +75,107 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         }
     };
 
-    // Admin ATR Actual Distance Modal State
-    const [adminEditingAtr, setAdminEditingAtr] = useState(null);
+    // Admin Actual Distance & Cost Modal State (ATR + Personal Delivery) + Lock Tracking
+    const [lockedActualsMap, setLockedActualsMap] = useState({});
+    const [adminEditingOrder, setAdminEditingOrder] = useState(null);
     const [adminActualDist, setAdminActualDist] = useState('');
     const [adminActualCost, setAdminActualCost] = useState('');
     const [adminSavingAtr, setAdminSavingAtr] = useState(false);
 
-    const handleOpenAdminAtrModal = (atrItem) => {
-        setAdminEditingAtr(atrItem);
-        const suggested = atrItem.actual_distance || atrItem.estimated_distance || '';
-        setAdminActualDist(suggested ? String(suggested) : '');
-        const rateMap = pricingConfig.vehicleRates || DEFAULT_PRICING_RATES.vehicleRates;
-        const rate = Number(rateMap[atrItem.vehicle_type]) || 100;
-        const calculatedCost = suggested ? (parseFloat(suggested) * rate).toFixed(2) : (atrItem.actual_cost || atrItem.estimated_cost || '');
-        setAdminActualCost(calculatedCost ? String(calculatedCost) : '');
+    const loadLockedActuals = async () => {
+        const map = await fetchLockedActuals();
+        setLockedActualsMap(map || {});
     };
+
+    useEffect(() => {
+        loadLockedActuals();
+    }, []);
+
+    const handleOpenAdminActualsModal = (type, rawItem) => {
+        const state = resolveOrderActualsState(type, rawItem, lockedActualsMap, pricingConfig);
+        if (state.isLocked) {
+            alert('Actual distance and cost are already locked for this order and cannot be modified.');
+            return;
+        }
+        setAdminEditingOrder({
+            type: state.type,
+            rawItem,
+            estDist: state.estDist,
+            estCost: state.estCost,
+            rate: state.rate,
+            baseFee: state.baseFee,
+            actDist: state.actDist,
+            actCost: state.actCost,
+            refLabel: state.type === 'atr' ? (rawItem.atr_number || `ATR-${rawItem.atr_id}`) : `PD-${rawItem.pd_id}`,
+            subtitleLabel: state.type === 'atr'
+                ? `${rawItem.principal_passenger_name || 'Staff'} (${rawItem.vehicle_type || 'Car'})`
+                : `${rawItem.sender_name || rawItem.cust_email || 'Customer'} (${rawItem.item_type || 'Parcel'})`
+        });
+        // Start with estimated values whenever actuals are empty
+        setAdminActualDist(state.startDist);
+        setAdminActualCost(state.startCost);
+    };
+
+    const handleOpenAdminAtrModal = (atrItem) => handleOpenAdminActualsModal('atr', atrItem);
 
     const handleAdminActualDistChange = (val) => {
         setAdminActualDist(val);
-        if (adminEditingAtr && val && !isNaN(parseFloat(val))) {
-            const rateMap = pricingConfig.vehicleRates || DEFAULT_PRICING_RATES.vehicleRates;
-            const rate = Number(rateMap[adminEditingAtr.vehicle_type]) || 100;
-            setAdminActualCost((parseFloat(val) * rate).toFixed(2));
+        if (adminEditingOrder && val !== '' && !Number.isNaN(parseFloat(val))) {
+            setAdminActualCost(
+                calculateCostFromDistance(adminEditingOrder.type, val, adminEditingOrder.rate, adminEditingOrder.baseFee)
+            );
         }
     };
 
     const handleSaveAdminAtrActuals = async (e) => {
         e.preventDefault();
-        if (!adminEditingAtr) return;
+        if (!adminEditingOrder) return;
         setAdminSavingAtr(true);
         try {
-            const { error } = await supabase
-                .from('atr')
-                .update({
-                    actual_distance: adminActualDist ? parseFloat(adminActualDist) : null,
-                    actual_cost: adminActualCost ? parseFloat(adminActualCost) : null
-                })
-                .eq('atr_id', adminEditingAtr.atr_id);
+            const distNum = parseFloat(adminActualDist);
+            const costNum = parseFloat(adminActualCost);
+            const result = await saveAndLockOrderActuals({
+                type: adminEditingOrder.type,
+                item: adminEditingOrder.rawItem,
+                actualDistance: distNum,
+                actualCost: costNum,
+                estDist: adminEditingOrder.estDist,
+                estCost: adminEditingOrder.estCost,
+                recordedBy: loggedInUser || 'Admin',
+                supabase
+            });
 
-            if (error) throw error;
-            alert('Actual distance & cost updated successfully!');
-            setAdminEditingAtr(null);
-            loadAtrRequests();
+            const lockRec = result.lockRecord;
+            if (lockRec?.key) {
+                setLockedActualsMap(prev => ({ ...prev, [lockRec.key]: lockRec }));
+            }
+            if (adminEditingOrder.type === 'atr') {
+                const targetId = adminEditingOrder.rawItem.atr_id;
+                setAtrRequests(prev => prev.map(a =>
+                    a.atr_id === targetId
+                        ? { ...a, status: 'Completed', actual_distance: distNum, actual_cost: costNum, actuals_locked: true }
+                        : a
+                ));
+                loadAtrRequests();
+            } else {
+                const targetId = adminEditingOrder.rawItem.pd_id;
+                setPersonalDeliveries(prev => prev.map(p =>
+                    p.pd_id === targetId
+                        ? { ...p, status: 'Completed', actual_distance: distNum, actual_cost: costNum, actuals_locked: true }
+                        : p
+                ));
+                loadPersonalDeliveries();
+            }
+
+            const invoiceNote = result.updatedInvoicesCount > 0
+                ? `\n\nUpdated ${result.updatedInvoicesCount} invoice(s) with actual values.`
+                : '';
+            alert(`${result.message}${invoiceNote}`);
+            setAdminEditingOrder(null);
         } catch (err) {
             console.error('Error saving actuals:', err);
             alert('Failed to update actuals: ' + err.message);
+            loadLockedActuals();
         } finally {
             setAdminSavingAtr(false);
         }
@@ -1988,9 +2045,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                             ? `${item.rawItem.required_date || 'N/A'} ${item.rawItem.required_time || ''}`
                                             : `${item.rawItem.requested_date || item.rawItem.scheduled_date || 'N/A'} ${item.rawItem.requested_time || item.rawItem.scheduled_time || ''}`;
 
-                                        const costDistInfo = isAtr
-                                            ? `${item.rawItem.estimated_cost || 0} LKR (${item.rawItem.estimated_distance || 0} km)`
-                                            : (item.rawItem.item_weight ? `Weight: ${item.rawItem.item_weight}` : 'Standard');
+                                        const rowActualsState = resolveOrderActualsState(isAtr ? 'atr' : 'pd', item.rawItem, lockedActualsMap, pricingConfig);
+                                        const costDistInfo = `${rowActualsState.estCost} LKR (${rowActualsState.estDist} km)`;
 
                                         return (
                                             <div key={item.id} style={{
@@ -2049,9 +2105,11 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
                                                 {/* Col 4: Cost / Distance */}
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                                                    <span style={{ color: '#10b981', fontWeight: '600' }}>{costDistInfo}</span>
-                                                    {isAtr && item.rawItem.actual_distance && (
-                                                        <span style={{ color: '#60a5fa', fontSize: '0.72rem' }}>Act: {item.rawItem.actual_distance}km</span>
+                                                    <span style={{ color: '#10b981', fontWeight: '600' }}>Est: {costDistInfo}</span>
+                                                    {(rowActualsState.actDist !== null || rowActualsState.actCost !== null) && (
+                                                        <span style={{ color: rowActualsState.isLocked ? '#10b981' : '#60a5fa', fontSize: '0.72rem', fontWeight: 600 }}>
+                                                            Act: {rowActualsState.actCost ?? rowActualsState.estCost} LKR ({rowActualsState.actDist ?? rowActualsState.estDist} km) {rowActualsState.isLocked ? '🔒' : ''}
+                                                        </span>
                                                     )}
                                                 </div>
 
@@ -2068,20 +2126,36 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
                                                 {/* Col 6: Actions Bar */}
                                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                                    {isAtr && (item.status === 'Approved' || item.status === 'Assigned' || item.status === 'Completed') && (
-                                                        <button
-                                                            onClick={() => handleOpenAdminAtrModal(item.rawItem)}
-                                                            className="secondary-btn"
-                                                            style={{
-                                                                padding: '0.35rem 0.65rem', height: 'auto', fontSize: '0.75rem',
-                                                                background: item.rawItem.actual_distance ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
-                                                                color: item.rawItem.actual_distance ? 'var(--success)' : '#60a5fa',
-                                                                border: item.rawItem.actual_distance ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(59,130,246,0.25)',
-                                                                cursor: 'pointer', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.25rem'
-                                                            }}
-                                                        >
-                                                            <i className='bx bx-edit-alt'></i> Actuals
-                                                        </button>
+                                                    {((isAtr && ['Approved', 'Assigned', 'In Transit', 'Completed'].includes(item.status)) ||
+                                                      (!isAtr && ['Approved', 'Accepted', 'Scheduled', 'Assigned', 'In Transit', 'Completed', 'Delivered'].includes(item.status))) && (
+                                                        rowActualsState.isLocked ? (
+                                                            <span
+                                                                title={`Locked by ${rowActualsState.lockRecord?.locked_by || 'Admin/Staff'}`}
+                                                                style={{
+                                                                    padding: '0.32rem 0.6rem', fontSize: '0.73rem', fontWeight: 700,
+                                                                    background: 'rgba(16,185,129,0.12)', color: '#10b981',
+                                                                    border: '1px solid rgba(16,185,129,0.3)',
+                                                                    borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                                                                    whiteSpace: 'nowrap'
+                                                                }}
+                                                            >
+                                                                <i className='bx bxs-lock-alt'></i> Locked
+                                                            </span>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => handleOpenAdminActualsModal(isAtr ? 'atr' : 'pd', item.rawItem)}
+                                                                className="secondary-btn"
+                                                                style={{
+                                                                    padding: '0.35rem 0.65rem', height: 'auto', fontSize: '0.75rem',
+                                                                    background: rowActualsState.actDist !== null ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
+                                                                    color: rowActualsState.actDist !== null ? 'var(--success)' : '#60a5fa',
+                                                                    border: rowActualsState.actDist !== null ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(59,130,246,0.25)',
+                                                                    cursor: 'pointer', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.25rem'
+                                                                }}
+                                                            >
+                                                                <i className='bx bx-edit-alt'></i> {item.status === 'Completed' || item.status === 'Delivered' ? 'Enter & Lock Actuals' : 'Actuals'}
+                                                            </button>
+                                                        )
                                                     )}
 
                                                     {/* Step 1: When Pending, show Approve / Reject */}
@@ -2233,9 +2307,13 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                             onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
                                             onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
                                         >
+                                            {(() => {
+                                                const pdActState = resolveOrderActualsState('pd', pd, lockedActualsMap, pricingConfig);
+                                                const canEditPdActuals = !pdActState.isLocked && ['Approved', 'Accepted', 'Scheduled', 'Assigned', 'In Transit', 'Completed', 'Delivered'].includes(pd.status);
+                                                return (
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
                                                 <div style={{ flex: '1 1 300px' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                                                         <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#fff' }}>PD-{pd.pd_id}</span>
                                                         <span style={{
                                                             display: 'inline-block', padding: '0.25rem 0.65rem',
@@ -2243,6 +2321,16 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                             borderRadius: '100px', fontSize: '0.75rem', fontWeight: '600',
                                                             border: sc.border
                                                         }}>{pd.status}</span>
+                                                        {pdActState.isLocked && (
+                                                            <span style={{
+                                                                display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                                                                padding: '0.2rem 0.6rem', background: 'rgba(16, 185, 129, 0.14)',
+                                                                color: '#10b981', borderRadius: '100px', fontSize: '0.72rem', fontWeight: '700',
+                                                                border: '1px solid rgba(16, 185, 129, 0.35)'
+                                                            }}>
+                                                                <i className='bx bxs-lock-alt'></i> Actuals Locked
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                                                         <div><strong>📍 Pickup:</strong> {pd.pickup_address}</div>
@@ -2251,6 +2339,13 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                         <div><strong>👤 Sender:</strong> {pd.sender_name} ({pd.sender_phone})</div>
                                                         <div><strong>👤 Receiver:</strong> {pd.receiver_name} ({pd.receiver_phone})</div>
                                                         <div><strong>📅 Requested:</strong> {pd.requested_date} @ {pd.requested_time}</div>
+                                                        <div><strong>📏 Est. Distance:</strong> {pdActState.estDist} km</div>
+                                                        <div><strong>💰 Est. Cost:</strong> LKR {Number(pdActState.estCost || 0).toLocaleString()}</div>
+                                                        {(pdActState.actDist !== null || pdActState.actCost !== null) && (
+                                                            <div style={{ color: '#10b981', fontWeight: '600' }}>
+                                                                <strong>🏁 Actuals:</strong> {pdActState.actDist ?? pdActState.estDist} km / LKR {Number(pdActState.actCost ?? pdActState.estCost).toLocaleString()} {pdActState.isLocked ? '🔒' : ''}
+                                                            </div>
+                                                        )}
                                                         {pd.scheduled_date && (
                                                             <div style={{ color: '#a855f7' }}><strong>📅 Scheduled:</strong> {pd.scheduled_date} @ {pd.scheduled_time}</div>
                                                         )}
@@ -2263,7 +2358,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                     </div>
                                                 </div>
 
-                                                <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                                                     {pd.status === 'Pending' && (
                                                         <button
                                                             onClick={() => handleAcceptDelivery(pd.pd_id)}
@@ -2305,7 +2400,26 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                             <i className='bx bx-map'></i> View Map
                                                         </a>
                                                     )}
-                                                    {pd.status === 'Completed' && (
+                                                    {canEditPdActuals && (
+                                                        <button
+                                                            onClick={() => handleOpenAdminActualsModal('pd', pd)}
+                                                            className="secondary-btn"
+                                                            style={{
+                                                                width: 'auto',
+                                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                padding: '0.5rem 1rem', height: '38px',
+                                                                background: 'rgba(16, 185, 129, 0.12)',
+                                                                color: '#10b981',
+                                                                border: '1px solid rgba(16, 185, 129, 0.3)',
+                                                                borderRadius: '10px',
+                                                                fontSize: '0.85rem', fontWeight: '600',
+                                                                cursor: 'pointer'
+                                                            }}
+                                                        >
+                                                            <i className='bx bx-check-double'></i> {pd.status === 'Completed' || pd.status === 'Delivered' ? 'Record & Lock Actuals' : 'Record Actuals & Complete'}
+                                                        </button>
+                                                    )}
+                                                    {(pd.status === 'Completed' || pd.status === 'Delivered') && (
                                                         <span style={{
                                                             display: 'flex', alignItems: 'center', gap: '0.35rem',
                                                             color: '#059669', fontSize: '0.9rem', fontWeight: '600'
@@ -2315,6 +2429,8 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                     )}
                                                 </div>
                                             </div>
+                                                );
+                                            })()}
                                         </div>
                                     );
                                 })}
@@ -2457,25 +2573,41 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                             </button>
                                                         </>
                                                     )}
-                                                    {!isPending && !isCompleted && currentStatus !== 'Rejected' && (
-                                                        <button
-                                                            onClick={() => handleOpenAdminAtrModal(req)}
-                                                            className="secondary-btn"
-                                                            style={{
-                                                                width: 'auto',
-                                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
-                                                                padding: '0.5rem 1rem', height: '38px',
-                                                                background: 'rgba(16, 185, 129, 0.12)',
-                                                                color: '#10b981',
-                                                                border: '1px solid rgba(16, 185, 129, 0.3)',
-                                                                borderRadius: '10px',
-                                                                fontSize: '0.85rem', fontWeight: '600',
-                                                                cursor: 'pointer'
-                                                            }}
-                                                        >
-                                                            <i className='bx bx-check-double'></i> Record Actuals &amp; Complete
-                                                        </button>
-                                                    )}
+                                                    {!isPending && currentStatus !== 'Rejected' && (() => {
+                                                        const atrActState = resolveOrderActualsState('atr', req, lockedActualsMap, pricingConfig);
+                                                        if (atrActState.isLocked) {
+                                                            return (
+                                                                <span style={{
+                                                                    display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                                                                    padding: '0.45rem 0.9rem', borderRadius: '10px',
+                                                                    background: 'rgba(16, 185, 129, 0.14)', color: '#10b981',
+                                                                    border: '1px solid rgba(16, 185, 129, 0.35)',
+                                                                    fontSize: '0.82rem', fontWeight: '700'
+                                                                }}>
+                                                                    <i className='bx bxs-lock-alt'></i> Actuals Locked ({atrActState.actDist} km / LKR {Number(atrActState.actCost || 0).toLocaleString()})
+                                                                </span>
+                                                            );
+                                                        }
+                                                        return (
+                                                            <button
+                                                                onClick={() => handleOpenAdminActualsModal('atr', req)}
+                                                                className="secondary-btn"
+                                                                style={{
+                                                                    width: 'auto',
+                                                                    display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                                    padding: '0.5rem 1rem', height: '38px',
+                                                                    background: 'rgba(16, 185, 129, 0.12)',
+                                                                    color: '#10b981',
+                                                                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                                                                    borderRadius: '10px',
+                                                                    fontSize: '0.85rem', fontWeight: '600',
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                            >
+                                                                <i className='bx bx-check-double'></i> {isCompleted ? 'Record & Lock Actuals' : 'Record Actuals & Complete'}
+                                                            </button>
+                                                        );
+                                                    })()}
                                                     {isCompleted && (
                                                         <span style={{
                                                             display: 'flex', alignItems: 'center', gap: '0.35rem',
@@ -2687,53 +2819,57 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 </div>
             )}
 
-            {/* ── Admin ATR Actuals Modal ── */}
-            {adminEditingAtr && (
+            {/* ── Admin Actual Distance & Cost Modal (ATR + Personal Delivery) ── */}
+            {adminEditingOrder && (
                 <div style={{
                     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(5px)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem'
-                }} onClick={() => setAdminEditingAtr(null)}>
+                }} onClick={() => setAdminEditingOrder(null)}>
                     <div style={{
                         background: '#18181b', border: '1px solid var(--card-border)', borderRadius: '20px',
                         padding: '2rem', maxWidth: '480px', width: '100%', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
                         animation: 'scaleUp 0.3s ease'
                     }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-                            <h3 style={{ margin: 0, color: '#fff', fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <i className='bx bx-calculator' style={{ color: 'var(--accent-color)' }}></i> Verify Actual Distance & Cost
+                            <h3 style={{ margin: 0, color: '#fff', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <i className='bx bx-calculator' style={{ color: 'var(--accent-color)' }}></i>
+                                Verify &amp; Lock {adminEditingOrder.type === 'atr' ? 'ATR' : 'Private Courier'} Actuals
                             </h3>
-                            <button onClick={() => setAdminEditingAtr(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.4rem' }}>
+                            <button onClick={() => setAdminEditingOrder(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.4rem' }}>
                                 <i className='bx bx-x'></i>
                             </button>
                         </div>
 
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1.25rem', lineHeight: '1.5' }}>
-                            Record or adjust the actual trip distance traveled for <strong>{adminEditingAtr.atr_number}</strong> ({adminEditingAtr.principal_passenger_name}).
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1.1rem', lineHeight: '1.5', textAlign: 'left' }}>
+                            Review or adjust actual distance and cost for <strong>{adminEditingOrder.refLabel}</strong> ({adminEditingOrder.subtitleLabel}).
                         </p>
 
-                        {/* 1st Suggestion Badge */}
+                        {/* Baseline Suggestion Badge (starts from Estimate when actuals are empty) */}
                         <div style={{
                             background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.25)',
-                            padding: '0.75rem 1rem', borderRadius: '10px', marginBottom: '1.25rem',
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                            padding: '0.75rem 1rem', borderRadius: '10px', marginBottom: '1.15rem',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem'
                         }}>
-                            <div>
-                                <span style={{ fontSize: '0.75rem', color: '#60a5fa', fontWeight: 600, display: 'block' }}>
-                                    1ST SUGGESTION {adminEditingAtr.actual_distance ? '(FROM RIDER TRIP LOG)' : '(ESTIMATED)'}
+                            <div style={{ textAlign: 'left' }}>
+                                <span style={{ fontSize: '0.74rem', color: '#60a5fa', fontWeight: 600, display: 'block' }}>
+                                    ESTIMATED BASELINE ({adminEditingOrder.actDist !== null ? 'RIDER LOG DETECTED' : 'PRE-FILLED AS START'})
                                 </span>
-                                <strong style={{ color: '#fff', fontSize: '1.05rem' }}>
-                                    {adminEditingAtr.actual_distance || adminEditingAtr.estimated_distance || 0} km
+                                <strong style={{ color: '#fff', fontSize: '1rem' }}>
+                                    {adminEditingOrder.estDist} km &bull; LKR {Number(adminEditingOrder.estCost || 0).toLocaleString()}
                                 </strong>
                             </div>
                             <button
                                 type="button"
-                                onClick={() => handleAdminActualDistChange(String(adminEditingAtr.actual_distance || adminEditingAtr.estimated_distance || ''))}
+                                onClick={() => {
+                                    setAdminActualDist(String(adminEditingOrder.estDist));
+                                    setAdminActualCost(String(adminEditingOrder.estCost));
+                                }}
                                 style={{
                                     background: 'rgba(59, 130, 246, 0.2)', border: 'none', color: '#60a5fa',
-                                    padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600
+                                    padding: '0.38rem 0.75rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap'
                                 }}
                             >
-                                Use Suggestion
+                                Reset to Estimate
                             </button>
                         </div>
 
@@ -2759,11 +2895,13 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', textAlign: 'left' }}>
                                 <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 600 }}>
-                                    Actual Trip Cost (LKR)
+                                    Actual Trip Cost (LKR) <span style={{ color: 'var(--danger)' }}>*</span>
                                 </label>
                                 <input
                                     type="number"
                                     step="0.01"
+                                    min="0"
+                                    required
                                     value={adminActualCost}
                                     onChange={(e) => setAdminActualCost(e.target.value)}
                                     placeholder="Auto-calculated from distance"
@@ -2774,10 +2912,15 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 />
                             </div>
 
-                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                            <div style={{ fontSize: '0.78rem', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.25)', padding: '0.65rem 0.85rem', borderRadius: '8px', textAlign: 'left' }}>
+                                <i className='bx bxs-lock-alt' style={{ marginRight: '0.35rem' }}></i>
+                                Saving will permanently <strong>lock</strong> Actual Distance &amp; Cost in the database and apply them to corporate/customer invoices.
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.35rem' }}>
                                 <button
                                     type="button"
-                                    onClick={() => setAdminEditingAtr(null)}
+                                    onClick={() => setAdminEditingOrder(null)}
                                     className="secondary-btn"
                                     style={{ flex: 1, padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--card-border)', background: 'transparent', color: '#fff', cursor: 'pointer' }}
                                 >
@@ -2785,7 +2928,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={adminSavingAtr || !adminActualDist}
+                                    disabled={adminSavingAtr || adminActualDist === '' || adminActualCost === ''}
                                     style={{
                                         flex: 2, padding: '0.75rem', borderRadius: '10px', border: 'none',
                                         background: 'var(--accent-color)', color: '#fff', fontWeight: 600, fontSize: '0.95rem',
@@ -2795,9 +2938,9 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                     }}
                                 >
                                     {adminSavingAtr ? (
-                                        <><i className='bx bx-loader-alt bx-spin'></i> Saving...</>
+                                        <><i className='bx bx-loader-alt bx-spin'></i> Saving &amp; Locking...</>
                                     ) : (
-                                        <><i className='bx bx-save'></i> Save Actuals</>
+                                        <><i className='bx bxs-lock-alt'></i> Save &amp; Lock Actuals</>
                                     )}
                                 </button>
                             </div>

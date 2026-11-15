@@ -866,7 +866,17 @@ const InvoiceManagementPanel = ({ atrRequests = [], personalDeliveries = [], cus
                                             <td style={{ padding: '0.65rem', fontWeight: 700, fontFamily: 'monospace' }}>{li.ref_number}</td>
                                             <td style={{ padding: '0.65rem' }}>{li.shipment_date}</td>
                                             <td style={{ padding: '0.65rem' }}>{li.pickup_details} &rarr; {li.delivery_details}</td>
-                                            <td style={{ padding: '0.65rem' }}>{li.parcel_or_vehicle}</td>
+                                            <td style={{ padding: '0.65rem' }}>
+                                                <div>{li.parcel_or_vehicle}</div>
+                                                {li.distance_km != null && li.rate_lkr != null && (
+                                                    <div style={{ fontSize: '0.74rem', color: li.is_actual ? '#10b981' : '#94a3b8', marginTop: '0.15rem' }}>
+                                                        {li.distance_km} km @ LKR {li.rate_lkr}/km{' '}
+                                                        <span style={{ fontWeight: 700 }}>
+                                                            ({li.is_actual ? 'Actual' : 'Estimated'})
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </td>
                                             <td style={{ padding: '0.65rem', textAlign: 'right', fontWeight: 700 }}>
                                                 LKR {Number(li.amount_lkr || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                             </td>

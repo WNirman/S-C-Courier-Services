@@ -202,7 +202,10 @@ function generateInvoicePdfBuffer(invoice) {
     const rawService = String(item.parcel_or_vehicle || 'Courier');
     const serviceLines = [...wrapTextLines(rawService, 22)];
     if (item.distance_km && item.rate_lkr && !rawService.toLowerCase().includes('km')) {
-      serviceLines.push(...wrapTextLines(`${item.distance_km} km @ LKR ${item.rate_lkr}/km`, 22));
+      const basis = item.is_actual ? 'Actual' : (item.source_type === 'atr' ? 'Est.' : '');
+      serviceLines.push(...wrapTextLines(`${item.distance_km} km @ LKR ${item.rate_lkr}/km${basis ? ` [${basis}]` : ''}`, 22));
+    } else if (item.is_actual && rawService.toLowerCase().includes('km')) {
+      serviceLines.push('[Actual Billed]');
     }
 
     const maxLinesInRow = Math.max(refLines.length, descLines.length, serviceLines.length, 1);

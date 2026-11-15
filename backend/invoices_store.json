@@ -24,7 +24,7 @@
       "payment_terms": "Due on Receipt",
       "payment_status": "Unpaid",
       "email_status": "Sent",
-      "email_sent_at": "2026-11-15T06:05:39.366Z",
+      "email_sent_at": "2026-11-15T13:47:06.982Z",
       "email_error": null,
       "line_items": [
         {
@@ -54,6 +54,12 @@
           "action": "EMAIL_SENT",
           "actor": "System Mailer",
           "note": "PDF Invoice emailed to wanithnirmanbc@gmail.com (250 2.0.0 OK  1794722739 5a478bee46e88-3795378d7e5sm21871731eec.3 - gsmtp)"
+        },
+        {
+          "timestamp": "2026-11-15T13:47:06.982Z",
+          "action": "EMAIL_SENT",
+          "actor": "System Mailer",
+          "note": "PDF Invoice emailed to wanithnirmanbc@gmail.com (250 HTTPS_RELAY_OK)"
         }
       ],
       "created_at": "2026-11-15T06:05:34.072Z"
@@ -156,5 +162,6 @@
     "atr-44": "inv_corp_1794709905453_irgt",
     "pd-7": "inv_pd_7_1794722734071"
   },
-  "lastSchedulerRun": "2026-11-15T05:57:32.140Z"
+  "lockedActuals": {},
+  "lastSchedulerRun": "2026-11-15T13:40:56.668Z"
 }

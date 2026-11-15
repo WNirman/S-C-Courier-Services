@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { generateMonthlyExcelReport } from './utils/reportGenerator';
 import { getCachedPricingRates, fetchPricingRates } from './utils/pricingRates';
+import { fetchLockedActuals, resolveOrderActualsState, calculateCostFromDistance, saveAndLockOrderActuals } from './utils/actualsHelper';
 
 const StaffDashboard = ({ loggedInUser }) => {
     const [staffProfile, setStaffProfile] = useState(null);
@@ -25,11 +26,21 @@ const StaffDashboard = ({ loggedInUser }) => {
         return `${y}-${m}`;
     });
 
-    // Actuals completion modal
-    const [completingAtr, setCompletingAtr] = useState(null);
+    // Actuals completion modal (ATR + Private Delivery) & lock tracking
+    const [lockedActualsMap, setLockedActualsMap] = useState({});
+    const [completingOrder, setCompletingOrder] = useState(null);
     const [actualDistanceInput, setActualDistanceInput] = useState('');
     const [actualCostInput, setActualCostInput] = useState('');
     const [submittingActuals, setSubmittingActuals] = useState(false);
+
+    const loadLockedActuals = async () => {
+        const map = await fetchLockedActuals();
+        setLockedActualsMap(map || {});
+    };
+
+    useEffect(() => {
+        loadLockedActuals();
+    }, []);
 
     // ── 1. Load Staff Profile ──────────────────────────────────────────
     const loadStaffProfile = async () => {
@@ -517,53 +528,82 @@ const StaffDashboard = ({ loggedInUser }) => {
         }
     };
 
-    // Actuals completion modal
-    const handleOpenActualsModal = (atr) => {
-        setCompletingAtr(atr);
-        const defaultDist = atr.estimated_distance ? String(atr.estimated_distance) : '';
-        setActualDistanceInput(defaultDist);
-        const rateMap = getCachedPricingRates().vehicleRates || { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
-        const rate = Number(rateMap[atr.vehicle_type]) || 100;
-        const estCost = defaultDist ? (parseFloat(defaultDist) * rate).toFixed(2) : (atr.estimated_cost ? String(atr.estimated_cost) : '');
-        setActualCostInput(estCost);
+    // Actuals completion modal (ATR + Private Delivery)
+    const handleOpenActualsModal = (type, rawItem) => {
+        const pricing = getCachedPricingRates();
+        const state = resolveOrderActualsState(type, rawItem, lockedActualsMap, pricing);
+        if (state.isLocked) {
+            alert('Actual distance and cost for this order are already locked and cannot be modified.');
+            return;
+        }
+        setCompletingOrder({
+            type: state.type,
+            rawItem,
+            estDist: state.estDist,
+            estCost: state.estCost,
+            rate: state.rate,
+            baseFee: state.baseFee,
+            actDist: state.actDist,
+            actCost: state.actCost,
+            refLabel: state.type === 'atr' ? (rawItem.atr_number || `ATR-${rawItem.atr_id}`) : `PD-${rawItem.pd_id}`,
+            titleLabel: state.type === 'atr'
+                ? `${rawItem.principal_passenger_name || 'Staff'} (${rawItem.vehicle_type || 'Car'})`
+                : `${rawItem.sender_name || rawItem.cust_email || 'Customer'} (${rawItem.item_type || 'Parcel'})`
+        });
+        // Start with estimated values whenever actuals are empty
+        setActualDistanceInput(state.startDist);
+        setActualCostInput(state.startCost);
     };
 
     const handleSaveActuals = async (e) => {
         e.preventDefault();
-        if (!completingAtr) return;
+        if (!completingOrder) return;
         setSubmittingActuals(true);
         try {
-            const actualDistNum = actualDistanceInput ? parseFloat(actualDistanceInput) : null;
-            const actualCostNum = actualCostInput ? parseFloat(actualCostInput) : null;
+            const actualDistNum = parseFloat(actualDistanceInput);
+            const actualCostNum = parseFloat(actualCostInput);
+            const result = await saveAndLockOrderActuals({
+                type: completingOrder.type,
+                item: completingOrder.rawItem,
+                actualDistance: actualDistNum,
+                actualCost: actualCostNum,
+                estDist: completingOrder.estDist,
+                estCost: completingOrder.estCost,
+                recordedBy: staffProfile?.staff_email || loggedInUser || 'Staff',
+                supabase
+            });
 
-            const { error } = await supabase
-                .from('atr')
-                .update({
-                    status: 'Completed',
-                    actual_distance: actualDistNum,
-                    actual_cost: actualCostNum
-                })
-                .eq('atr_id', completingAtr.atr_id);
+            const lockRec = result.lockRecord;
+            if (lockRec?.key) {
+                setLockedActualsMap(prev => ({ ...prev, [lockRec.key]: lockRec }));
+            }
 
-            if (error) throw error;
+            if (completingOrder.type === 'atr') {
+                const targetId = completingOrder.rawItem.atr_id;
+                setAtrRequests(prev => prev.map(a =>
+                    a.atr_id === targetId
+                        ? { ...a, status: 'Completed', actual_distance: actualDistNum, actual_cost: actualCostNum, actuals_locked: true }
+                        : a
+                ));
+                loadAtrRequests();
+            } else {
+                const targetId = completingOrder.rawItem.pd_id;
+                setPersonalDeliveries(prev => prev.map(p =>
+                    p.pd_id === targetId
+                        ? { ...p, status: 'Completed', actual_distance: actualDistNum, actual_cost: actualCostNum, actuals_locked: true }
+                        : p
+                ));
+                loadPersonalDeliveries();
+            }
 
-            // Optimistically update local state so Actuals button disappears immediately
-            setAtrRequests(prev => prev.map(a => 
-                a.atr_id === completingAtr.atr_id 
-                    ? {
-                        ...a,
-                        status: 'Completed',
-                        actual_distance: actualDistNum !== null ? actualDistNum : a.actual_distance,
-                        actual_cost: actualCostNum !== null ? actualCostNum : a.actual_cost
-                    }
-                    : a
-            ));
-
-            alert('Trip marked Completed with actual distance and cost recorded!');
-            setCompletingAtr(null);
-            loadAtrRequests();
+            const invoiceNote = result.updatedInvoicesCount > 0
+                ? `\n\nUpdated ${result.updatedInvoicesCount} invoice(s) with actual values.`
+                : '';
+            alert(`${result.message}${invoiceNote}`);
+            setCompletingOrder(null);
         } catch (err) {
             alert('Failed to record actuals: ' + err.message);
+            loadLockedActuals();
         } finally {
             setSubmittingActuals(false);
         }
@@ -929,9 +969,14 @@ const StaffDashboard = ({ loggedInUser }) => {
                             const isPending = item.status === 'Pending';
                             const isApprovedOrAccepted = item.status === 'Approved' || item.status === 'Accepted';
                             const isCompleted = item.status && (item.status.toLowerCase() === 'completed' || item.status.toLowerCase() === 'delivered');
-                            const hasActuals = Boolean(
-                                (item.rawItem.actual_distance !== null && item.rawItem.actual_distance !== undefined && item.rawItem.actual_distance !== '') ||
-                                (item.rawItem.actual_cost !== null && item.rawItem.actual_cost !== undefined && item.rawItem.actual_cost !== '')
+                            const pricing = getCachedPricingRates();
+                            const orderActState = resolveOrderActualsState(isAtr ? 'atr' : 'pd', item.rawItem, lockedActualsMap, pricing);
+                            const isActualsLocked = orderActState.isLocked;
+                            const canRecordActuals = !isActualsLocked && (
+                                isCompleted ||
+                                (isAtr
+                                    ? ['Approved', 'Assigned', 'In Transit'].includes(item.status)
+                                    : ['Approved', 'Accepted', 'Scheduled', 'Assigned', 'In Transit'].includes(item.status))
                             );
 
                             // Check linked delivery/trip table in case rider was assigned there
@@ -1010,9 +1055,11 @@ const StaffDashboard = ({ loggedInUser }) => {
 
                                     {/* Col 4: Cost / Distance */}
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', color: 'var(--text-secondary)', fontSize: '0.8rem', minWidth: 0, whiteSpace: 'nowrap' }}>
-                                        <span style={{ color: '#10b981', fontWeight: '600' }}>{item.costDist}</span>
-                                        {item.rawItem.actual_distance && (
-                                            <span style={{ color: '#60a5fa', fontSize: '0.72rem' }}>Act: {item.rawItem.actual_distance}km</span>
+                                        <span style={{ color: '#10b981', fontWeight: '600' }}>Est: {orderActState.estCost} LKR ({orderActState.estDist} km)</span>
+                                        {(orderActState.actDist !== null || orderActState.actCost !== null) && (
+                                            <span style={{ color: isActualsLocked ? '#10b981' : '#60a5fa', fontSize: '0.72rem', fontWeight: 600 }}>
+                                                Act: {orderActState.actCost ?? orderActState.estCost} LKR ({orderActState.actDist ?? orderActState.estDist} km) {isActualsLocked ? '🔒' : ''}
+                                            </span>
                                         )}
                                     </div>
 
@@ -1226,11 +1273,11 @@ const StaffDashboard = ({ loggedInUser }) => {
                                             </div>
                                         )}
 
-                                        {/* Trip Actuals: Only show for active ATR orders where actuals not yet recorded */}
-                                        {isAtr && !hasActuals && !isCompleted && (item.status === 'Assigned' || item.status === 'In Transit') && (
+                                        {/* Trip Actuals: Show for Completed or Active ATR/Private orders until saved & locked */}
+                                        {canRecordActuals && (
                                             <button
                                                 type="button"
-                                                onClick={() => handleOpenActualsModal(item.rawItem)}
+                                                onClick={() => handleOpenActualsModal(isAtr ? 'atr' : 'pd', item.rawItem)}
                                                 style={{
                                                     width: 'auto',
                                                     padding: '0.35rem 0.65rem',
@@ -1239,9 +1286,9 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                     fontWeight: '600',
                                                     whiteSpace: 'nowrap',
                                                     flexShrink: 0,
-                                                    background: item.rawItem.actual_distance ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
-                                                    color: item.rawItem.actual_distance ? 'var(--success)' : '#60a5fa',
-                                                    border: item.rawItem.actual_distance ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(59,130,246,0.25)',
+                                                    background: orderActState.actDist !== null ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
+                                                    color: orderActState.actDist !== null ? 'var(--success)' : '#60a5fa',
+                                                    border: orderActState.actDist !== null ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(59,130,246,0.25)',
                                                     borderRadius: '6px',
                                                     cursor: 'pointer',
                                                     display: 'inline-flex',
@@ -1250,8 +1297,33 @@ const StaffDashboard = ({ loggedInUser }) => {
                                                     lineHeight: 1
                                                 }}
                                             >
-                                                <i className='bx bx-edit-alt'></i> Actuals
+                                                <i className='bx bx-edit-alt'></i> {isCompleted ? 'Enter & Lock Actuals' : 'Actuals'}
                                             </button>
+                                        )}
+                                        {isActualsLocked && (
+                                            <span
+                                                title={`Actuals locked${orderActState.lockRecord?.locked_by ? ` by ${orderActState.lockRecord.locked_by}` : ''}`}
+                                                style={{
+                                                    width: 'auto',
+                                                    padding: '0.32rem 0.6rem',
+                                                    height: '32px',
+                                                    fontSize: '0.73rem',
+                                                    fontWeight: '700',
+                                                    whiteSpace: 'nowrap',
+                                                    flexShrink: 0,
+                                                    background: 'rgba(16,185,129,0.12)',
+                                                    color: '#10b981',
+                                                    border: '1px solid rgba(16,185,129,0.3)',
+                                                    borderRadius: '6px',
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.25rem',
+                                                    lineHeight: 1,
+                                                    boxSizing: 'border-box'
+                                                }}
+                                            >
+                                                <i className='bx bxs-lock-alt'></i> Locked
+                                            </span>
                                         )}
                                     </div>
                                 </div>
@@ -1261,31 +1333,34 @@ const StaffDashboard = ({ loggedInUser }) => {
                 </div>
             </div>
 
-            {/* ── ATR Trip Completion Modal ── */}
-            {completingAtr && (
+            {/* ── Trip / Delivery Actuals Completion & Lock Modal ── */}
+            {completingOrder && (
                 <div style={{
                     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(5px)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem'
-                }} onClick={() => setCompletingAtr(null)}>
+                }} onClick={() => setCompletingOrder(null)}>
                     <div style={{
                         background: '#18181b', border: '1px solid var(--card-border)', borderRadius: '20px',
                         padding: '2rem', maxWidth: '480px', width: '100%', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
                         animation: 'scaleUp 0.3s ease'
                     }} onClick={e => e.stopPropagation()}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', textAlign: 'left' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', textAlign: 'left' }}>
                             <h3 style={{ fontSize: '1.25rem', color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <i className='bx bx-check-circle' style={{ color: 'var(--success)' }}></i> Record Trip Actuals
+                                <i className='bx bx-check-circle' style={{ color: 'var(--success)' }}></i>
+                                Record &amp; Lock {completingOrder.type === 'atr' ? 'ATR Trip' : 'Private Courier'} Actuals
                             </h3>
-                            <button onClick={() => setCompletingAtr(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.5rem' }}>
+                            <button onClick={() => setCompletingOrder(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.5rem' }}>
                                 <i className='bx bx-x'></i>
                             </button>
                         </div>
 
-                        <form onSubmit={handleSaveActuals} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'left' }}>
-                            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '10px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                <div><strong>Passenger:</strong> {completingAtr.principal_passenger_name}</div>
-                                <div><strong>Vehicle:</strong> {completingAtr.vehicle_type}</div>
-                                <div><strong>Estimated:</strong> {completingAtr.estimated_distance} km / {completingAtr.estimated_cost} LKR</div>
+                        <form onSubmit={handleSaveActuals} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem', textAlign: 'left' }}>
+                            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '10px', fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                                <div><strong>Order Ref:</strong> {completingOrder.refLabel}</div>
+                                <div><strong>Client / Service:</strong> {completingOrder.titleLabel}</div>
+                                <div style={{ color: '#60a5fa' }}>
+                                    <strong>Estimated Baseline:</strong> {completingOrder.estDist} km / LKR {Number(completingOrder.estCost || 0).toLocaleString()}
+                                </div>
                             </div>
 
                             <div>
@@ -1294,15 +1369,17 @@ const StaffDashboard = ({ loggedInUser }) => {
                                 </label>
                                 <input
                                     type="number"
-                                    step="0.1"
+                                    step="0.01"
+                                    min="0"
                                     required
                                     value={actualDistanceInput}
                                     onChange={(e) => {
-                                        setActualDistanceInput(e.target.value);
-                                        const rateMap = getCachedPricingRates().vehicleRates || { 'Bike': 50, 'Three-Wheeler': 75, 'Car': 110, 'Van': 150, 'Lorry': 220 };
-                                        const rate = Number(rateMap[completingAtr.vehicle_type]) || 100;
-                                        if (e.target.value && !isNaN(parseFloat(e.target.value))) {
-                                            setActualCostInput((parseFloat(e.target.value) * rate).toFixed(2));
+                                        const val = e.target.value;
+                                        setActualDistanceInput(val);
+                                        if (val !== '' && !Number.isNaN(parseFloat(val))) {
+                                            setActualCostInput(
+                                                calculateCostFromDistance(completingOrder.type, val, completingOrder.rate, completingOrder.baseFee)
+                                            );
                                         }
                                     }}
                                     style={{ width: '100%', padding: '0.75rem', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--card-border)', borderRadius: '10px', color: '#fff', fontSize: '0.95rem', outline: 'none' }}
@@ -1316,6 +1393,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                                 <input
                                     type="number"
                                     step="0.01"
+                                    min="0"
                                     required
                                     value={actualCostInput}
                                     onChange={(e) => setActualCostInput(e.target.value)}
@@ -1323,12 +1401,17 @@ const StaffDashboard = ({ loggedInUser }) => {
                                 />
                             </div>
 
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-                                <button type="button" onClick={() => setCompletingAtr(null)} className="secondary-btn" style={{ padding: '0.65rem 1.25rem', borderRadius: '8px' }}>
+                            <div style={{ fontSize: '0.78rem', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.25)', padding: '0.65rem 0.85rem', borderRadius: '8px' }}>
+                                <i className='bx bxs-lock-alt' style={{ marginRight: '0.35rem' }}></i>
+                                Saving will permanently <strong>lock</strong> these actual values and update billing/corporate invoices accordingly.
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.25rem' }}>
+                                <button type="button" onClick={() => setCompletingOrder(null)} className="secondary-btn" style={{ padding: '0.65rem 1.25rem', borderRadius: '8px' }}>
                                     Cancel
                                 </button>
                                 <button type="submit" disabled={submittingActuals} className="primary-btn" style={{ padding: '0.65rem 1.25rem', borderRadius: '8px', background: 'var(--success)' }}>
-                                    {submittingActuals ? 'Saving...' : 'Save Actuals & Complete'}
+                                    {submittingActuals ? 'Saving & Locking...' : 'Save Actuals & Lock'}
                                 </button>
                             </div>
                         </form>

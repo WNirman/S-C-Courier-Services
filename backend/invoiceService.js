@@ -14,6 +14,7 @@ function loadStore() {
         invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
         corporateConfigs: parsed.corporateConfigs && typeof parsed.corporateConfigs === 'object' ? parsed.corporateConfigs : {},
         invoicedRequestKeys: parsed.invoicedRequestKeys && typeof parsed.invoicedRequestKeys === 'object' ? parsed.invoicedRequestKeys : {},
+        lockedActuals: parsed.lockedActuals && typeof parsed.lockedActuals === 'object' ? parsed.lockedActuals : {},
         lastSchedulerRun: parsed.lastSchedulerRun || null
       };
     }
@@ -24,6 +25,7 @@ function loadStore() {
     invoices: [],
     corporateConfigs: {},
     invoicedRequestKeys: {},
+    lockedActuals: {},
     lastSchedulerRun: null
   };
 }
@@ -148,6 +150,26 @@ async function ensureInvoiceTables(pool) {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+
+    await pool.query(`
+      ALTER TABLE atr
+        ADD COLUMN IF NOT EXISTS actual_distance DOUBLE PRECISION DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS actual_cost NUMERIC(12,2) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS actuals_locked BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS actuals_locked_by VARCHAR(255) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS actuals_locked_at TIMESTAMPTZ DEFAULT NULL;
+    `).catch(() => {});
+
+    await pool.query(`
+      ALTER TABLE personal_delivery
+        ADD COLUMN IF NOT EXISTS estimated_distance DOUBLE PRECISION DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS estimated_cost NUMERIC(12,2) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS actual_distance DOUBLE PRECISION DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS actual_cost NUMERIC(12,2) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS actuals_locked BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS actuals_locked_by VARCHAR(255) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS actuals_locked_at TIMESTAMPTZ DEFAULT NULL;
+    `).catch(() => {});
   } catch (err) {
     console.warn('Invoice table initialization note (using store fallback):', err.message);
   }
@@ -171,6 +193,11 @@ async function syncInvoiceToDb(pool, invoice) {
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
       )
       ON CONFLICT (invoice_id) DO UPDATE SET
+        total_shipments = EXCLUDED.total_shipments,
+        subtotal = EXCLUDED.subtotal,
+        tax_amount = EXCLUDED.tax_amount,
+        additional_charges = EXCLUDED.additional_charges,
+        total_payable = EXCLUDED.total_payable,
         payment_status = EXCLUDED.payment_status,
         amount_paid = EXCLUDED.amount_paid,
         email_status = EXCLUDED.email_status,
@@ -709,8 +736,15 @@ async function createOrGetPersonalInvoice({
   const invoiceNumber = `INV-PD-${year}-${ String(pd.pd_id).padStart(4, '0')}-${seq}`;
   const invoiceId = `inv_pd_${pd.pd_id}_${Date.now()}`;
 
+  const lockedEntry = store.lockedActuals?.[reqKey];
+  const effectiveDist = (lockedEntry && Number.isFinite(Number(lockedEntry.actual_distance)))
+    ? Number(lockedEntry.actual_distance)
+    : Number(distanceKm);
+  const effectiveTotal = (lockedEntry && Number.isFinite(Number(lockedEntry.actual_cost)))
+    ? Number(lockedEntry.actual_cost)
+    : Number(totalAmount);
+
   const recipientEmail = (overrideEmail && overrideEmail.trim()) || pd.cust_email;
-  const distCharge = Math.max(0, Number(totalAmount) - Number(baseFee));
 
   const newInvoice = {
     invoice_id: invoiceId,
@@ -728,10 +762,10 @@ async function createOrGetPersonalInvoice({
     billing_period_label: issueDate,
     issue_date: new Date().toISOString().split('T')[0],
     total_shipments: 1,
-    subtotal: Number(totalAmount),
+    subtotal: Number(effectiveTotal),
     tax_amount: 0,
     additional_charges: 0,
-    total_payable: Number(totalAmount),
+    total_payable: Number(effectiveTotal),
     amount_paid: 0,
     payment_terms: 'Due on Receipt',
     payment_status: 'Unpaid',
@@ -746,11 +780,12 @@ async function createOrGetPersonalInvoice({
         shipment_date: issueDate,
         pickup_details: pd.pickup_address,
         delivery_details: pd.drop_address,
-        parcel_or_vehicle: `${pd.item_type || 'Parcel'} (Base ${baseFee} + ${distanceKm}km @ ${perKmRate}/km)`,
-        distance_km: Number(distanceKm),
+        parcel_or_vehicle: `${pd.item_type || 'Parcel'} (Base ${baseFee} + ${effectiveDist}km @ ${perKmRate}/km)`,
+        distance_km: Number(effectiveDist),
         rate_lkr: Number(perKmRate),
         base_fee_lkr: Number(baseFee),
-        amount_lkr: Number(totalAmount),
+        amount_lkr: Number(effectiveTotal),
+        is_actual: Boolean(lockedEntry?.locked),
         status: pd.status || 'Approved'
       }
     ],
@@ -829,8 +864,8 @@ async function generateCorporateInvoiceForRequests({
   const lineItems = eligibleAtrs.map(atr => {
     const vType = atr.vehicle_type || 'Car';
     const rate = Number(pricingRates?.vehicleRates?.[vType]) || 110;
-    const dist = parseFloat(atr.actual_distance || atr.estimated_distance || 10);
-    const amount = parseFloat(atr.actual_cost || atr.estimated_cost || (dist * rate));
+    const lockedEntry = store.lockedActuals?.[`atr-${atr.atr_id}`] || null;
+    const billing = computeAtrBillingValues(atr, rate, lockedEntry);
     const itemDept = deptMap[atr.dep_id]?.dep_name || combinedDeptLabel.replace(/\s*Department$/i, '');
     return {
       request_id: `atr-${atr.atr_id}`,
@@ -841,9 +876,10 @@ async function generateCorporateInvoiceForRequests({
       pickup_details: `${identity.companyName} (${itemDept} Dept)`,
       delivery_details: atr.purpose_of_travel || 'Corporate Route',
       parcel_or_vehicle: `${vType} (${atr.principal_passenger_name || 'Staff'})`,
-      distance_km: Number(dist.toFixed(1)),
+      distance_km: Number(billing.dist.toFixed(1)),
       rate_lkr: rate,
-      amount_lkr: Number(amount.toFixed(2)),
+      amount_lkr: Number(billing.amount.toFixed(2)),
+      is_actual: billing.isActual,
       status: atr.status || 'Approved'
     };
   });
@@ -911,6 +947,220 @@ async function generateCorporateInvoiceForRequests({
   };
 }
 
+function isFiniteNum(val) {
+  return val !== null && val !== undefined && val !== '' && Number.isFinite(Number(val));
+}
+
+/**
+ * Computes billing distance & amount for a Corporate ATR, strictly prioritizing
+ * recorded/locked actual values over estimates.
+ */
+function computeAtrBillingValues(atr, rate, lockedEntry = null) {
+  const locked = Boolean(lockedEntry?.locked);
+  const rawActDist = (lockedEntry && isFiniteNum(lockedEntry.actual_distance))
+    ? lockedEntry.actual_distance
+    : atr?.actual_distance;
+  const rawActCost = (lockedEntry && isFiniteNum(lockedEntry.actual_cost))
+    ? lockedEntry.actual_cost
+    : atr?.actual_cost;
+
+  const hasActDist = isFiniteNum(rawActDist) && (locked || Number(rawActDist) > 0);
+  const hasActCost = isFiniteNum(rawActCost) && (locked || Number(rawActCost) > 0);
+
+  const rawEstDist = atr?.estimated_distance;
+  const rawEstCost = atr?.estimated_cost;
+  const estDist = (isFiniteNum(rawEstDist) && Number(rawEstDist) > 0) ? Number(rawEstDist) : 10;
+
+  const dist = hasActDist ? Number(rawActDist) : estDist;
+  let amount;
+  if (hasActCost) {
+    amount = Number(rawActCost);
+  } else if (hasActDist) {
+    amount = Number((dist * Number(rate || 110)).toFixed(2));
+  } else if (isFiniteNum(rawEstCost) && Number(rawEstCost) > 0) {
+    amount = Number(rawEstCost);
+  } else {
+    amount = Number((dist * Number(rate || 110)).toFixed(2));
+  }
+
+  return {
+    dist,
+    amount,
+    isActual: Boolean(hasActDist || hasActCost || locked)
+  };
+}
+
+function recalculateInvoiceTotals(inv) {
+  const sum = (inv.line_items || []).reduce((acc, li) => acc + (Number(li.amount_lkr) || 0), 0);
+  inv.subtotal = Number(sum.toFixed(2));
+  inv.total_payable = Number((inv.subtotal + Number(inv.tax_amount || 0) + Number(inv.additional_charges || 0)).toFixed(2));
+  const paid = Number(inv.amount_paid || 0);
+  if (paid > 0) {
+    inv.payment_status = paid >= inv.total_payable ? 'Paid' : 'Partially Paid';
+  }
+}
+
+/**
+ * Applies saved actual distance & cost for an ATR or PD key to any existing invoices in store.
+ */
+function applyActualsToInvoicesInStore({
+  store,
+  requestKey,
+  actualDistance,
+  actualCost,
+  status = 'Completed',
+  pricingRates = null,
+  actor = 'Staff/Admin',
+  note = ''
+}) {
+  const modifiedInvoices = [];
+  const distNum = Number(Number(actualDistance).toFixed(1));
+  const costNum = Number(Number(actualCost).toFixed(2));
+
+  for (const inv of (store.invoices || [])) {
+    if (!Array.isArray(inv.line_items)) continue;
+    let touched = false;
+    let figuresChanged = false;
+
+    inv.line_items = inv.line_items.map(li => {
+      if (li.request_id !== requestKey) return li;
+      touched = true;
+      if (Number(li.distance_km) !== distNum || Number(li.amount_lkr) !== costNum || !li.is_actual) {
+        figuresChanged = true;
+      }
+      const updated = {
+        ...li,
+        distance_km: distNum,
+        amount_lkr: costNum,
+        is_actual: true,
+        status: status || li.status || 'Completed'
+      };
+      if (updated.source_type === 'personal') {
+        const baseFee = Number(updated.base_fee_lkr ?? pricingRates?.personalBaseFee ?? 250);
+        const perKm = Number(updated.rate_lkr ?? pricingRates?.personalPerKmRate ?? 60);
+        const itemLabel = String(updated.parcel_or_vehicle || 'Parcel').split(' (')[0];
+        updated.parcel_or_vehicle = `${itemLabel} (Base ${baseFee} + ${distNum}km @ ${perKm}/km)`;
+      }
+      return updated;
+    });
+
+    if (touched) {
+      recalculateInvoiceTotals(inv);
+      if (figuresChanged) {
+        inv.audit_log = inv.audit_log || [];
+        inv.audit_log.push({
+          timestamp: new Date().toISOString(),
+          action: 'ACTUALS_APPLIED_TO_INVOICE',
+          actor,
+          note: note || `Updated ${requestKey} line item with Actual Distance (${distNum} km) & Actual Cost (LKR ${costNum.toFixed(2)})`
+        });
+      }
+      modifiedInvoices.push(inv);
+    }
+  }
+
+  return modifiedInvoices;
+}
+
+/**
+ * Reconciles existing corporate (and personal) invoices in invoices_store.json against live Supabase ATR rows
+ * and store.lockedActuals so corporate invoices always display & total actual values instead of estimates.
+ */
+async function reconcileInvoicesWithLiveActuals({ pool, atrRows = [], pricingRates = null }) {
+  const store = loadStore();
+  const atrById = {};
+  (Array.isArray(atrRows) ? atrRows : []).forEach(a => {
+    if (a && a.atr_id != null) atrById[String(a.atr_id)] = a;
+  });
+
+  const syncedInvoices = [];
+
+  for (const inv of (store.invoices || [])) {
+    if (!Array.isArray(inv.line_items) || inv.line_items.length === 0) continue;
+    let invDirty = false;
+    let amountChanged = false;
+
+    inv.line_items = inv.line_items.map(li => {
+      const reqId = String(li.request_id || '');
+      const lockedEntry = store.lockedActuals?.[reqId] || null;
+
+      if (reqId.startsWith('atr-')) {
+        const atrIdStr = reqId.slice(4);
+        const atr = atrById[atrIdStr];
+        if (!atr && !lockedEntry) return li;
+
+        const vType = atr?.vehicle_type || 'Car';
+        const rate = Number(li.rate_lkr) || Number(pricingRates?.vehicleRates?.[vType]) || 110;
+        const billing = computeAtrBillingValues(atr || {}, rate, lockedEntry);
+        if (!billing.isActual) return li;
+
+        const nextDist = Number(billing.dist.toFixed(1));
+        const nextAmt = Number(billing.amount.toFixed(2));
+        const nextStatus = atr?.status || (lockedEntry?.locked ? 'Completed' : li.status);
+
+        if (Number(li.distance_km) !== nextDist || Number(li.amount_lkr) !== nextAmt || !li.is_actual) {
+          invDirty = true;
+          if (Number(li.distance_km) !== nextDist || Number(li.amount_lkr) !== nextAmt) {
+            amountChanged = true;
+          }
+          return {
+            ...li,
+            distance_km: nextDist,
+            amount_lkr: nextAmt,
+            is_actual: true,
+            status: nextStatus
+          };
+        }
+        if (nextStatus && li.status !== nextStatus) {
+          invDirty = true;
+          return { ...li, status: nextStatus };
+        }
+      } else if (reqId.startsWith('pd-') && lockedEntry?.locked) {
+        const nextDist = Number(Number(lockedEntry.actual_distance).toFixed(1));
+        const nextAmt = Number(Number(lockedEntry.actual_cost).toFixed(2));
+        if (Number(li.distance_km) !== nextDist || Number(li.amount_lkr) !== nextAmt || !li.is_actual) {
+          invDirty = true;
+          amountChanged = true;
+          const baseFee = Number(li.base_fee_lkr ?? pricingRates?.personalBaseFee ?? 250);
+          const perKm = Number(li.rate_lkr ?? pricingRates?.personalPerKmRate ?? 60);
+          const itemLabel = String(li.parcel_or_vehicle || 'Parcel').split(' (')[0];
+          return {
+            ...li,
+            distance_km: nextDist,
+            amount_lkr: nextAmt,
+            parcel_or_vehicle: `${itemLabel} (Base ${baseFee} + ${nextDist}km @ ${perKm}/km)`,
+            is_actual: true,
+            status: 'Completed'
+          };
+        }
+      }
+      return li;
+    });
+
+    if (invDirty) {
+      recalculateInvoiceTotals(inv);
+      if (amountChanged) {
+        inv.audit_log = inv.audit_log || [];
+        inv.audit_log.push({
+          timestamp: new Date().toISOString(),
+          action: 'INVOICE_RECONCILED_WITH_ACTUALS',
+          actor: 'Billing Reconciliation',
+          note: `Recalculated invoice using recorded actual distance & cost (Total: LKR ${inv.total_payable.toFixed(2)})`
+        });
+      }
+      syncedInvoices.push(inv);
+    }
+  }
+
+  if (syncedInvoices.length > 0) {
+    saveStore(store);
+    for (const inv of syncedInvoices) {
+      await syncInvoiceToDb(pool, inv);
+    }
+  }
+  return store;
+}
+
 module.exports = {
   loadStore,
   saveStore,
@@ -924,5 +1174,8 @@ module.exports = {
   sendCorporateAcceptanceEmail,
   sendInvoiceEmailWithPdf,
   createOrGetPersonalInvoice,
-  generateCorporateInvoiceForRequests
+  generateCorporateInvoiceForRequests,
+  computeAtrBillingValues,
+  applyActualsToInvoicesInStore,
+  reconcileInvoicesWithLiveActuals
 };

@@ -376,7 +376,7 @@ function AtrForm({ onBack, loggedInUser }) {
             const destCoords = await getCoordinates(addressToSearch, null);
 
             if (!destCoords) {
-                setDistanceStatus('Destination place not found. You can enter the distance manually.');
+                setDistanceStatus('Destination place not found. Please enter a valid city or address in Sri Lanka.');
                 setIsCalculatingDistance(false);
                 return;
             }
@@ -423,7 +423,7 @@ function AtrForm({ onBack, loggedInUser }) {
             }
         } catch (err) {
             console.error('Error fetching distance from OpenStreetMap:', err);
-            setDistanceStatus('Unable to auto-calculate. You can enter distance manually.');
+            setDistanceStatus('Unable to auto-calculate route distance. Please check destination name and click Get Distance.');
         } finally {
             setIsCalculatingDistance(false);
         }
@@ -432,6 +432,10 @@ function AtrForm({ onBack, loggedInUser }) {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (!formData.estimatedDistance || !formData.estimatedCost) {
+            alert('Please enter your Destination Place / City and click "Get Distance" to calculate the estimated distance and cost first.');
+            return;
+        }
         const formattedAtr = formatAtrNumber(formData.atrNumber, userPattern) || formData.atrNumber;
         console.log('ATR Form Submitted:', { ...formData, atrNumber: formattedAtr });
 
@@ -769,8 +773,12 @@ function AtrForm({ onBack, loggedInUser }) {
                                     <select 
                                         value={selectedOffice} 
                                         onChange={(e) => {
-                                            setSelectedOffice(e.target.value);
+                                            const newOffice = e.target.value;
+                                            setSelectedOffice(newOffice);
                                             setDistanceStatus('');
+                                            if (destinationAddress && destinationAddress.trim()) {
+                                                handleCalculateDistance(destinationAddress);
+                                            }
                                         }}
                                     >
                                         {branches.length > 0 ? (
@@ -791,7 +799,7 @@ function AtrForm({ onBack, loggedInUser }) {
                             </div>
 
                             <div className="atr-form-group">
-                                <label>Destination Place / City / Address</label>
+                                <label>Destination Place / City / Address <span className="required">*</span></label>
                                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                                     <div className="atr-input-with-icon" style={{ flex: 1 }}>
                                         <i className='bx bx-map-pin'></i>
@@ -801,6 +809,11 @@ function AtrForm({ onBack, loggedInUser }) {
                                             onChange={(e) => {
                                                 setDestinationAddress(e.target.value);
                                                 setDistanceStatus('');
+                                            }}
+                                            onBlur={() => {
+                                                if (destinationAddress.trim() && !formData.estimatedDistance) {
+                                                    handleCalculateDistance();
+                                                }
                                             }}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter') {
@@ -863,40 +876,60 @@ function AtrForm({ onBack, loggedInUser }) {
 
                         <div className="atr-form-row">
                             <div className="atr-form-group">
-                                <label>Estimated Distance (km) <span className="required">*</span></label>
+                                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span>Estimated Distance (km)</span>
+                                    <span style={{ fontSize: '0.72rem', color: '#60a5fa', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                        <i className='bx bxs-lock-alt'></i> Auto-Calculated
+                                    </span>
+                                </label>
                                 <div className="atr-input-with-icon">
                                     <i className='bx bx-map-alt'></i>
                                     <input
-                                        type="number"
+                                        type="text"
                                         name="estimatedDistance"
-                                        value={formData.estimatedDistance}
-                                        onChange={handleChange}
-                                        placeholder="e.g. 25.50"
-                                        step="0.01"
-                                        min="0"
-                                        max="999999.99"
-                                        required
+                                        value={formData.estimatedDistance ? `${formData.estimatedDistance} km` : ''}
+                                        readOnly
+                                        tabIndex={-1}
+                                        placeholder="Auto-calculated via Destination"
+                                        style={{
+                                            cursor: 'default',
+                                            userSelect: 'none',
+                                            backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                                            borderColor: 'rgba(59, 130, 246, 0.28)',
+                                            color: '#fff',
+                                            fontWeight: 700
+                                        }}
                                     />
                                 </div>
-                                <div className="atr-input-hint">Auto-filled via destination or type manually</div>
+                                <div className="atr-input-hint">Automatically calculated from Starting Office to Destination (read-only)</div>
                             </div>
                             <div className="atr-form-group">
-                                <label>Estimated Cost (LKR) <span className="required">*</span></label>
+                                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span>Estimated Cost (LKR)</span>
+                                    <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                        <i className='bx bxs-lock-alt'></i> Auto-Calculated
+                                    </span>
+                                </label>
                                 <div className="atr-input-with-icon">
                                     <i className='bx bx-money'></i>
                                     <input
-                                        type="number"
+                                        type="text"
                                         name="estimatedCost"
-                                        value={formData.estimatedCost}
-                                        onChange={handleChange}
-                                        placeholder="e.g. 1500.00"
-                                        step="0.01"
-                                        min="0"
-                                        max="99999999.99"
-                                        required
+                                        value={formData.estimatedCost ? `LKR ${Number(formData.estimatedCost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                                        readOnly
+                                        tabIndex={-1}
+                                        placeholder="Auto-calculated via Vehicle Rate × Distance"
+                                        style={{
+                                            cursor: 'default',
+                                            userSelect: 'none',
+                                            backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                                            borderColor: 'rgba(16, 185, 129, 0.28)',
+                                            color: '#34d399',
+                                            fontWeight: 700
+                                        }}
                                     />
                                 </div>
-                                <div className="atr-input-hint">Auto-calculated or enter manually</div>
+                                <div className="atr-input-hint">Automatically calculated from Distance × Vehicle Per-KM Rate (read-only)</div>
                             </div>
                         </div>
 
