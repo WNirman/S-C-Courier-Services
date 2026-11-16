@@ -12,6 +12,7 @@ import StaffDashboard from './StaffDashboard';
 import Chatbot from './Chatbot';
 import StatsSection from './StatsSection';
 import TrackingMapSection from './TrackingMapSection';
+import { apiUrl } from './utils/apiBase';
 
 function extractAtrDestination(purposeText) {
     if (!purposeText || typeof purposeText !== 'string') {
@@ -283,7 +284,7 @@ function App({ onNavigate }) {
             setActiveForm('reset-confirm');
 
             // Verify token with backend if reachable
-            fetch(`http://localhost:5000/api/auth/verify-reset-token?token=${encodeURIComponent(tokenParam)}`)
+            fetch(apiUrl(`/api/auth/verify-reset-token?token=${encodeURIComponent(tokenParam)}`))
                 .then(res => res.json())
                 .then(data => {
                     if (data && data.valid) {
@@ -307,7 +308,7 @@ function App({ onNavigate }) {
         setResetSentInfo(null);
 
         try {
-            const res = await fetch('http://localhost:5000/api/auth/forgot-password', {
+            const res = await fetch(apiUrl('/api/auth/forgot-password'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -334,7 +335,8 @@ function App({ onNavigate }) {
         } catch (err) {
             console.error('Error requesting password reset:', err);
             setForgotError(
-                'Unable to reach the email server (http://localhost:5000). Please make sure the local backend server is running so the reset link can be sent to your Gmail.'
+                err.message ||
+                'Unable to reach the email server right now. Please try again in a moment.'
             );
         } finally {
             setIsResetting(false);
@@ -383,7 +385,7 @@ function App({ onNavigate }) {
 
             // 2. Also notify backend to update & clear token
             try {
-                const res = await fetch('http://localhost:5000/api/auth/reset-password', {
+                const res = await fetch(apiUrl('/api/auth/reset-password'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -879,7 +881,7 @@ function App({ onNavigate }) {
             // 3. Save Corporate Customer Invoice Frequency & Billing Configuration
             if (accountType === 'Corporate') {
                 try {
-                    await fetch('http://localhost:5000/api/corporate-billing/config', {
+                    await fetch(apiUrl('/api/corporate-billing/config'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

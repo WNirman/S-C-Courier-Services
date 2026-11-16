@@ -1,3 +1,5 @@
+import { apiUrl } from './apiBase.js';
+
 export const DEFAULT_PRICING_RATES = {
     vehicleRates: {
         'Bike': 50,
@@ -36,7 +38,7 @@ export const getCachedPricingRates = () => {
 
 export const fetchPricingRates = async () => {
     try {
-        const res = await fetch('http://localhost:5000/api/pricing-rates');
+        const res = await fetch(apiUrl('/api/pricing-rates'));
         if (res.ok) {
             const data = await res.json();
             const merged = {
@@ -74,7 +76,7 @@ export const savePricingRates = async (newRates, updatedBy = 'admin@sccourier.co
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 
     try {
-        const res = await fetch('http://localhost:5000/api/pricing-rates', {
+        const res = await fetch(apiUrl('/api/pricing-rates'), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)

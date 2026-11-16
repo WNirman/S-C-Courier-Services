@@ -1,6 +1,6 @@
 import { DEFAULT_PRICING_RATES } from './pricingRates.js';
+import { apiUrl } from './apiBase.js';
 
-const API_BASE = 'http://localhost:5000';
 const LOCAL_LOCKS_KEY = 'sc_locked_actuals';
 
 export function isFiniteNumber(val) {
@@ -145,7 +145,7 @@ function writeLocalLocks(map) {
 export async function fetchLockedActuals() {
   const local = readLocalLocks();
   try {
-    const res = await fetch(`${API_BASE}/api/actuals`);
+    const res = await fetch(apiUrl('/api/actuals'));
     if (res.ok) {
       const data = await res.json();
       const merged = { ...local, ...(data.lockedActuals || {}) };
@@ -181,7 +181,7 @@ export async function saveAndLockOrderActuals({
   // Primary path: save via backend so Supabase, lock store, and Corporate/Personal invoices stay in sync
   let backendHandled = false;
   try {
-    const res = await fetch(`${API_BASE}/api/actuals/${normalizedType}/${id}`, {
+    const res = await fetch(apiUrl(`/api/actuals/${normalizedType}/${id}`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

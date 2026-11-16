@@ -3,6 +3,7 @@ import logoImg from './assets/favicon.png';
 import { supabase } from './supabaseClient';
 import LocationPickerModal from './LocationPickerModal';
 import { useMapProvider, nominatimSearch } from './mapProvider';
+import { apiUrl } from './utils/apiBase';
 
 function PersonalDeliveryForm({ onBack, loggedInUser }) {
     const emptyForm = {
@@ -228,7 +229,7 @@ function PersonalDeliveryForm({ onBack, loggedInUser }) {
             // 2. Express backend fallback
             if (!success) {
                 try {
-                    const res = await fetch('http://localhost:5000/api/personal-delivery/create', {
+                    const res = await fetch(apiUrl('/api/personal-delivery/create'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(insertData),

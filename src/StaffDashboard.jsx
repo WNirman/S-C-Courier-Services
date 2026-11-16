@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { generateMonthlyExcelReport } from './utils/reportGenerator';
 import { getCachedPricingRates, fetchPricingRates } from './utils/pricingRates';
 import { fetchLockedActuals, resolveOrderActualsState, calculateCostFromDistance, saveAndLockOrderActuals } from './utils/actualsHelper';
+import { apiUrl } from './utils/apiBase';
 
 const StaffDashboard = ({ loggedInUser }) => {
     const [staffProfile, setStaffProfile] = useState(null);
@@ -84,7 +85,7 @@ const StaffDashboard = ({ loggedInUser }) => {
 
         if (!rawRiders || rawRiders.length === 0) {
             try {
-                const res = await fetch('http://localhost:5000/api/riders');
+                const res = await fetch(apiUrl('/api/riders'));
                 if (res.ok) {
                     const data = await res.json();
                     if (Array.isArray(data) && data.length > 0) rawRiders = data;
@@ -187,7 +188,7 @@ const StaffDashboard = ({ loggedInUser }) => {
         }
 
         try {
-            const res = await fetch('http://localhost:5000/api/personal-deliveries');
+            const res = await fetch(apiUrl('/api/personal-deliveries'));
             if (res.ok) {
                 const data = await res.json();
                 if (Array.isArray(data)) setPersonalDeliveries(data);
@@ -271,7 +272,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                 const pdObj = personalDeliveries.find(p => p.pd_id === pdId);
                 let backendOk = false;
                 try {
-                    const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
+                    const tdRes = await fetch(apiUrl('/api/trip-delivery/create'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -377,7 +378,7 @@ const StaffDashboard = ({ loggedInUser }) => {
                 let backendOk = false;
 
                 try {
-                    const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
+                    const tdRes = await fetch(apiUrl('/api/trip-delivery/create'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -469,7 +470,7 @@ const StaffDashboard = ({ loggedInUser }) => {
 
             let invoiceNote = '';
             try {
-                const res = await fetch('http://localhost:5000/api/delivery/accept', {
+                const res = await fetch(apiUrl('/api/delivery/accept'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail, status: 'Accepted' })
@@ -506,7 +507,7 @@ const StaffDashboard = ({ loggedInUser }) => {
 
             let invoiceNote = '';
             try {
-                const res = await fetch('http://localhost:5000/api/atr/approve-invoice', {
+                const res = await fetch(apiUrl('/api/atr/approve-invoice'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ atrId, approvedBy: approvedByEmail })

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-
-const API_BASE = 'http://localhost:5000';
+import { API_BASE, apiUrl } from './utils/apiBase';
 
 const InvoiceManagementPanel = ({ atrRequests = [], personalDeliveries = [], customerCompMap = {}, deptCompMap = {}, loggedInUser }) => {
     const [invoices, setInvoices] = useState([]);
@@ -45,7 +44,7 @@ const InvoiceManagementPanel = ({ atrRequests = [], personalDeliveries = [], cus
     const loadInvoicesData = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/api/invoices`);
+            const res = await fetch(apiUrl('/api/invoices'));
             if (res.ok) {
                 const data = await res.json();
                 setInvoices(Array.isArray(data.invoices) ? data.invoices : []);
@@ -187,7 +186,7 @@ const InvoiceManagementPanel = ({ atrRequests = [], personalDeliveries = [], cus
     const handleRunBillingCycle = async () => {
         setRunningCycle(true);
         try {
-            const res = await fetch(`${API_BASE}/api/corporate-billing/run-cycle`, {
+            const res = await fetch(apiUrl('/api/corporate-billing/run-cycle'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -222,7 +221,7 @@ const InvoiceManagementPanel = ({ atrRequests = [], personalDeliveries = [], cus
         }
         setSavingConfig(true);
         try {
-            const res = await fetch(`${API_BASE}/api/corporate-billing/config`, {
+            const res = await fetch(apiUrl('/api/corporate-billing/config'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -256,7 +255,7 @@ const InvoiceManagementPanel = ({ atrRequests = [], personalDeliveries = [], cus
 
         setResendingId(invoice.invoice_id);
         try {
-            const res = await fetch(`${API_BASE}/api/invoices/${encodeURIComponent(invoice.invoice_id)}/resend`, {
+            const res = await fetch(apiUrl(`/api/invoices/${encodeURIComponent(invoice.invoice_id)}/resend`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ overrideEmail: customEmail.trim() })
@@ -296,7 +295,7 @@ const InvoiceManagementPanel = ({ atrRequests = [], personalDeliveries = [], cus
                 amountPaid = 0;
             }
 
-            const res = await fetch(`${API_BASE}/api/invoices/${encodeURIComponent(invoice.invoice_id)}/payment`, {
+            const res = await fetch(apiUrl(`/api/invoices/${encodeURIComponent(invoice.invoice_id)}/payment`), {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

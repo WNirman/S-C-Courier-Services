@@ -4,6 +4,7 @@ import { generateMonthlyExcelReport } from './utils/reportGenerator';
 import { DEFAULT_PRICING_RATES, getCachedPricingRates, fetchPricingRates, savePricingRates } from './utils/pricingRates';
 import { fetchLockedActuals, resolveOrderActualsState, calculateCostFromDistance, saveAndLockOrderActuals } from './utils/actualsHelper';
 import InvoiceManagementPanel from './InvoiceManagementPanel';
+import { API_BASE, apiUrl } from './utils/apiBase';
 
 const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, loggedInUser }) => {
     const [showAssignForm, setShowAssignForm] = useState(false);
@@ -287,7 +288,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
         let fetchedData = [];
         try {
-            const res = await fetch('http://localhost:5000/api/personal-deliveries');
+            const res = await fetch(apiUrl('/api/personal-deliveries'));
             if (res.ok) {
                 const data = await res.json();
                 if (Array.isArray(data)) fetchedData = data;
@@ -334,7 +335,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             // 3. Send acceptance & official Invoice email via Express backend
             let emailMsg = '';
             try {
-                const res = await fetch('http://localhost:5000/api/delivery/accept', {
+                const res = await fetch(apiUrl('/api/delivery/accept'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail, status: 'Accepted' })
@@ -420,7 +421,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 const pdObj = personalDeliveries.find(p => p.pd_id === pdId);
                 let backendOk = false;
                 try {
-                    const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
+                    const tdRes = await fetch(apiUrl('/api/trip-delivery/create'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -465,7 +466,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 }
             } else {
                 try {
-                    await fetch('http://localhost:5000/api/trip-delivery/cancel', {
+                    await fetch(apiUrl('/api/trip-delivery/cancel'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ source_type: 'personal', source_id: pdId })
@@ -514,7 +515,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
             let invoiceNote = '';
             try {
-                const res = await fetch('http://localhost:5000/api/atr/approve-invoice', {
+                const res = await fetch(apiUrl('/api/atr/approve-invoice'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ atrId, approvedBy: approvedByEmail })
@@ -586,7 +587,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
 
             let invoiceNote = '';
             try {
-                const res = await fetch('http://localhost:5000/api/delivery/accept', {
+                const res = await fetch(apiUrl('/api/delivery/accept'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ pdId, acceptedBy: acceptedByEmail, status: 'Approved' })
@@ -653,7 +654,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             if (riderNic) {
                 // Trigger assignment email via backend if online
                 try {
-                    await fetch('http://localhost:5000/api/atr/send-assignment-email', {
+                    await fetch(apiUrl('/api/atr/send-assignment-email'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ atrId, riderId: riderNic }),
@@ -668,7 +669,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                 const startingOffice = deptInfo?.comp_address || deptInfo?.comp_name || deptInfo?.dep_name || 'Corporate Office';
                 let tripCreated = false;
                 try {
-                    const tdRes = await fetch('http://localhost:5000/api/trip-delivery/create', {
+                    const tdRes = await fetch(apiUrl('/api/trip-delivery/create'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -716,7 +717,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             } else {
                 // Cancel/Delete the trip + delivery when rider is unassigned
                 try {
-                    await fetch('http://localhost:5000/api/trip-delivery/cancel', {
+                    await fetch(apiUrl('/api/trip-delivery/cancel'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ source_type: 'atr', source_id: atrId })
@@ -846,7 +847,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
         }
         setSendingEmail(true);
         try {
-            const res = await fetch('http://localhost:5000/api/admin/send-staff-credentials', {
+            const res = await fetch(apiUrl('/api/admin/send-staff-credentials'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -870,7 +871,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
             }
         } catch (err) {
             console.error('Email dispatch error:', err);
-            alert('Failed to send email. Please ensure the backend server is running on http://localhost:5000.');
+            alert('Failed to send email. Please ensure the backend server is reachable and email settings are configured.');
         } finally {
             setSendingEmail(false);
         }
@@ -2383,7 +2384,7 @@ const AdminDashboard = ({ assignedStaff = [], onAssignStaff, onRemoveStaff, logg
                                                     )}
                                                     {(pd.status === 'Assigned' || pd.status === 'In Transit') && (
                                                         <a
-                                                            href={`http://localhost:5000/api/delivery/${pd.pd_id}/map`}
+                                                            href={API_BASE ? `${API_BASE}/api/delivery/${pd.pd_id}/map` : '#'}
                                                             target="_blank"
                                                             rel="noopener noreferrer"
                                                             className="secondary-btn"
